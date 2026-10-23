@@ -176,6 +176,10 @@ fn set_status(status: UpdateStatus, cx: &mut App) {
 }
 
 pub(crate) fn check_manually(cx: &mut App) {
+    if cfg!(feature = "ux-walk") {
+        cx.open_url("https://github.com/CantrellJax/ux-walk-cap/releases");
+        return;
+    }
     if !cx.has_global::<UpdateScheduler>() {
         return;
     }
@@ -262,6 +266,9 @@ fn busy_alert(cx: &mut App) {
 }
 
 pub(crate) fn schedule_startup_check(cx: &mut App) {
+    if cfg!(feature = "ux-walk") {
+        return;
+    }
     let (wake, requests) = flume::bounded(1);
     cx.set_global(UpdateScheduler {
         wake,

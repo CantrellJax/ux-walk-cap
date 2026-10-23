@@ -74,6 +74,8 @@ pub enum TrayItem {
     ModeStudio,
     ModeInstant,
     ModeScreenshot,
+    #[cfg(target_os = "macos")]
+    StartWalkthrough,
 }
 
 /// One row of the menu.
@@ -282,14 +284,24 @@ fn mode_submenu(mode: Mode) -> Entry {
             },
         )
     };
+    let items = vec![
+        label(Mode::Studio, "Studio"),
+        label(Mode::Instant, "Instant"),
+        label(Mode::Screenshot, "Screenshot"),
+    ];
+    #[cfg(target_os = "macos")]
+    let items = {
+        let mut items = items;
+        items.extend([
+            Entry::Separator,
+            Entry::item("Walkthrough…", TrayItem::StartWalkthrough),
+        ]);
+        items
+    };
     Entry::Submenu {
         title: "Select Mode".into(),
         enabled: true,
-        items: vec![
-            label(Mode::Studio, "Studio"),
-            label(Mode::Instant, "Instant"),
-            label(Mode::Screenshot, "Screenshot"),
-        ],
+        items,
     }
 }
 
@@ -406,6 +418,8 @@ pub fn handle_item(item: TrayItem, cx: &mut App) {
         TrayItem::ModeStudio => set_mode(Mode::Studio, cx),
         TrayItem::ModeInstant => set_mode(Mode::Instant, cx),
         TrayItem::ModeScreenshot => set_mode(Mode::Screenshot, cx),
+        #[cfg(target_os = "macos")]
+        TrayItem::StartWalkthrough => cx.open_url("ux-walk://start?capture=cap"),
     }
 }
 
@@ -599,6 +613,8 @@ fn harness_item(spec: &str, cx: &App) -> Option<TrayItem> {
         "mode_studio" => TrayItem::ModeStudio,
         "mode_instant" => TrayItem::ModeInstant,
         "mode_screenshot" => TrayItem::ModeScreenshot,
+        #[cfg(target_os = "macos")]
+        "walkthrough" => TrayItem::StartWalkthrough,
         _ => return None,
     })
 }
@@ -1405,7 +1421,17 @@ mod tests {
             let Entry::Submenu { items, .. } = mode_submenu(mode) else {
                 panic!("Select Mode is a submenu");
             };
-            assert_eq!(titles(&items), expected.to_vec());
+            assert_eq!(titles(&items[..3]), expected.to_vec());
+            #[cfg(target_os = "macos")]
+            {
+                assert_eq!(titles(&items[3..]), vec!["-", "Walkthrough…"]);
+                assert!(matches!(
+                    items[4],
+                    Entry::Item { item: Some(TrayItem::StartWalkthrough), enabled: true, .. }
+                ));
+            }
+            #[cfg(not(target_os = "macos"))]
+            assert_eq!(items.len(), 3);
         }
     }
 
