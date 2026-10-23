@@ -1427,7 +1427,11 @@ mod tests {
                 assert_eq!(titles(&items[3..]), vec!["-", "Walkthrough…"]);
                 assert!(matches!(
                     items[4],
-                    Entry::Item { item: Some(TrayItem::StartWalkthrough), enabled: true, .. }
+                    Entry::Item {
+                        item: Some(TrayItem::StartWalkthrough),
+                        enabled: true,
+                        ..
+                    }
                 ));
             }
             #[cfg(not(target_os = "macos"))]
