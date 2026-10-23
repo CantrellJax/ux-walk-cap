@@ -9,6 +9,9 @@ on:
       - .github/workflows/ux-walk-*.yml
   push:
     branches: [main, feat/walkthrough-entry]
+    paths:
+      - apps/desktop-gpui/**
+      - apps/cli/**
 
 permissions:
   contents: read
