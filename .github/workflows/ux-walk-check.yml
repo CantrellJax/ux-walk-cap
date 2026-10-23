@@ -40,7 +40,7 @@ jobs:
             apps/desktop-gpui -> target
       - name: Format changed Rust surfaces
         run: |
-          rustfmt --edition 2024 apps/desktop-gpui/src/tray.rs apps/desktop-gpui/src/updates.rs apps/desktop-gpui/src/installer.rs apps/cli/src/update.rs
+          rustfmt +1.95.0 --edition 2024 apps/desktop-gpui/src/tray.rs apps/desktop-gpui/src/updates.rs apps/desktop-gpui/src/installer.rs apps/cli/src/update.rs
           git diff > "$RUNNER_TEMP/rustfmt.patch"
           git diff --exit-code
       - uses: actions/upload-artifact@v4
