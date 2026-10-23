@@ -18,6 +18,12 @@ The default `ux-walk` Cargo feature in the desktop and CLI packages prevents off
 
 The fork-owned upstream workflow merges upstream main into an update PR and dispatches scoped native checks. Conflicts and failed checks require review; upstream code never replaces main automatically. The companion separately monitors compatibility with official Cap releases. Build and validate the native menu before installing this fork; source changes and a successful companion check alone do not prove that menu works.
 
+## Local preview
+
+Manually run **ux-walk native checks** with `preview=true` to build a debug app after the checks pass. This extends the existing GPUI/Tauri packaging pipeline. Debug previews use the native host target and genuine debug artifact paths; release packaging keeps its existing target and source checks.
+
+The artifact contains **Cap Walkthrough Preview.app** in a zip, its source revision, checksum and license. The preview has its own bundle identifier and temporary data/log/recording directories per revision. It registers no Cap URL scheme or recording file association. It does not copy the installed Cap account, settings or library. Opening the preview still follows macOS's ordinary permission flow; a fresh profile can show onboarding until required permissions are granted. Native compile/tests alone do not count as a menu, URL-delivery or recording pass.
+
 ## Sharing
 
 Cap's public source already includes S3-compatible and Google Drive storage integrations and its web viewer. The intended fork deployment makes owned-storage capabilities standard, using our own hosted service, storage and Google OAuth application. Cap Cloud subscriptions and infrastructure are separate. This first slice does not deploy a server, connect accounts, change cloud entitlements or upload a recording. AI processing, storage and hosting retain their service costs.

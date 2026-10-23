@@ -81,12 +81,13 @@ function validateArguments(target, args, platform) {
 			valid =
 				/^--(?:config|bundles)=.+/.test(argument) ||
 				argument === "--verbose" ||
+				argument === "--debug" ||
 				/^-v{1,2}$/.test(argument);
 		}
 	}
 	if (!valid) {
 		throw new Error(
-			"Run on macOS: node scripts/build-macos-packages.mjs <aarch64|x86_64>-apple-darwin [--config <path>] [--verbose]",
+			"Run on macOS: node scripts/build-macos-packages.mjs <aarch64|x86_64>-apple-darwin [--debug] [--config <path>] [--verbose]",
 		);
 	}
 }
@@ -153,6 +154,7 @@ export async function buildMacosPackages(
 	args = [],
 	{
 		bundleOnly = false,
+		native = false,
 		platform = process.platform,
 		env = process.env,
 		signal,
@@ -163,7 +165,9 @@ export async function buildMacosPackages(
 	} = {},
 ) {
 	validateArguments(target, args, platform);
-	const commandArguments = ["--target", target, ...args];
+	if (native && !args.includes("--debug"))
+		throw new Error("Native macOS packaging requires --debug");
+	const commandArguments = [...(native ? [] : ["--target", target]), ...args];
 	const environment = {
 		...env,
 		RUST_TARGET_TRIPLE: target,
@@ -171,6 +175,7 @@ export async function buildMacosPackages(
 			env.MACOSX_DEPLOYMENT_TARGET,
 		),
 	};
+	if (native) delete environment.CARGO_BUILD_TARGET;
 	commandArguments.push(
 		"--config",
 		JSON.stringify({

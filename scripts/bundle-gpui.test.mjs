@@ -1,15 +1,19 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
+import * as fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
 	bundleArguments,
 	bundleEnvironment,
+	bundleGpui,
 	gpuiBinaryPath,
 	gpuiDirectory,
 	gpuiPlatformConfig,
 	mainBinaryName,
 	parseOptions,
+	stageMainBinary,
 	targetPlatform,
 } from "./bundle-gpui.mjs";
 
@@ -163,13 +167,135 @@ test("tauri bundle runs against the GPUI crate with its pinned toolchain", () =>
 
 test("signing builds can stop before bundling and rebundle without rebuilding", () => {
 	assert.deepEqual(parseOptions(["--no-bundle"]), {
+		debug: false,
 		skipBuild: false,
 		noBundle: true,
 		bundleArgs: [],
 	});
 	assert.deepEqual(parseOptions(["--skip-build", "--bundles", "nsis"]), {
+		debug: false,
 		skipBuild: true,
 		noBundle: false,
 		bundleArgs: ["--bundles", "nsis"],
 	});
+});
+
+test("debug opts into the native profile while release keeps target-prefixed paths", () => {
+	assert.deepEqual(
+		parseOptions(["--debug", "--skip-build", "--bundles", "app"]),
+		{
+			debug: true,
+			skipBuild: true,
+			noBundle: false,
+			bundleArgs: ["--bundles", "app"],
+		},
+	);
+	assert.equal(
+		gpuiBinaryPath("aarch64-apple-darwin", "debug"),
+		path.join(gpuiDirectory, "target/debug/cap-gpui"),
+	);
+	assert.equal(
+		gpuiBinaryPath("x86_64-pc-windows-msvc", "debug"),
+		path.join(gpuiDirectory, "target/debug/cap-gpui.exe"),
+	);
+	assert.deepEqual(
+		bundleArguments("aarch64-apple-darwin", ["--debug"], { native: true }),
+		["tauri", "bundle", "--debug"],
+	);
+});
+
+test("native debug staging copies the correct bytes and mode without replacing release artifacts", async (context) => {
+	const directory = await fs.mkdtemp(path.join(os.tmpdir(), "cap-gpui-stage-"));
+	context.after(() => fs.rm(directory, { recursive: true, force: true }));
+	const target = "aarch64-apple-darwin";
+	const debug = gpuiBinaryPath(target, "debug", directory);
+	const release = gpuiBinaryPath(target, "release", directory);
+	for (const file of [debug, release])
+		await fs.mkdir(path.dirname(file), { recursive: true });
+	await fs.writeFile(debug, "debug executable");
+	await fs.chmod(debug, 0o751);
+	await fs.writeFile(release, "release executable");
+	const staged = await stageMainBinary(target, "debug", { directory });
+	assert.equal(staged, path.join(directory, "target/debug/Cap"));
+	assert.equal(await fs.readFile(staged, "utf8"), "debug executable");
+	assert.equal((await fs.stat(staged)).mode & 0o777, 0o751);
+	assert.equal(await fs.readFile(release, "utf8"), "release executable");
+	await fs.writeFile(debug, "");
+	await assert.rejects(
+		stageMainBinary(target, "debug", { directory }),
+		/is empty/,
+	);
+});
+
+test("profile selection reaches the GPUI build, staging and macOS bundler", async () => {
+	const target = "aarch64-apple-darwin";
+	for (const debug of [false, true]) {
+		const commands = [],
+			stages = [],
+			packages = [];
+		await bundleGpui(
+			target,
+			[...(debug ? ["--debug"] : []), "--bundles", "app"],
+			{
+				platform: "darwin",
+				env: {
+					CARGO_BUILD_TARGET: "foreign-target",
+					RUST_TARGET_TRIPLE: "foreign-target",
+					PATH: "/bin",
+				},
+				hostTriple: () => {
+					assert.equal(debug, true);
+					return target;
+				},
+				runCommand: (...args) => commands.push(args),
+				stageBinary: (...args) => {
+					stages.push(args);
+					return "/fixture/Cap";
+				},
+				writeConfig: async () => {},
+				packageMacos: async (...args) => {
+					packages.push(args);
+					return { code: 0 };
+				},
+			},
+		);
+		assert.deepEqual(
+			commands[0][1].slice(1),
+			debug ? ["debug"] : ["release", target],
+		);
+		assert.deepEqual(stages, [[target, debug ? "debug" : "release"]]);
+		assert.deepEqual(packages[0][1], [
+			...(debug ? ["--debug"] : []),
+			"--bundles",
+			"app",
+		]);
+		assert.equal(packages[0][2].native, debug);
+		assert.equal(packages[0][2].bundleOnly, true);
+		if (debug) {
+			assert.equal(commands[0][2].env.CARGO_BUILD_TARGET, undefined);
+			assert.equal(commands[0][2].env.RUST_TARGET_TRIPLE, undefined);
+			assert.equal(packages[0][2].env.CARGO_BUILD_TARGET, undefined);
+		}
+	}
+});
+
+test("debug cannot stage a foreign architecture or override the selected target/profile", async () => {
+	for (const [target, args, platform] of [
+		["x86_64-apple-darwin", ["--debug"], "darwin"],
+		["aarch64-apple-darwin", ["--debug", "--target", "other"], "darwin"],
+		["aarch64-apple-darwin", ["--debug=true"], "darwin"],
+		["aarch64-apple-darwin", ["--profile", "custom"], "darwin"],
+		["aarch64-apple-darwin", ["--debug"], "win32"],
+	]) {
+		let mutations = 0;
+		await assert.rejects(
+			bundleGpui(target, args, {
+				platform,
+				hostTriple: () => "aarch64-apple-darwin",
+				runCommand: () => mutations++,
+				stageBinary: () => mutations++,
+			}),
+		);
+		assert.equal(mutations, 0);
+	}
 });
