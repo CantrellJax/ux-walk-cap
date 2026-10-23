@@ -1,0 +1,67 @@
+name: ux-walk native checks
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - apps/desktop-gpui/**
+      - apps/cli/**
+      - .github/workflows/ux-walk-*.yml
+  push:
+    branches: [main, feat/walkthrough-entry]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ux-walk-native-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    if: github.repository == 'CantrellJax/ux-walk-cap'
+    runs-on: macos-14
+    timeout-minutes: 90
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            apps/desktop-gpui -> target
+      - name: Format changed Rust surfaces
+        run: |
+          rustfmt --edition 2024 apps/desktop-gpui/src/tray.rs apps/desktop-gpui/src/updates.rs apps/desktop-gpui/src/installer.rs apps/cli/src/update.rs
+          git diff > "$RUNNER_TEMP/rustfmt.patch"
+          git diff --exit-code
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: rustfmt-corrections
+          path: ${{ runner.temp }}/rustfmt.patch
+      - name: Prepare native dependencies
+        run: |
+          node scripts/setup.js
+          node scripts/sync-desktop-versions.mjs
+          ./scripts/prepare-gpui-dependency.sh
+      - name: Check desktop and CLI
+        run: |
+          cargo +1.95.0 check --manifest-path apps/desktop-gpui/Cargo.toml --locked -p cap-desktop-gpui
+          cargo +1.95.0 check --locked -p cap
+      - name: Exercise menu and fork update protection
+        run: |
+          task_frameworks="apps/desktop-gpui/target/debug/Frameworks"
+          mkdir -p "$task_frameworks"
+          ln -sfn "$GITHUB_WORKSPACE/target/Frameworks/Spacedrive.framework" "$task_frameworks/Spacedrive.framework"
+          cargo +1.95.0 test --manifest-path apps/desktop-gpui/Cargo.toml --locked --bin cap-gpui tray::tests
+          cargo +1.95.0 test --manifest-path apps/desktop-gpui/Cargo.toml --locked --bin cap-gpui installer::tests::fork_refuses_official_update_resolution
+          cargo +1.95.0 test --locked -p cap update::tests::fork_refuses_official_installer

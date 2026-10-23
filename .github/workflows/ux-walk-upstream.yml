@@ -1,0 +1,47 @@
+name: Propose upstream Cap updates
+
+on:
+  schedule:
+    - cron: '41 14 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+concurrency:
+  group: ux-walk-upstream
+  cancel-in-progress: false
+
+jobs:
+  propose:
+    if: github.repository == 'CantrellJax/ux-walk-cap'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Merge upstream into the proposal workspace
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git remote add cap-upstream https://github.com/CapSoftware/Cap.git
+          git fetch cap-upstream main
+          git merge --no-edit cap-upstream/main
+      - uses: peter-evans/create-pull-request@v7
+        id: proposal
+        with:
+          base: main
+          branch: upkeep/cap-upstream
+          title: 'Update Cap from upstream'
+          body: |
+            Merge upstream Cap while retaining the walkthrough entry and fork updater protection.
+
+            Review the delta and the manually dispatched native checks before merging. No automatic main update or installed-app replacement occurs.
+          draft: true
+      - name: Dispatch checks for the update branch
+        if: steps.proposal.outputs.pull-request-number != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run ux-walk-check.yml --repo "$GITHUB_REPOSITORY" --ref upkeep/cap-upstream
