@@ -48,6 +48,7 @@ mod library;
 mod main_window;
 mod media_access;
 mod menus;
+mod mode_choice;
 mod mode_select_window;
 mod onboarding_audio;
 mod onboarding_doodles;
@@ -83,12 +84,12 @@ mod target_thumbnails;
 mod teleprompter_window;
 mod theme;
 mod transcription;
-mod ux_walk;
-mod ux_walk_preferences;
 mod tray;
 mod ui;
 mod updates;
 mod upload;
+mod ux_walk;
+mod ux_walk_preferences;
 
 use gpui::{App, AppContext as _, Bounds, WindowBounds, WindowOptions, px, size};
 

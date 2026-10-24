@@ -17,7 +17,7 @@ Cap UX combines [Cap](https://github.com/CapSoftware/Cap)'s screen recorder and 
 
 ## What you get
 
-- **UX Walk in the menu.** Select Mode → UX Walk… opens the bundled walkthrough setup and native recording controls.
+- **UX Walk in every mode picker.** Open walkthrough setup from the menu, main window or mode picker. Onboarding introduces it alongside Instant, Studio and Screenshot.
 - **One settings window.** Walk defaults live in General, the output folder in Recordings, and providers in Transcription. The CLI reads the same preferences.
 - **Your transcription provider.** ElevenLabs Scribe, AssemblyAI, Descript, or no transcription. Existing Keychain entries are reused. Cap editor captions keep their local models.
 - **Evidence an agent can read.** Video, screenshots, timestamped notes, chapters and a local report stay together. Browser telemetry depends on the capture mode and optional selected-tab extension.

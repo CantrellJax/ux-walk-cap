@@ -20,6 +20,7 @@ use crate::{
     feeds::{self, Feeds},
     library::{self, RecordingItem, ScreenshotItem},
     media_access::MediaAccess,
+    mode_choice::ModeChoice,
     permissions::OSPermission,
     recording,
     session::{Phase, RecordingSession},
@@ -137,7 +138,7 @@ impl Mode {
     }
 
     /// `size-4` for instant, `size-[0.9rem]` for the other two.
-    fn icon_size(self) -> f32 {
+    pub(crate) fn icon_size(self) -> f32 {
         match self {
             Self::Instant => 16.,
             Self::Studio | Self::Screenshot => 14.4,
@@ -155,7 +156,7 @@ impl Mode {
         }
     }
 
-    fn panel_description(self) -> &'static str {
+    pub(crate) fn panel_description(self) -> &'static str {
         match self {
             Self::Instant => {
                 "Share instantly with a link. Your recording uploads as you record, so you \
@@ -267,17 +268,17 @@ fn capture_press_fill(theme: Theme, selected: bool) -> Hsla {
 
 #[derive(Default)]
 struct ModeHoverState {
-    trigger: Option<Mode>,
-    card: Option<Mode>,
-    visible: Option<Mode>,
+    trigger: Option<ModeChoice>,
+    card: Option<ModeChoice>,
+    visible: Option<ModeChoice>,
 }
 
 impl ModeHoverState {
-    fn target(&self) -> Option<Mode> {
+    fn target(&self) -> Option<ModeChoice> {
         self.trigger.or(self.card)
     }
 
-    fn update(&mut self, mode: Mode, card: bool, hovered: bool) {
+    fn update(&mut self, mode: ModeChoice, card: bool, hovered: bool) {
         if !card && hovered && self.card != Some(mode) {
             self.card = None;
         }
@@ -296,7 +297,7 @@ impl ModeHoverState {
 
 #[derive(IntoElement)]
 struct ModeHoverCard {
-    mode: Mode,
+    mode: ModeChoice,
     theme: Theme,
 }
 
@@ -304,15 +305,7 @@ impl gpui::RenderOnce for ModeHoverCard {
     fn render(self, _window: &mut Window, _cx: &mut gpui::App) -> impl IntoElement {
         let theme = self.theme;
         let mode = self.mode;
-        let description = match mode {
-            Mode::Instant => {
-                "No rendering required — uploads on the fly so you can share the link the moment you stop."
-            }
-            Mode::Studio => {
-                "Saves to your computer and opens the editor when you stop. Choose recording quality in settings."
-            }
-            Mode::Screenshot => "Capture and annotate stills.",
-        };
+        let description = mode.hover_description();
         div()
             .flex()
             .flex_col()
@@ -329,7 +322,7 @@ impl gpui::RenderOnce for ModeHoverCard {
             .child(
                 div()
                     .text_size(px(12.))
-                    .child(format!("{} mode", mode.panel_title())),
+                    .child(format!("{} mode", mode.title())),
             )
             .child(
                 div()
@@ -338,7 +331,7 @@ impl gpui::RenderOnce for ModeHoverCard {
                     .text_color(theme.gray_4)
                     .child(description),
             )
-            .when(mode != Mode::Screenshot, |this| {
+            .when(mode != ModeChoice::Capture(Mode::Screenshot), |this| {
                 this.child(
                     div()
                         .id("mode-quality-settings")
@@ -363,10 +356,14 @@ impl gpui::RenderOnce for ModeHoverCard {
                                     style.text_color(theme.gray_1)
                                 }),
                         )
-                        .child("Quality settings")
+                        .child(if mode == ModeChoice::UxWalk {
+                            "UX Walk settings"
+                        } else {
+                            "Quality settings"
+                        })
                         .on_click(move |_, _, cx| {
                             cx.stop_propagation();
-                            cx.defer(move |cx| app_windows::open_quality_settings(mode, cx));
+                            cx.defer(move |cx| mode.open_settings(cx));
                         }),
                 )
             })
@@ -785,7 +782,7 @@ pub struct MainWindow {
     mode: Mode,
     mode_hover: ModeHoverState,
     mode_hover_task: Option<Task<()>>,
-    mode_hover_bounds: [Rc<Cell<Option<gpui::Bounds<gpui::Pixels>>>>; 3],
+    mode_hover_bounds: [Rc<Cell<Option<gpui::Bounds<gpui::Pixels>>>>; ModeChoice::ALL.len()],
     target: Option<TargetType>,
     devices: DeviceSnapshot,
     camera: Option<CameraOption>,
@@ -5757,6 +5754,22 @@ impl MainWindow {
             .on_click(on_click)
     }
 
+    fn choose_mode_choice(&mut self, choice: ModeChoice, cx: &mut Context<Self>) {
+        if self.is_preparing_recording()
+            || self.session.read(cx).editor_recording_target().is_some()
+        {
+            return;
+        }
+        if let Some(mode) = choice.capture_mode() {
+            self.set_mode(mode, cx);
+            cx.defer(app_windows::refresh_target_overlays);
+        } else {
+            self.clear_mode_hover();
+            cx.notify();
+            cx.defer(crate::ux_walk::start);
+        }
+    }
+
     /// `ModeInfoPanel`. Its copy is deliberately not the copy in `MODE_BUTTONS`
     /// -- the hover cards and this panel describe the modes differently, so
     /// both sets of strings are carried.
@@ -5765,12 +5778,16 @@ impl MainWindow {
         let effective_mode = self.effective_mode(cx);
         let locked = self.session.read(cx).editor_recording_target().is_some();
 
-        div().flex().flex_col().gap(px(8.)).w_full().children(
-            [Mode::Instant, Mode::Studio, Mode::Screenshot].map(|mode| {
-                let selected = mode == effective_mode;
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(8.))
+            .w_full()
+            .children(ModeChoice::ALL.iter().copied().map(|mode| {
+                let selected = mode.capture_mode() == Some(effective_mode);
 
                 div()
-                    .id(SharedString::from(mode.panel_title()))
+                    .id(SharedString::from(mode.title()))
                     .when(locked && !selected, |this| this.opacity(0.5))
                     .flex()
                     .flex_row()
@@ -5825,7 +5842,7 @@ impl MainWindow {
                                     } else {
                                         theme.gray_12
                                     })
-                                    .child(mode.panel_title()),
+                                    .child(mode.title()),
                             )
                             .child(
                                 div()
@@ -5836,11 +5853,10 @@ impl MainWindow {
                     )
                     .hover(|style| style.bg(theme.body_hover_fill(4)))
                     .on_click(cx.listener(move |this, _, _window, cx| {
-                        this.set_mode(mode, cx);
+                        this.choose_mode_choice(mode, cx);
                         this.close_panel(cx);
                     }))
-            }),
-        )
+            }))
     }
 
     fn render_access_banner(
@@ -6133,7 +6149,13 @@ impl MainWindow {
         self.mode_hover = ModeHoverState::default();
     }
 
-    fn update_mode_hover(&mut self, mode: Mode, card: bool, hovered: bool, cx: &mut Context<Self>) {
+    fn update_mode_hover(
+        &mut self,
+        mode: ModeChoice,
+        card: bool,
+        hovered: bool,
+        cx: &mut Context<Self>,
+    ) {
         let previous = self.mode_hover.target();
         self.mode_hover.update(mode, card, hovered);
         let target = self.mode_hover.target();
@@ -6165,11 +6187,7 @@ impl MainWindow {
         if self.panel.is_some() || self.session.read(cx).phase != Phase::Idle {
             return None;
         }
-        let index = match mode {
-            Mode::Instant => 0,
-            Mode::Studio => 1,
-            Mode::Screenshot => 2,
-        };
+        let index = mode.index();
         let bounds = self.mode_hover_bounds[index].get()?;
         Some(
             gpui::anchored()
@@ -6195,23 +6213,20 @@ impl MainWindow {
         )
     }
 
-    /// `Mode.tsx`: `p-1.5 gap-2 rounded-full border border-gray-5 bg-gray-3`,
-    /// 28px round buttons (`size-7`). Selected gets `bg-gray-7` plus a 2px
-    /// `blue-500` ring offset 1px against `gray-1`.
     fn render_mode_pill(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = self.theme;
         let selected_mode = self.effective_mode(cx);
         let locked = self.session.read(cx).editor_recording_target().is_some();
 
-        let button = |mode: Mode, id: &'static str, index: usize| {
-            let selected = mode == selected_mode;
+        let button = |mode: ModeChoice, index: usize| {
+            let selected = mode.capture_mode() == Some(selected_mode);
             let bounds = self.mode_hover_bounds[index].clone();
             div()
-                .id(SharedString::from(id))
+                .id(("mode-choice", index))
                 .tab_index(0)
                 .when(self.keyboard_nav, ui::keyboard_nav::ring)
                 .role(gpui::Role::Button)
-                .aria_label(mode.panel_title())
+                .aria_label(mode.title())
                 .aria_selected(selected)
                 .relative()
                 .on_hover(cx.listener(move |this, hovered, _, cx| {
@@ -6256,8 +6271,7 @@ impl MainWindow {
                     if this.session.read(cx).editor_recording_target().is_some() {
                         return;
                     }
-                    this.set_mode(mode, cx);
-                    cx.defer(app_windows::refresh_target_overlays);
+                    this.choose_mode_choice(mode, cx);
                 }))
         };
 
@@ -6266,15 +6280,19 @@ impl MainWindow {
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(8.))
-            .p(px(6.))
+            .gap(px(5.))
+            .p(px(5.))
             .rounded_full()
             .border_1()
             .border_color(theme.body_border(5))
             .bg(theme.body_fill(3))
-            .child(button(Mode::Instant, "mode-instant", 0))
-            .child(button(Mode::Studio, "mode-studio", 1))
-            .child(button(Mode::Screenshot, "mode-screenshot", 2))
+            .children(
+                ModeChoice::ALL
+                    .iter()
+                    .copied()
+                    .enumerate()
+                    .map(|(index, mode)| button(mode, index)),
+            )
             // `absolute -left-1.5 -top-2 p-1 rounded-full bg-gray-5`, hanging
             // off the pill's top-left corner.
             .child(
@@ -7131,48 +7149,53 @@ mod recording_start_permit_tests {
 
 #[cfg(test)]
 mod mode_hover_tests {
-    use super::{Mode, ModeHoverState};
+    use super::{Mode, ModeChoice, ModeHoverState};
+
+    const INSTANT: ModeChoice = ModeChoice::Capture(Mode::Instant);
+    const STUDIO: ModeChoice = ModeChoice::Capture(Mode::Studio);
 
     #[test]
     fn moving_between_trigger_and_card_keeps_the_card_open_in_either_event_order() {
-        for enter_first in [false, true] {
-            let mut hover = ModeHoverState::default();
-            hover.update(Mode::Studio, false, true);
-            hover.visible = Some(Mode::Studio);
-            if enter_first {
-                hover.update(Mode::Studio, true, true);
-                hover.update(Mode::Studio, false, false);
-            } else {
-                hover.update(Mode::Studio, false, false);
-                hover.update(Mode::Studio, true, true);
+        for choice in ModeChoice::ALL.iter().copied() {
+            for enter_first in [false, true] {
+                let mut hover = ModeHoverState::default();
+                hover.update(choice, false, true);
+                hover.visible = Some(choice);
+                if enter_first {
+                    hover.update(choice, true, true);
+                    hover.update(choice, false, false);
+                } else {
+                    hover.update(choice, false, false);
+                    hover.update(choice, true, true);
+                }
+                assert_eq!(hover.target(), Some(choice));
+                hover.update(choice, true, false);
+                assert_eq!(hover.target(), None);
             }
-            assert_eq!(hover.target(), Some(Mode::Studio));
-            hover.update(Mode::Studio, true, false);
-            assert_eq!(hover.target(), None);
         }
     }
 
     #[test]
     fn late_leave_from_previous_trigger_does_not_dismiss_the_new_mode() {
         let mut hover = ModeHoverState::default();
-        hover.update(Mode::Instant, false, true);
-        hover.update(Mode::Studio, false, true);
-        hover.update(Mode::Instant, false, false);
-        assert_eq!(hover.target(), Some(Mode::Studio));
-        hover.update(Mode::Studio, false, false);
+        hover.update(INSTANT, false, true);
+        hover.update(STUDIO, false, true);
+        hover.update(INSTANT, false, false);
+        assert_eq!(hover.target(), Some(STUDIO));
+        hover.update(STUDIO, false, false);
         assert_eq!(hover.target(), None);
     }
 
     #[test]
     fn switching_from_a_card_to_another_mode_does_not_restore_the_removed_card() {
         let mut hover = ModeHoverState::default();
-        hover.update(Mode::Instant, true, true);
-        hover.visible = Some(Mode::Instant);
-        hover.update(Mode::Studio, false, true);
-        assert_eq!(hover.target(), Some(Mode::Studio));
-        hover.update(Mode::Studio, false, false);
+        hover.update(INSTANT, true, true);
+        hover.visible = Some(INSTANT);
+        hover.update(STUDIO, false, true);
+        assert_eq!(hover.target(), Some(STUDIO));
+        hover.update(STUDIO, false, false);
         assert_eq!(hover.target(), None);
-        hover.update(Mode::Instant, true, false);
+        hover.update(INSTANT, true, false);
         assert_eq!(hover.target(), None);
     }
 }

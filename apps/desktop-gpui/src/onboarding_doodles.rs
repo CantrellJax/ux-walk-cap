@@ -276,3 +276,22 @@ pub static TICK: Doodle = Doodle {
         .width(3.)
         .draw(0, 300)],
 };
+
+pub static UX_WALK: Doodle = Doodle {
+    view: (120., 104.),
+    strokes: &[
+        Stroke::ink("M 26 10 L 94 10 L 94 94 L 26 94 Z").draw(60, 700),
+        Stroke::ink("M 39 29 L 44 34 L 53 23 M 62 29 L 81 29")
+            .with_ink(Ink::Accent)
+            .width(3.)
+            .draw(650, 500),
+        Stroke::ink("M 39 51 L 44 56 L 53 45 M 62 51 L 81 51")
+            .with_ink(Ink::Green)
+            .width(3.)
+            .draw(950, 500),
+        Stroke::ink("M 39 73 L 53 73 M 62 73 L 81 73")
+            .with_ink(Ink::Soft)
+            .width(3.)
+            .draw(1250, 400),
+    ],
+};

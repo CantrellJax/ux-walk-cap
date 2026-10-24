@@ -1592,6 +1592,16 @@ pub fn mode_select_closed(cx: &mut App) {
     restore_after_settings(cx);
 }
 
+pub fn start_ux_walk_from_mode_select(cx: &mut App) {
+    if let Some(handle) = cx.global_mut::<AppWindows>().mode_select.take() {
+        handle
+            .update(cx, |_, window, _| window.remove_window())
+            .ok();
+    }
+    restore_after_settings(cx);
+    crate::ux_walk::start(cx);
+}
+
 /// Click a mode card in the open mode select window (harness path for
 /// `CAP_GPUI_AUTO_MODE_SELECT=<mode>`; synthetic clicks are dropped).
 pub fn choose_mode_in_mode_select(mode: Mode, cx: &mut App) {

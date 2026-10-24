@@ -9,6 +9,7 @@ use gpui::{
 
 use crate::{
     main_window::Mode,
+    mode_choice::ModeChoice,
     onboarding_audio::OnboardingAudio,
     permissions::{self, OSPermission, OSPermissionStatus},
     permissions_ui::{PermissionsState, RowAction},
@@ -114,6 +115,8 @@ enum Step {
     Instant,
     Studio,
     Screenshot,
+    #[cfg(target_os = "macos")]
+    UxWalk,
     Toggle,
     Shortcuts,
     Faq,
@@ -124,12 +127,14 @@ fn guided_permission(permission: OSPermission) -> bool {
 }
 
 impl Step {
-    const ALL: [Self; 8] = [
+    const ALL: &'static [Self] = &[
         Self::Permissions,
         Self::Overview,
         Self::Instant,
         Self::Studio,
         Self::Screenshot,
+        #[cfg(target_os = "macos")]
+        Self::UxWalk,
         Self::Toggle,
         Self::Shortcuts,
         Self::Faq,
@@ -167,6 +172,9 @@ impl Step {
                 12250,
             )),
             Self::Screenshot => Some((&[200, 700, 1400, 2600, 3400, 3900, 4900, 5900, 6700], 8000)),
+            #[cfg(target_os = "macos")]
+            Self::Toggle => Some((&[1800, 3600, 5400], 7200)),
+            #[cfg(not(target_os = "macos"))]
             Self::Toggle => Some((&[2500, 5000], 7500)),
             _ => None,
         }
@@ -174,7 +182,7 @@ impl Step {
 }
 
 struct ModeDetail {
-    mode: Mode,
+    mode: ModeChoice,
     title: &'static str,
     tagline: &'static str,
     description: &'static str,
@@ -182,9 +190,9 @@ struct ModeDetail {
     features: [&'static str; 4],
 }
 
-const MODES: [ModeDetail; 3] = [
+const MODES: &[ModeDetail] = &[
     ModeDetail {
-        mode: Mode::Instant,
+        mode: ModeChoice::Capture(Mode::Instant),
         title: "Instant Mode",
         tagline: "Record & share in seconds",
         description: "Your recording uploads as you capture. Stop recording and instantly get a shareable link — no waiting.",
@@ -197,7 +205,7 @@ const MODES: [ModeDetail; 3] = [
         ],
     },
     ModeDetail {
-        mode: Mode::Studio,
+        mode: ModeChoice::Capture(Mode::Studio),
         title: "Studio Mode",
         tagline: "Professional editing tools",
         description: "Record in full quality locally, then use the built-in editor to add backgrounds, padding, cursor effects, and more.",
@@ -210,7 +218,7 @@ const MODES: [ModeDetail; 3] = [
         ],
     },
     ModeDetail {
-        mode: Mode::Screenshot,
+        mode: ModeChoice::Capture(Mode::Screenshot),
         title: "Screenshot Mode",
         tagline: "Capture & beautify instantly",
         description: "Take screenshots with a single hotkey, add annotations and beautiful backgrounds, then share or copy instantly.",
@@ -220,6 +228,20 @@ const MODES: [ModeDetail; 3] = [
             "Annotation & drawing tools",
             "Beautiful backgrounds",
             "Copy, save, or share",
+        ],
+    },
+    #[cfg(target_os = "macos")]
+    ModeDetail {
+        mode: ModeChoice::UxWalk,
+        title: "UX Walk Mode",
+        tagline: "Record, note & review",
+        description: "Walk through your product and keep screen recordings, observations and chapters together. Review the evidence and hand it to your agent.",
+        icon: "icons/ux-walk.svg",
+        features: [
+            "Screen recording & narration",
+            "Timestamped notes & chapters",
+            "Your transcription provider",
+            "Evidence for your agent",
         ],
     },
 ];
@@ -492,7 +514,16 @@ impl OnboardingWindow {
             permissions::relaunch(cx);
             return;
         }
-        cx.defer(crate::app_windows::onboarding_finished);
+        let walk = self
+            .chosen_mode
+            .and_then(|index| MODES.get(index))
+            .is_some_and(|mode| mode.mode == ModeChoice::UxWalk);
+        cx.defer(move |cx| {
+            crate::app_windows::onboarding_finished(cx);
+            if walk {
+                ModeChoice::UxWalk.activate(cx);
+            }
+        });
     }
 
     fn continue_from_welcome(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -788,11 +819,12 @@ impl OnboardingWindow {
     }
 }
 
-fn mode_doodle(mode: Mode) -> &'static crate::doodle::Doodle {
+fn mode_doodle(mode: ModeChoice) -> &'static crate::doodle::Doodle {
     match mode {
-        Mode::Instant => &crate::onboarding_doodles::UPLOAD,
-        Mode::Studio => &crate::onboarding_doodles::TRACKS,
-        Mode::Screenshot => &crate::onboarding_doodles::SNAP,
+        ModeChoice::Capture(Mode::Instant) => &crate::onboarding_doodles::UPLOAD,
+        ModeChoice::Capture(Mode::Studio) => &crate::onboarding_doodles::TRACKS,
+        ModeChoice::Capture(Mode::Screenshot) => &crate::onboarding_doodles::SNAP,
+        ModeChoice::UxWalk => &crate::onboarding_doodles::UX_WALK,
     }
 }
 
@@ -1341,8 +1373,8 @@ impl OnboardingWindow {
     fn render_overview(&self) -> AnyElement {
         let theme = self.theme;
         div().flex().flex_col().items_center().justify_center().min_h_full().px(px(40.)).gap(px(32.))
-            .child(self.heading("One app, every workflow", "Whether you need speed, studio quality, or a quick screenshot — Cap has a mode for it."))
-            .child(div().flex().gap(px(16.)).w_full().max_w(px(540.)).children(MODES.iter().enumerate().map(|(index, mode)| {
+            .child(self.heading("One app, every workflow", "Share a quick capture, edit a polished recording, or walk through your product with notes and chapters."))
+            .child(div().flex().gap(px(16.)).w_full().max_w(px(if cfg!(target_os = "macos") { 720. } else { 540. })).children(MODES.iter().enumerate().map(|(index, mode)| {
                 let paper = stage::Paper::new(&theme);
                 let card = self.paper_card().flex_1().min_w_0().flex().flex_col().items_center().gap(px(10.)).px(px(20.)).pt(px(22.)).pb(px(24.))
                     .child(crate::doodle::doodle(mode_doodle(mode.mode), paper.palette(), self.step_at + Duration::from_millis(index as u64 * 180), !self.animated, 96., 84.))
@@ -1442,8 +1474,9 @@ impl OnboardingWindow {
         };
         self.chosen_mode = Some(index);
         self.demo_task = None;
-        let mode = mode.mode;
-        cx.defer(move |cx| crate::app_windows::set_recording_mode(mode, cx));
+        if let Some(mode) = mode.mode.capture_mode() {
+            cx.defer(move |cx| crate::app_windows::set_recording_mode(mode, cx));
+        }
         cx.notify();
     }
 
@@ -2557,6 +2590,53 @@ impl OnboardingWindow {
     }
 
     fn render_demo(&self, index: usize) -> AnyElement {
+        if MODES[index].mode == ModeChoice::UxWalk {
+            let paper = stage::Paper::new(&self.theme);
+            return div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .justify_center()
+                .gap(px(18.))
+                .children(
+                    [
+                        (
+                            "1",
+                            "Record your walkthrough",
+                            "Capture your screen and narration.",
+                        ),
+                        (
+                            "2",
+                            "Add notes and chapters",
+                            "Keep observations beside the recording.",
+                        ),
+                        (
+                            "3",
+                            "Review and hand off",
+                            "Give your agent the evidence and context.",
+                        ),
+                    ]
+                    .into_iter()
+                    .map(|(number, title, description)| {
+                        div()
+                            .flex()
+                            .items_start()
+                            .gap(px(12.))
+                            .child(copy(number, 16., paper.accent).font_weight(FontWeight::BOLD))
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .gap(px(4.))
+                                    .child(
+                                        copy(title, 13., paper.ink).font_weight(FontWeight::MEDIUM),
+                                    )
+                                    .child(copy(description, 11., paper.soft).line_height(px(16.))),
+                            )
+                    }),
+                )
+                .into_any_element();
+        }
         let phase = self.demo_phase;
         let (labels, active) = match index {
             0 => (
@@ -2645,6 +2725,8 @@ impl Render for OnboardingWindow {
             Step::Instant => self.render_detail(0),
             Step::Studio => self.render_detail(1),
             Step::Screenshot => self.render_detail(2),
+            #[cfg(target_os = "macos")]
+            Step::UxWalk => self.render_detail(3),
             Step::Toggle => self.render_toggle(cx),
             Step::Shortcuts => self.render_shortcuts(),
             Step::Faq => self.render_faq(cx),
@@ -2779,7 +2861,8 @@ mod tests {
 
     #[test]
     fn first_run_visits_every_platform_stage_and_back_never_opens_an_omitted_step() {
-        for (macos, expected) in [(true, 8), (false, 7)] {
+        let stages = if cfg!(target_os = "macos") { 9 } else { 8 };
+        for (macos, expected) in [(true, stages), (false, stages - 1)] {
             let first = Step::first(macos, false);
             let mut visited = vec![first];
             while let Some(next) = visited.last().unwrap().next(false, true) {

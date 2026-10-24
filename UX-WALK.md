@@ -6,6 +6,8 @@ This fork extends [Cap](https://github.com/CapSoftware/Cap) with a small macOS w
 
 **Select Mode → UX Walk…** opens the bundled UX Walk helper. The existing Start a walk dialog asks for a topic, display and optional devices. Opening setup never starts capture by itself. Developer builds without the bundled helper can still open the standalone companion.
 
+The main window's mode controls, mode information panel and standalone picker offer the same UX Walk entry. Onboarding includes its overview card, walkthrough explanation and switching demo. Interface labels use UX Walk; explanatory copy calls it UX Walk mode.
+
 Cap's Studio CLI owns the continuous screen recording and separate camera/audio assets. ux-walk owns notes, chapters, screenshots, observations and its report. The ux-walk floating bar controls this CLI recording. Cap's desktop recording controls do not mirror it. Studio, Instant and Screenshot remain Cap's three persisted capture modes; Walkthrough is a launch preset, indicated by its ellipsis.
 
 Opening a second link focuses the existing setup or leaves the current walk intact. Stop ends a recording ux-walk started. Ending a log attached to another recording leaves that recording running. A log-only session can still use ux-walk's native instructions capture without Cap.

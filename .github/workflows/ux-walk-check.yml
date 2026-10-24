@@ -69,7 +69,7 @@ jobs:
             apps/desktop-gpui -> target
       - name: Format changed Rust surfaces
         run: |
-          rustfmt +1.95.0 --edition 2024 apps/desktop-gpui/src/tray.rs apps/desktop-gpui/src/updates.rs apps/desktop-gpui/src/installer.rs apps/desktop-gpui/src/ux_walk.rs apps/desktop-gpui/src/ux_walk_preferences.rs apps/desktop-gpui/src/settings_ux_walk.rs apps/desktop-gpui/src/settings_window.rs apps/desktop-gpui/src/settings_pages.rs apps/desktop-gpui/src/store.rs apps/desktop-gpui/src/diagnostics.rs apps/desktop-gpui/src/transcription.rs apps/cli/src/credentials.rs apps/cli/src/automation.rs apps/cli/src/recordings.rs apps/cli/src/update.rs
+          rustfmt +1.95.0 --edition 2024 apps/desktop-gpui/src/tray.rs apps/desktop-gpui/src/updates.rs apps/desktop-gpui/src/installer.rs apps/desktop-gpui/src/ux_walk.rs apps/desktop-gpui/src/ux_walk_preferences.rs apps/desktop-gpui/src/settings_ux_walk.rs apps/desktop-gpui/src/settings_window.rs apps/desktop-gpui/src/settings_pages.rs apps/desktop-gpui/src/store.rs apps/desktop-gpui/src/diagnostics.rs apps/desktop-gpui/src/transcription.rs apps/desktop-gpui/src/mode_choice.rs apps/desktop-gpui/src/mode_select_window.rs apps/desktop-gpui/src/main_window.rs apps/desktop-gpui/src/onboarding_window.rs apps/desktop-gpui/src/onboarding_doodles.rs apps/desktop-gpui/src/app_windows.rs apps/cli/src/credentials.rs apps/cli/src/automation.rs apps/cli/src/recordings.rs apps/cli/src/update.rs
           git diff > "$RUNNER_TEMP/rustfmt.patch"
       - uses: actions/upload-artifact@v4
         if: always()
@@ -92,6 +92,8 @@ jobs:
           ln -sfn "$GITHUB_WORKSPACE/target/Frameworks/Spacedrive.framework" "$task_frameworks/Spacedrive.framework"
           cargo +1.95.0 test --manifest-path apps/desktop-gpui/Cargo.toml --locked --bin cap-gpui tray::tests
           cargo +1.95.0 test --manifest-path apps/desktop-gpui/Cargo.toml --locked --bin cap-gpui ux_walk_preferences::tests
+          cargo +1.95.0 test --manifest-path apps/desktop-gpui/Cargo.toml --locked --bin cap-gpui main_window::mode_hover_tests
+          cargo +1.95.0 test --manifest-path apps/desktop-gpui/Cargo.toml --locked --bin cap-gpui onboarding_window::tests
           cargo +1.95.0 test --manifest-path apps/desktop-gpui/Cargo.toml --locked --bin cap-gpui installer::tests::fork_refuses_official_update_resolution
           cargo +1.95.0 test --locked -p cap update::tests::fork_refuses_official_installer
       - name: Verify formatting
@@ -142,7 +144,7 @@ jobs:
               'bundle': {
                   'createUpdaterArtifacts': False,
                   'fileAssociations': [],
-                  'macOS': {'signingIdentity': '-'},
+                  'macOS': {'signingIdentity': '-', 'minimumSystemVersion': '15.0'},
               },
           }
           (out / 'preview.json').write_text(json.dumps(config, indent=2) + '\n')
@@ -181,6 +183,7 @@ jobs:
           profile = '/tmp/ux-walk-cap-preview-' + os.environ['GITHUB_SHA'][:12]
           assert not info.get('CFBundleDocumentTypes'), 'Preview must not claim recordings'
           assert not info.get('CFBundleURLTypes'), 'Preview must not claim URL schemes'
+          assert info['LSMinimumSystemVersion'] == '15.0', 'The bundled helper requires macOS 15'
           assert info['LSEnvironment'] == {
               'CAP_GPUI_APP_DATA_DIR': profile + '/data',
               'CAP_GPUI_LOG_DIR': profile + '/logs',

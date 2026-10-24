@@ -13,29 +13,20 @@ use gpui::{
     div, prelude::FluentBuilder, px, svg,
 };
 
-use crate::{main_window::Mode, theme::Theme, ui::keyboard_nav};
+use crate::{main_window::Mode, mode_choice::ModeChoice, theme::Theme, ui::keyboard_nav};
 
 /// `.inner_size(580.0, 340.0)` / `.min_inner_size(580.0, 340.0)` /
 /// `.resizable(false)` on the `ShowCapWindow::ModeSelect` arm in `windows.rs`,
 /// and the same pair again from `CapWindowId::ModeSelect::min_size`.
-pub const MODE_SELECT_WIDTH: f32 = 580.;
+pub const MODE_SELECT_WIDTH: f32 = if cfg!(target_os = "macos") {
+    720.
+} else {
+    580.
+};
 pub const MODE_SELECT_HEIGHT: f32 = 340.;
 
 /// `max-w-lg` on the wrapper around `<ModeSelect />`: 32rem.
-const CONTENT_MAX_WIDTH: f32 = 512.;
-
-impl Mode {
-    /// `modeOptions` in `ModeSelect.tsx` -- a third set of strings, shorter
-    /// than both `MODE_BUTTONS`' hover cards and `ModeInfoPanel`'s rows. The
-    /// app carries all three; so do we.
-    fn card_description(self) -> &'static str {
-        match self {
-            Self::Instant => "Share instantly with a link. Uploads as you record.",
-            Self::Studio => "Highest quality local recording for editing later.",
-            Self::Screenshot => "Capture and annotate screenshots instantly.",
-        }
-    }
-}
+const CONTENT_MAX_WIDTH: f32 = MODE_SELECT_WIDTH - 48.;
 
 pub struct ModeSelectWindow {
     theme: Theme,
@@ -101,16 +92,16 @@ impl ModeSelectWindow {
     }
 
     /// `ModeOption`: one card per mode, the whole card a button.
-    fn render_card(&self, mode: Mode, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_card(&self, mode: ModeChoice, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = self.theme;
-        let selected = mode == self.mode;
+        let selected = mode.capture_mode() == Some(self.mode);
         let dark = theme.is_dark();
 
         div()
-            .id(SharedString::from(mode.panel_title()))
+            .id(SharedString::from(mode.title()))
             .when(self.keyboard_nav, keyboard_nav::stop)
             .role(Role::Button)
-            .aria_label(mode.panel_title())
+            .aria_label(mode.title())
             .aria_description(mode.card_description())
             .aria_selected(selected)
             .relative()
@@ -226,7 +217,7 @@ impl ModeSelectWindow {
                             } else {
                                 Hsla::from(theme.gray_12)
                             })
-                            .child(mode.panel_title()),
+                            .child(mode.title()),
                     )
                     .child(
                         // `text-xs leading-relaxed text-gray-11 line-clamp-3`
@@ -238,7 +229,13 @@ impl ModeSelectWindow {
                             .child(mode.card_description()),
                     ),
             )
-            .on_click(cx.listener(move |this, _, _window, cx| this.choose(mode, cx)))
+            .on_click(cx.listener(move |this, _, _window, cx| {
+                if let Some(mode) = mode.capture_mode() {
+                    this.choose(mode, cx);
+                } else {
+                    cx.defer(crate::app_windows::start_ux_walk_from_mode_select);
+                }
+            }))
     }
 }
 
@@ -309,9 +306,12 @@ impl Render for ModeSelectWindow {
                             .flex_row()
                             .items_stretch()
                             .gap(px(16.))
-                            .child(self.render_card(Mode::Instant, cx))
-                            .child(self.render_card(Mode::Studio, cx))
-                            .child(self.render_card(Mode::Screenshot, cx)),
+                            .children(
+                                ModeChoice::ALL
+                                    .iter()
+                                    .copied()
+                                    .map(|mode| self.render_card(mode, cx)),
+                            ),
                     ),
             );
 
