@@ -782,7 +782,9 @@ pub struct MainWindow {
     mode: Mode,
     ux_walk_selected: bool,
     walk_topic: Entity<ui::TextInputState>,
+    walk_speakers: Entity<ui::TextInputState>,
     _walk_topic_events: gpui::Subscription,
+    _walk_speaker_events: gpui::Subscription,
     mode_hover: ModeHoverState,
     mode_hover_task: Option<Task<()>>,
     mode_hover_bounds: [Rc<Cell<Option<gpui::Bounds<gpui::Pixels>>>>; ModeChoice::ALL.len()],
@@ -1041,6 +1043,39 @@ impl MainWindow {
             cx.notify();
         });
 
+        let walk_speakers = cx.new(|cx| {
+            let mut input = ui::TextInputState::single_line(window, cx);
+            input.set_placeholder("Speaker names, separated by commas");
+            if let Ok(settings) = crate::ux_walk::load() {
+                let speakers = crate::ux_walk::text(&settings, "speakers");
+                input.set_text(
+                    if speakers.is_empty() {
+                        crate::ux_walk::text(&settings, "me")
+                    } else {
+                        speakers
+                    }
+                    .to_string(),
+                    cx,
+                );
+            }
+            input
+        });
+
+        let walk_speaker_events = cx.subscribe(&walk_speakers, |_: &mut Self, input, event, cx| {
+            if matches!(
+                event,
+                ui::TextInputEvent::Confirmed | ui::TextInputEvent::Blurred
+            ) {
+                if let Err(error) = crate::ux_walk::save(
+                    "speakers",
+                    serde_json::Value::String(input.read(cx).text().to_string()),
+                ) {
+                    tracing::warn!(%error, "saving speaker names");
+                }
+            }
+            cx.notify();
+        });
+
         let media = MediaAccess::global(cx);
         let mut media_allowed = (
             media.read(cx).allowed(OSPermission::Camera),
@@ -1108,7 +1143,9 @@ impl MainWindow {
             mode: Mode::from_store(),
             ux_walk_selected: crate::store::ux_walk_selected(),
             walk_topic,
+            walk_speakers,
             _walk_topic_events: walk_topic_events,
+            _walk_speaker_events: walk_speaker_events,
             mode_hover: ModeHoverState::default(),
             mode_hover_task: None,
             mode_hover_bounds: std::array::from_fn(|_| Rc::new(Cell::new(None))),
@@ -2306,7 +2343,21 @@ impl MainWindow {
         };
         let ux_walk = if self.mode_choice(cx) == ModeChoice::UxWalk && !editor_flow {
             match crate::ux_walk::request(self.walk_topic.read(cx).text()) {
-                Ok(request) => Some(request),
+                Ok(mut request) => {
+                    let settings = crate::ux_walk::load().unwrap_or_default();
+                    if crate::ux_walk::enabled(&settings, "askSpeakers") {
+                        request.speakers = self
+                            .walk_speakers
+                            .read(cx)
+                            .text()
+                            .split(',')
+                            .map(str::trim)
+                            .filter(|name| !name.is_empty())
+                            .map(str::to_string)
+                            .collect();
+                    }
+                    Some(request)
+                }
                 Err(error) => {
                     self.session.update(cx, |session, cx| {
                         session.error = Some(error);
@@ -3859,9 +3910,64 @@ impl MainWindow {
                                     &self.theme,
                                     "ux-walk-topic",
                                     &self.walk_topic,
-                                )),
+                                ))
+                                .when(
+                                    crate::ux_walk::load().is_ok_and(|settings| {
+                                        crate::ux_walk::enabled(&settings, "askSpeakers")
+                                    }),
+                                    |this| {
+                                        this.child(
+                                            div()
+                                                .text_size(px(11.))
+                                                .text_color(self.theme.gray_10)
+                                                .child("Who is speaking?"),
+                                        )
+                                        .child(
+                                            ui::TextInput::settings(
+                                                &self.theme,
+                                                "ux-walk-speakers",
+                                                &self.walk_speakers,
+                                            ),
+                                        )
+                                    },
+                                )
+                                .child(
+                                    ui::Button::body(
+                                        &self.theme,
+                                        "ux-walk-open-start",
+                                        ui::ButtonVariant::Gray,
+                                        ui::ButtonSize::Sm,
+                                    )
+                                    .label("Open start page ↗")
+                                    .on_click(|_, _, cx| {
+                                        if let Ok(settings) = crate::ux_walk::load() {
+                                            let url = crate::ux_walk::text(&settings, "url");
+                                            if let Ok(url) = reqwest::Url::parse(url)
+                                                && matches!(url.scheme(), "http" | "https")
+                                            {
+                                                cx.open_url(url.as_str());
+                                            }
+                                        }
+                                    }),
+                                ),
                         )
                     })
+                    .when(
+                        self.mode_choice(cx) == ModeChoice::UxWalk
+                            && self.session.read(cx).walk.is_some(),
+                        |this| {
+                            this.child(
+                                ui::Button::body(
+                                    &self.theme,
+                                    "ux-walk-recent",
+                                    ui::ButtonVariant::Gray,
+                                    ui::ButtonSize::Sm,
+                                )
+                                .label("Open recent walk")
+                                .on_click(|_, _, cx| cx.defer(crate::ux_walk_window::open)),
+                            )
+                        },
+                    )
                     .child(self.render_targets(cx))
                     .child(self.render_base_controls(cx)),
             ),

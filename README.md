@@ -17,15 +17,15 @@ Cap UX combines [Cap](https://github.com/CapSoftware/Cap)'s screen recorder and 
 
 ## What you get
 
-- **UX Walk in every mode picker.** Open walkthrough setup from the menu, main window or mode picker. Onboarding introduces it alongside Instant, Studio and Screenshot.
+- **UX Walk in every mode picker.** Select the native recorder from the menu, main window or mode picker. Onboarding introduces it alongside Instant, Studio and Screenshot.
 - **One settings window.** Walk defaults live in General, the output folder in Recordings, and providers in Transcription. The CLI reads the same preferences.
 - **Your transcription provider.** ElevenLabs Scribe, AssemblyAI, Descript, or no transcription. Existing Keychain entries are reused. Cap editor captions keep their local models.
-- **Evidence an agent can read.** Video, screenshots, timestamped notes, chapters and a local report stay together. Browser telemetry depends on the capture mode and optional selected-tab extension.
+- **Evidence an agent can read.** Video, screenshots, timestamped notes, chapters and a local report stay together. Native walks capture video and manual notes; DOM, network and console events are not collected.
 - **Cap's editor.** Keep the original recording as evidence and edit a copy for sharing.
 
 ## Try it
 
-Cap UX is currently a macOS 15+ developer preview. A signed public installer is not available yet. The native CI workflow can build an isolated **Cap-UX Preview.app** with its own profile, the pinned UX Walk engine, a Node runtime and native helpers.
+Cap UX is currently a macOS 15+ developer preview. A signed public installer is not available yet. The native CI workflow can build an isolated **Cap UX Preview.app** with its own profile, the pinned UX Walk engine, a Node runtime and the native walk adapter.
 
 The walkthrough processor currently needs FFmpeg on your Mac. Optional chapter briefs need your configured Claude CLI; agent handoffs to cmux need cmux. Cloud transcription needs your own provider key. UX Walk does not automatically publish recordings.
 
@@ -36,7 +36,7 @@ git clone https://github.com/CantrellJax/ux-walk-cap.git
 cd ux-walk-cap
 ```
 
-Use Xcode 26 or newer with the existing Cap setup/build pipeline below, install the engine dependencies with `npm ci --ignore-scripts --prefix vendor/ux-walk`, then run `node scripts/bundle-ux-walk.mjs /path/to/Cap-UX.app` after packaging. The helper is built from the pinned source snapshot; a separate UX Walk installation is unnecessary.
+Use Xcode 26 or newer with the existing Cap setup/build pipeline below, install the engine dependencies with `npm ci --ignore-scripts --prefix vendor/ux-walk`, then run `node scripts/bundle-ux-walk.mjs /path/to/Cap\ UX.app` after packaging. The engine comes from the pinned source snapshot; a separate UX Walk installation is unnecessary.
 
 ## Contribute
 

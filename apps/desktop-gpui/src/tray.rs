@@ -270,9 +270,13 @@ fn previous_submenu(previous: &[PreviousItem]) -> Entry {
 /// `create_mode_submenu`: a `✓ ` prefix on the current mode and three spaces on
 /// the others, so the labels stay aligned without a real check mark.
 fn mode_submenu(mode: Mode) -> Entry {
+    mode_submenu_choice(mode, false)
+}
+
+fn mode_submenu_choice(mode: Mode, ux_walk: bool) -> Entry {
     let label = |target: Mode, text: &str| {
         Entry::item(
-            if mode == target {
+            if mode == target && !ux_walk {
                 format!("\u{2713} {text}")
             } else {
                 format!("   {text}")
@@ -294,7 +298,10 @@ fn mode_submenu(mode: Mode) -> Entry {
         let mut items = items;
         items.extend([
             Entry::Separator,
-            Entry::item("UX Walk…", TrayItem::StartWalkthrough),
+            Entry::item(
+                if ux_walk { "✓ UX Walk" } else { "   UX Walk" },
+                TrayItem::StartWalkthrough,
+            ),
         ]);
         items
     };
@@ -360,7 +367,13 @@ fn current_menu_entries(cx: &App, mode: Mode, previous: &[PreviousItem]) -> Vec<
     if crate::app_windows::onboarding_is_open(cx) && !crate::permissions::necessary_granted() {
         return build_onboarding_menu(crate::menus::app_version());
     }
-    build_menu(mode, previous, crate::menus::app_version())
+    let mut entries = build_menu(mode, previous, crate::menus::app_version());
+    for entry in &mut entries {
+        if matches!(entry, Entry::Submenu { title, .. } if title == "Select Mode") {
+            *entry = mode_submenu_choice(mode, crate::store::ux_walk_selected());
+        }
+    }
+    entries
 }
 
 // ---------------------------------------------------------------------------
@@ -1045,6 +1058,7 @@ mod mac {
             return;
         }
         if cx.global::<Tray>().mode == mode {
+            rebuild(cx);
             return;
         }
         cx.global_mut::<Tray>().mode = mode;
@@ -1424,7 +1438,7 @@ mod tests {
             assert_eq!(titles(&items[..3]), expected.to_vec());
             #[cfg(target_os = "macos")]
             {
-                assert_eq!(titles(&items[3..]), vec!["-", "UX Walk…"]);
+                assert_eq!(titles(&items[3..]), vec!["-", "   UX Walk"]);
                 assert!(matches!(
                     items[4],
                     Entry::Item {

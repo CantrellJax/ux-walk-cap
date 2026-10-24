@@ -8,12 +8,17 @@ use std::{
 };
 
 fn request() -> Request {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let unique = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let id = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
     Request {
-        directory: std::env::temp_dir().join(format!("cap-ux-journal-{id}")),
+        directory: std::env::temp_dir().join(format!(
+            "cap-ux-journal-{id}-{}-{unique}",
+            std::process::id()
+        )),
         topic: "Checkout walk".into(),
         url: "https://example.com".into(),
         speakers: vec!["Tester".into()],

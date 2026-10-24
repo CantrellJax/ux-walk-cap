@@ -239,7 +239,7 @@ impl SettingsWindow {
                 self.button(
                     "ux-walk-start",
                     (ui::ButtonVariant::Primary, None),
-                    "Start a Walk…",
+                    "Open UX Walk",
                     false,
                     cx,
                     |_, _, cx| ux_walk::start(cx),
@@ -258,7 +258,7 @@ impl SettingsWindow {
                         cx,
                     ),
                     self.setting_row(
-                        "When a walk ends",
+                        "Agent handoff",
                         None,
                         self.select("ux-walk-handoff", handoff, MenuKind::UxWalkHandoff, cx)
                             .into_any_element(),
@@ -270,12 +270,7 @@ impl SettingsWindow {
                         cx,
                     ),
                     self.ux_walk_field(6, cx),
-                    self.ux_walk_toggle(
-                        "trace",
-                        "Save browser traces",
-                        "Available for browser sessions started by UX Walk.",
-                        cx,
-                    ),
+                    self.setting_row("Browser evidence", Some("Native walks save video, screenshots and notes. DOM, network and console traces are not collected."), div().into_any_element()),
                 ])
                 .into_any_element(),
                 self.ux_walk_notice(),

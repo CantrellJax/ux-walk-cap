@@ -103,6 +103,45 @@ async function clip(input, output, start, duration) {
 	]);
 }
 
+const escapeHTML = (value) =>
+	String(value ?? "").replace(
+		/[&<>"']/g,
+		(character) =>
+			({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
+				character
+			],
+	);
+
+function writeNativeReport(directory, session, journal) {
+	const report = path.join(directory, "report.html");
+	if (fs.existsSync(report))
+		fs.renameSync(report, path.join(directory, "evidence.html"));
+	const clock = (milliseconds) =>
+		`${Math.floor(milliseconds / 60000)}:${String(Math.floor(milliseconds / 1000) % 60).padStart(2, "0")}`;
+	const link = (chapter, file, title) =>
+		fs.existsSync(path.join(directory, chapter.dir, file))
+			? `<a href="${encodeURIComponent(chapter.dir)}/${file}">${title}</a>`
+			: "";
+	const chapters = session.chapters
+		.map(
+			(chapter) =>
+				`<section><h2>${escapeHTML(chapter.name)}</h2><p>${clock(chapter.startMs - journal.startedAtMs)}–${clock(chapter.endMs - journal.startedAtMs)} · ${escapeHTML(chapter.status)}</p><video controls preload="metadata" src="${encodeURIComponent(chapter.dir)}/video.mp4"></video><p>${[link(chapter, "timeline-short.md", "Timeline"), link(chapter, "transcript.srt", "Transcript"), link(chapter, "brief.md", "Brief")].filter(Boolean).join(" · ")}</p></section>`,
+		)
+		.join("");
+	const notes = journal.events
+		.filter((event) => event.kind === "note")
+		.map(
+			(event) =>
+				`<li><time>${clock(event.offsetMs)}</time> ${escapeHTML(event.text)}</li>`,
+		)
+		.join("");
+	fs.writeFileSync(
+		report,
+		`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${escapeHTML(session.topic)} · Cap UX</title><style>body{font:16px system-ui;color:#20242c;background:#fafaf9;max-width:960px;margin:48px auto;padding:0 24px;line-height:1.6}h1{font-size:32px;line-height:1.2}h2{margin-top:40px}video{width:100%;border-radius:12px;background:#15171c}a{color:#2467d5}time{color:#666;font-variant-numeric:tabular-nums;margin-right:12px}li{margin:12px 0}.meta{color:#666;font-size:14px}</style><p class="meta">Cap UX · UX Walk</p><h1>${escapeHTML(session.topic)}</h1><p class="meta">${escapeHTML(session.startedAt)}${session.url ? ` · ${escapeHTML(session.url)}` : ""}</p><h2>Notes</h2>${notes ? `<ul>${notes}</ul>` : "<p>No notes added.</p>"}${chapters}<h2>Capture details</h2><p class="meta">Recorded with Cap UX. Notes and chapters use the recorder’s elapsed time, excluding pauses; first-frame alignment is approximate. DOM, network and console events were not captured.</p><p><a href="media/video.mp4">Full recording</a> · <a href="native-walk.json">Saved journal</a> · <a href="session.json">Session</a></p></html>`,
+		{ mode: 0o600 },
+	);
+}
+
 export async function finishNativeWalk(file, cfg, dependencies = {}) {
 	const journal = readJournal(file);
 	const directory = journal.request.directory;
@@ -123,7 +162,12 @@ export async function finishNativeWalk(file, cfg, dependencies = {}) {
 		if (fs.existsSync(exportInfo) && fs.existsSync(video))
 			info = JSON.parse(fs.readFileSync(exportInfo, "utf8"));
 		else {
-			info = await client.export(project, video);
+			const temporary = path.join(
+				directory,
+				`media/export-${randomUUID()}.mp4`,
+			);
+			info = await client.export(project, temporary);
+			fs.renameSync(temporary, video);
 			if (!(info.durationS > 0))
 				throw new Error("Cap export has no positive duration");
 			await capManifest(project, video, info, {
@@ -237,6 +281,7 @@ export async function finishNativeWalk(file, cfg, dependencies = {}) {
 		}
 		(dependencies.writeIndex ?? processing.writeIndex)(directory);
 		(dependencies.writeReport ?? writeReport)(directory);
+		writeNativeReport(directory, session, journal);
 		progress("ready");
 		return directory;
 	} catch (error) {
@@ -245,6 +290,37 @@ export async function finishNativeWalk(file, cfg, dependencies = {}) {
 	} finally {
 		fs.rmdirSync(lock);
 	}
+}
+
+export async function handoffNativeWalk(file, cfg) {
+	const journal = readJournal(file);
+	const directory = journal.request.directory;
+	if (!fs.existsSync(path.join(directory, "report.html")))
+		throw new Error("Prepare the walk report before opening an agent");
+	const prompt = `Review this UX Walk: ${directory}. Read report.html and the chapter timelines, inspect the referenced screenshots and transcript, and propose concrete fixes. This is native screen capture with manual notes; DOM, network and console were not captured.`;
+	fs.writeFileSync(path.join(directory, "agent-prompt.txt"), `${prompt}\n`, {
+		mode: 0o600,
+	});
+	const { expand } = await import(new URL("config.mjs", engine));
+	const quote = (value) => `'${String(value).replaceAll("'", "'\\''")}'`;
+	const installed = "/Applications/cmux.app/Contents/Resources/bin/cmux";
+	const binary =
+		process.env.UXW_CMUX || (fs.existsSync(installed) ? installed : "cmux");
+	await run(
+		binary,
+		[
+			"new-workspace",
+			"--name",
+			`walk: ${journal.request.topic}`.slice(0, 60),
+			"--cwd",
+			expand(String(cfg.sourceRoot || "~")),
+			"--command",
+			`claude --model ${quote(cfg.agentModel || "opus")} ${quote(prompt)}`,
+			"--focus",
+			"true",
+		],
+		{ encoding: "utf8", timeout: 15000 },
+	);
 }
 
 if (
@@ -257,9 +333,15 @@ if (
 		else if (command === "process") {
 			const { loadConfig } = await import(new URL("config.mjs", engine));
 			await finishNativeWalk(file, loadConfig());
+		} else if (command === "prepare-edit") {
+			const { prepareCapEdit } = await import(new URL("cap.mjs", engine));
+			console.log(JSON.stringify(prepareCapEdit(snapshotNativeWalk(file))));
+		} else if (command === "handoff") {
+			const { loadConfig } = await import(new URL("config.mjs", engine));
+			await handoffNativeWalk(file, loadConfig());
 		} else
 			throw new Error(
-				"Usage: native-walk.mjs snapshot|process <native-walk.json>",
+				"Usage: native-walk.mjs snapshot|process|handoff <native-walk.json>",
 			);
 	} catch (error) {
 		console.error(error.message);

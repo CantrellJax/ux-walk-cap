@@ -1106,7 +1106,9 @@ fn shortcut_effect(
         "openRecordingPickerWindow" => format!("choose a window, then {}", picker_outcome(mode)),
         "openRecordingPickerDisplay" => format!("choose a display, then {}", picker_outcome(mode)),
         "openRecordingPicker" => "open Cap UX so you can choose what to record".into(),
-        "cycleRecordingMode" => "switch between Studio, Instant and Screenshot mode".into(),
+        "cycleRecordingMode" => {
+            "switch between Studio, Instant, Screenshot and UX Walk mode".into()
+        }
         "stopRecording" => "stop the current recording".into(),
         "togglePauseRecording" => "pause the current recording, or resume it".into(),
         "restartRecording" => "throw away the current take and start again".into(),

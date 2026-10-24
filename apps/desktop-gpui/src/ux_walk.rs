@@ -3,7 +3,6 @@ use std::process::{Command, Stdio};
 pub use crate::ux_walk_preferences::*;
 
 pub fn start(cx: &mut gpui::App) {
-    use gpui::AppContext as _;
     let main = cx.global::<crate::app_windows::AppWindows>().main;
     main.update(cx, |view, _, cx| view.set_ux_walk(cx)).ok();
     crate::app_windows::show_main_window(cx);
@@ -32,7 +31,18 @@ pub fn request(topic: &str) -> Result<crate::ux_walk_journal::Request, String> {
         speakers
     };
     Ok(crate::ux_walk_journal::Request {
-        directory: output.join(format!("walk-{}", crate::store::new_uuid_v4())),
+        directory: output.join(format!(
+            "{}-{}-{}",
+            chrono::Local::now().format("%Y-%m-%d_%H-%M"),
+            topic
+                .chars()
+                .filter(|c| c.is_ascii_alphanumeric() || *c == ' ' || *c == '-')
+                .take(48)
+                .collect::<String>()
+                .trim()
+                .replace(' ', "-"),
+            crate::store::new_uuid_v4()
+        )),
         topic: if topic.trim().is_empty() {
             "UX Walk".into()
         } else {
@@ -48,7 +58,7 @@ pub fn request(topic: &str) -> Result<crate::ux_walk_journal::Request, String> {
     })
 }
 
-pub fn run_engine(command: &str, file: &std::path::Path) -> Result<(), String> {
+pub fn run_engine(command: &str, file: &std::path::Path) -> Result<String, String> {
     let executable = std::env::current_exe().map_err(|e| e.to_string())?;
     let contents = executable
         .parent()
@@ -76,7 +86,8 @@ pub fn run_engine(command: &str, file: &std::path::Path) -> Result<(), String> {
         .output()
         .map_err(|e| format!("Could not start walk processing: {e}"))?;
     if output.status.success() {
-        Ok(())
+        String::from_utf8(output.stdout)
+            .map_err(|_| "Walk processing returned invalid text.".into())
     } else {
         Err(String::from_utf8_lossy(&output.stderr)
             .chars()

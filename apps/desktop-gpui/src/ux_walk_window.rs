@@ -5,8 +5,8 @@ use crate::{
 };
 use gpui::{
     App, AppContext as _, Bounds, Context, Entity, FontWeight, Global, InteractiveElement as _,
-    IntoElement, ParentElement as _, Render, Styled, Window, WindowBounds, WindowHandle,
-    WindowOptions, div, prelude::FluentBuilder as _, px, size,
+    IntoElement, ParentElement as _, Render, StatefulInteractiveElement as _, Styled, Window,
+    WindowBounds, WindowHandle, WindowOptions, div, prelude::FluentBuilder as _, px, size,
 };
 
 #[derive(Default)]
@@ -155,11 +155,14 @@ impl Render for WalkWindow {
                 let report = directory.join("report.html");
                 let ready = report.is_file();
                 let prompt = format!("Review this UX Walk: {}. Read report.html and the chapter timelines, inspect the referenced screenshots and transcript, and propose concrete fixes. Evidence is a native screen recording with manual notes; DOM, network and console were not captured.", directory.display());
-                this.child(div().text_size(px(11.)).text_color(theme.gray_10).child("Notes use Cap’s elapsed clock. DOM, network and console events are not captured."))
+                this.child(div().text_size(px(11.)).text_color(theme.gray_10).child("Notes use Cap UX’s elapsed clock. DOM, network and console events are not captured."))
                     .child(div().flex().flex_wrap().gap(px(8.))
                         .child(ui::Button::plain(&theme, "walk-open-folder", ui::ButtonVariant::Gray, ui::ButtonSize::Sm).label("Show files").on_click(move |_, _, _| crate::library::reveal_in_folder(&folder)))
                         .child(ui::Button::plain(&theme, "walk-open-report", ui::ButtonVariant::Blue, ui::ButtonSize::Sm).label("Open report").disabled(!ready).on_click(move |_, _, cx| { if let Ok(url) = reqwest::Url::from_file_path(&report) { cx.open_url(url.as_str()); } }))
-                        .child(ui::Button::plain(&theme, "walk-copy-prompt", ui::ButtonVariant::Gray, ui::ButtonSize::Sm).label("Copy agent prompt").disabled(!ready).on_click(move |_, _, cx| cx.write_to_clipboard(gpui::ClipboardItem::new_string(prompt.clone()))))
+                        .child(ui::Button::plain(&theme, "walk-copy-prompt", ui::ButtonVariant::Gray, ui::ButtonSize::Sm).label(if crate::ux_walk::load().is_ok_and(|settings| crate::ux_walk::text(&settings, "agent") == "cmux") { "Open Claude in cmux" } else { "Copy agent prompt" }).disabled(!ready).on_click(move |_, _, cx| { cx.write_to_clipboard(gpui::ClipboardItem::new_string(prompt.clone()));
+                            if crate::ux_walk::load().is_ok_and(|settings| crate::ux_walk::text(&settings, "agent") == "cmux") { RecordingSession::global(cx).update(cx, |session, cx| session.handoff_walk(cx)); }
+                        }))
+                        .when(walk.state == "complete" && !processing, |this| this.child(ui::Button::plain(&theme, "walk-edit-copy", ui::ButtonVariant::Gray, ui::ButtonSize::Sm).label("Edit a copy").on_click(cx.listener(|this, _, _, cx| { this.session.update(cx, |session, cx| session.edit_walk(cx)); }))))
                         .when(walk.state == "complete" && !processing, |this| this.child(ui::Button::plain(&theme, "walk-retry", ui::ButtonVariant::Gray, ui::ButtonSize::Sm).label("Reprocess").on_click(cx.listener(|this, _, _, cx| { this.session.update(cx, |session, cx| session.process_walk(cx)); }))))
                     )
             })

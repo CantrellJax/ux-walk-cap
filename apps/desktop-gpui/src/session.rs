@@ -466,6 +466,13 @@ impl Global for SessionGlobal {}
 
 impl RecordingSession {
     pub fn init(cx: &mut App) -> Entity<Self> {
+        let last_walk = crate::store::store_section(crate::store::RECORDING_SETTINGS)
+            .get("lastNativeWalk")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|file| std::fs::read(file).ok())
+            .and_then(|bytes| {
+                serde_json::from_slice::<crate::ux_walk_journal::Journal>(&bytes).ok()
+            });
         let session = cx.new(|_| Self {
             phase: Phase::Idle,
             active: None,
@@ -478,9 +485,11 @@ impl RecordingSession {
             controls_open: false,
             mic_muted: false,
             finished_studio: None,
-            walk: None,
+            walk: last_walk,
             walk_processing: false,
-            walk_notice: String::new(),
+            walk_notice:
+                "Saved walk. Open its report, or reprocess it if preparation was interrupted."
+                    .into(),
             preparing_studio_editor: None,
             editor_recording_target: None,
             started_at: None,
@@ -952,6 +961,11 @@ impl RecordingSession {
                 started,
             ) {
                 Ok(journal) => {
+                    crate::store::set_store_setting(
+                        crate::store::RECORDING_SETTINGS,
+                        "lastNativeWalk",
+                        serde_json::Value::String(journal.file().to_string_lossy().into_owned()),
+                    );
                     self.walk = Some(journal);
                     self.walk_notice = "Recording. Notes and chapters save as you add them.".into();
                 }
@@ -2002,13 +2016,72 @@ impl RecordingSession {
                 if this.recording_generation != generation || this.phase != Phase::Stopping { return; }
                 this.finish(cx);
                 match result {
-                    Ok(()) => this.process_walk(cx),
+                    Ok(_) => this.process_walk(cx),
                     Err(error) => this.walk_notice = format!("Your recording and notes are saved. Could not prepare the walk: {error}"),
                 }
                 cx.defer(crate::ux_walk_window::open);
                 cx.notify();
             }).ok();
         }).detach();
+    }
+
+    pub fn edit_walk(&mut self, cx: &mut Context<Self>) {
+        let Some(walk) = self.walk.as_ref().filter(|walk| walk.state == "complete") else {
+            return;
+        };
+        let file = walk.file();
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    crate::ux_walk::run_engine("prepare-edit", &file).and_then(|output| {
+                        serde_json::from_str::<std::path::PathBuf>(&output)
+                            .map_err(|e| e.to_string())
+                    })
+                })
+                .await;
+            this.update(cx, |this, cx| match result {
+                Ok(path) => cx.defer(move |cx| crate::app_windows::open_editor(path, cx)),
+                Err(error) => {
+                    this.walk_notice = format!("Could not prepare an editing copy: {error}");
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    pub fn handoff_walk(&mut self, cx: &mut Context<Self>) {
+        let Some(walk) = self.walk.as_ref().filter(|walk| walk.state == "complete") else {
+            return;
+        };
+        let file = walk.file();
+        cx.spawn(async move |this, cx| {
+            let completed = file.clone();
+            let result = cx
+                .background_executor()
+                .spawn(async move { crate::ux_walk::run_engine("handoff", &file) })
+                .await;
+            this.update(cx, |this, cx| {
+                if this
+                    .walk
+                    .as_ref()
+                    .is_none_or(|walk| walk.file() != completed)
+                {
+                    return;
+                }
+                this.walk_notice = match result {
+                    Ok(_) => "Opened a Claude session in cmux with this walk’s prompt.".into(),
+                    Err(error) => {
+                        format!("The prompt is on your clipboard. Could not open cmux: {error}")
+                    }
+                };
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     pub fn process_walk(&mut self, cx: &mut Context<Self>) {
@@ -2038,7 +2111,7 @@ impl RecordingSession {
                 }
                 this.walk_processing = false;
                 this.walk_notice = match result {
-                    Ok(()) => {
+                    Ok(_) => {
                         "Walk ready. Open the report or copy its location for your agent.".into()
                     }
                     Err(error) => {
