@@ -122,7 +122,6 @@ jobs:
               'productName': 'Cap Walkthrough Preview',
               'mainBinaryName': 'Cap',
               'identifier': 'com.uxwalk.cap-preview',
-              'plugins': {'deep-link': {'desktop': {'schemes': []}}},
               'bundle': {
                   'createUpdaterArtifacts': False,
                   'fileAssociations': [],
