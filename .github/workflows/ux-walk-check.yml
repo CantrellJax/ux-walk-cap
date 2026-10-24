@@ -2,16 +2,27 @@ name: ux-walk native checks
 
 on:
   workflow_dispatch:
+    inputs:
+      preview:
+        description: Build an isolated macOS preview after checks pass
+        type: boolean
+        default: false
   pull_request:
     paths:
       - apps/desktop-gpui/**
       - apps/cli/**
+      - scripts/bundle-gpui*
+      - scripts/build-desktop-binaries*
+      - scripts/build-macos-packages*
       - .github/workflows/ux-walk-*.yml
   push:
     branches: [main, feat/walkthrough-entry]
     paths:
       - apps/desktop-gpui/**
       - apps/cli/**
+      - scripts/bundle-gpui*
+      - scripts/build-desktop-binaries*
+      - scripts/build-macos-packages*
 
 permissions:
   contents: read
@@ -33,6 +44,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Check packaging profiles and staging
+        run: node --test scripts/bundle-gpui.test.mjs scripts/build-desktop-binaries-cache.test.mjs scripts/build-macos-packages.test.mjs
       - uses: dtolnay/rust-toolchain@1.95.0
         with:
           components: rustfmt
@@ -68,3 +81,97 @@ jobs:
           cargo +1.95.0 test --manifest-path apps/desktop-gpui/Cargo.toml --locked --bin cap-gpui tray::tests
           cargo +1.95.0 test --manifest-path apps/desktop-gpui/Cargo.toml --locked --bin cap-gpui installer::tests::fork_refuses_official_update_resolution
           cargo +1.95.0 test --locked -p cap update::tests::fork_refuses_official_installer
+      - name: Set up preview packaging tools
+        if: github.event_name == 'workflow_dispatch' && inputs.preview
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.0
+      - name: Install only the existing bundler's tools
+        if: github.event_name == 'workflow_dispatch' && inputs.preview
+        run: |
+          task_tools="$RUNNER_TEMP/ux-walk-packaging-tools"
+          mkdir -p "$task_tools"
+          cd "$task_tools"
+          printf '{"private":true}\n' > package.json
+          bun add --exact @tauri-apps/cli@2.8.4 dotenv-cli@11.0.0
+          printf '%s\n' "$task_tools/node_modules/.bin" >> "$GITHUB_PATH"
+      - name: Prepare an isolated preview configuration
+        if: github.event_name == 'workflow_dispatch' && inputs.preview
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib, plistlib
+          root = pathlib.Path(os.environ['GITHUB_WORKSPACE'])
+          out = pathlib.Path(os.environ['RUNNER_TEMP']) / 'ux-walk-preview'
+          out.mkdir(parents=True, exist_ok=True)
+          sha = os.environ['GITHUB_SHA']
+          profile = '/tmp/ux-walk-cap-preview-' + sha[:12]
+          info = plistlib.loads((root / 'apps/desktop-gpui/Info.plist').read_bytes())
+          info['CFBundleDocumentTypes'] = []
+          info['CFBundleURLTypes'] = []
+          info['UXWalkBuildSHA'] = sha
+          info['UXWalkSourceURL'] = 'https://github.com/' + os.environ['GITHUB_REPOSITORY'] + '/tree/' + sha
+          info['LSEnvironment'] = {
+              'CAP_GPUI_APP_DATA_DIR': profile + '/data',
+              'CAP_GPUI_LOG_DIR': profile + '/logs',
+              'CAP_GPUI_RECORDINGS_DIR': profile + '/recordings',
+          }
+          plist = out / 'Preview.plist'
+          plist.write_bytes(plistlib.dumps(info))
+          (root / 'apps/desktop-gpui/Info.plist').write_bytes(plist.read_bytes())
+          config = {
+              'productName': 'Cap Walkthrough Preview',
+              'mainBinaryName': 'Cap',
+              'identifier': 'com.uxwalk.cap-preview',
+              'bundle': {
+                  'createUpdaterArtifacts': False,
+                  'fileAssociations': [],
+                  'macOS': {'signingIdentity': '-'},
+              },
+          }
+          (out / 'preview.json').write_text(json.dumps(config, indent=2) + '\n')
+          (out / 'source.json').write_text(json.dumps({
+              'sourceRevision': sha, 'sourceURL': info['UXWalkSourceURL'],
+              'profile': 'debug', 'isolatedProfile': profile,
+              'purpose': 'local menu validation; not a signed public release',
+          }, indent=2) + '\n')
+          PY
+      - name: Build a genuine debug preview through the existing pipeline
+        if: github.event_name == 'workflow_dispatch' && inputs.preview
+        env:
+          RUSTUP_TOOLCHAIN: '1.95.0'
+        run: |
+          task_target="$(rustc -vV | sed -n 's/host: //p')"
+          node scripts/build-desktop-binaries.mjs "$task_target" --debug
+          node scripts/bundle-gpui.mjs "$task_target" --debug --bundles app --config "$RUNNER_TEMP/ux-walk-preview/preview.json"
+      - name: Verify and retain the preview
+        if: github.event_name == 'workflow_dispatch' && inputs.preview
+        run: |
+          task_app='apps/desktop-gpui/target/debug/bundle/macos/Cap Walkthrough Preview.app'
+          test -d "$task_app"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$task_app/Contents/Info.plist")" = com.uxwalk.cap-preview
+          test "$(/usr/libexec/PlistBuddy -c 'Print :UXWalkBuildSHA' "$task_app/Contents/Info.plist")" = "$GITHUB_SHA"
+          codesign --verify --deep --strict "$task_app"
+          python3 - <<'PY'
+          import os, pathlib, plistlib
+          app = pathlib.Path('apps/desktop-gpui/target/debug/bundle/macos/Cap Walkthrough Preview.app')
+          info = plistlib.loads((app / 'Contents/Info.plist').read_bytes())
+          profile = '/tmp/ux-walk-cap-preview-' + os.environ['GITHUB_SHA'][:12]
+          assert not info.get('CFBundleDocumentTypes'), 'Preview must not claim recordings'
+          assert not info.get('CFBundleURLTypes'), 'Preview must not claim URL schemes'
+          assert info['LSEnvironment'] == {
+              'CAP_GPUI_APP_DATA_DIR': profile + '/data',
+              'CAP_GPUI_LOG_DIR': profile + '/logs',
+              'CAP_GPUI_RECORDINGS_DIR': profile + '/recordings',
+          }, 'Preview profile isolation was not retained by the bundler'
+          print('Bundled preview associations and isolated profile verified')
+          PY
+          file "$task_app/Contents/MacOS/Cap" > "$RUNNER_TEMP/ux-walk-preview/executable.txt"
+          ditto -c -k --sequesterRsrc --keepParent "$task_app" "$RUNNER_TEMP/ux-walk-preview/Cap-Walkthrough-Preview.zip"
+          cp LICENSE UX-WALK.md "$RUNNER_TEMP/ux-walk-preview/"
+          shasum -a 256 "$RUNNER_TEMP/ux-walk-preview/Cap-Walkthrough-Preview.zip" > "$RUNNER_TEMP/ux-walk-preview/SHA256.txt"
+      - uses: actions/upload-artifact@v4
+        if: success() && github.event_name == 'workflow_dispatch' && inputs.preview
+        with:
+          name: cap-walkthrough-preview
+          path: ${{ runner.temp }}/ux-walk-preview/
+          retention-days: 14

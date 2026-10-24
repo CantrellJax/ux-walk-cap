@@ -528,3 +528,40 @@ test("timestamp signing retries tolerate nested Bun script failure messages", ()
 		false,
 	);
 });
+
+test("native debug packaging omits the target argument on every bundle attempt", async () => {
+	const fixture = harness([
+		{ code: 1, output: armTimestampFailure },
+		{ code: 0 },
+	]);
+	fixture.options.env.CARGO_BUILD_TARGET = "foreign-target";
+	await buildMacosPackages(target, ["--debug", "--bundles", "app"], {
+		...fixture.options,
+		bundleOnly: true,
+		native: true,
+	});
+	assert.equal(fixture.calls.length, 2);
+	for (const call of fixture.calls) {
+		assert.ok(call.args.includes("--debug"));
+		assert.equal(call.args.includes("--target"), false);
+		assert.equal(call.env.CARGO_BUILD_TARGET, undefined);
+	}
+	assert.equal(fixture.options.env.CARGO_BUILD_TARGET, "foreign-target");
+});
+
+test("native packaging cannot silently select release, and targeted debug remains supported", async () => {
+	const invalid = harness([]);
+	await assert.rejects(
+		buildMacosPackages(target, [], { ...invalid.options, native: true }),
+		/requires --debug/,
+	);
+	assert.equal(invalid.calls.length, 0);
+	const fixture = harness([{ code: 0 }]);
+	await buildMacosPackages(target, ["--debug"], fixture.options);
+	assert.deepEqual(fixture.calls[0].args.slice(0, 4), [
+		"build:tauri",
+		"--target",
+		target,
+		"--debug",
+	]);
+});

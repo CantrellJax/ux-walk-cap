@@ -3,6 +3,10 @@ name = "cap"
 version = "0.6.1"
 edition = "2024"
 
+[features]
+default = ["ux-walk"]
+ux-walk = []
+
 [dependencies]
 clap = { version = "4.5.23", features = ["derive"] }
 clap_complete = "4.5.38"
