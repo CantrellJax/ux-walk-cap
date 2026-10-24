@@ -3,10 +3,11 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 export const CONFIG_DIR = process.env.CAP_UX_WALK_CONFIG_DIR || path.join(os.homedir(), '.config', 'ux-walk');
 export const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
-export const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const DEFAULTS = {
   url: 'https://onc4ll.com',
