@@ -27,7 +27,7 @@ Cap UX combines [Cap](https://github.com/CapSoftware/Cap)'s screen recorder and 
 
 Cap UX is currently a macOS 15+ developer preview. A signed public installer is not available yet. The native CI workflow can build an isolated **Cap-UX Preview.app** with its own profile, the pinned UX Walk engine, a Node runtime and native helpers.
 
-The walkthrough processor currently needs FFmpeg on your Mac. Optional chapter briefs need your configured Claude CLI; agent handoffs to cmux need cmux. Cloud transcription needs your own provider key. The app does not automatically publish recordings.
+The walkthrough processor currently needs FFmpeg on your Mac. Optional chapter briefs need your configured Claude CLI; agent handoffs to cmux need cmux. Cloud transcription needs your own provider key. UX Walk does not automatically publish recordings.
 
 For a source build, clone the repository:
 
@@ -36,7 +36,7 @@ git clone https://github.com/CantrellJax/ux-walk-cap.git
 cd ux-walk-cap
 ```
 
-Use the existing Cap setup/build pipeline below, install the engine dependencies with `npm ci --ignore-scripts --prefix vendor/ux-walk`, then run `node scripts/bundle-ux-walk.mjs /path/to/Cap-UX.app` after packaging. The helper is built from the pinned source snapshot; a separate UX Walk installation is unnecessary.
+Use Xcode 26 or newer with the existing Cap setup/build pipeline below, install the engine dependencies with `npm ci --ignore-scripts --prefix vendor/ux-walk`, then run `node scripts/bundle-ux-walk.mjs /path/to/Cap-UX.app` after packaging. The helper is built from the pinned source snapshot; a separate UX Walk installation is unnecessary.
 
 ## Contribute
 
