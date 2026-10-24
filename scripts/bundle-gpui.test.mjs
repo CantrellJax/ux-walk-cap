@@ -43,7 +43,7 @@ test("targets map to their packaging platform and main binary", () => {
 });
 
 test("Cap-UX has its own identity and does not publish official updater artifacts", () => {
-	assert.equal(gpuiConfig.productName, "Cap-UX");
+	assert.equal(gpuiConfig.productName, "Cap UX");
 	assert.equal(gpuiConfig.mainBinaryName, "Cap");
 	assert.equal(gpuiConfig.identifier, "com.cantrell.cap-ux");
 	assert.equal(

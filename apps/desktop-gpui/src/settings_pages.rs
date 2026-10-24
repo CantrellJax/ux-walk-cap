@@ -378,7 +378,7 @@ impl PagesState {
         });
         let feedback_input = cx.new(|cx| {
             let mut input = ui::TextInputState::multi_line(window, cx);
-            input.set_placeholder("Tell us what you think about Cap...");
+            input.set_placeholder("Tell us what you think about Cap UX...");
             input
         });
         let license_input = cx.new(|cx| {
@@ -1004,7 +1004,7 @@ const STUDIO_OUTCOMES: [(store::PostStudioBehaviour, OutcomeOption); 3] = [
         store::PostStudioBehaviour::ShowOverlay,
         OutcomeOption {
             icon: "icons/app-window.svg",
-            label: "Show Cap",
+            label: "Show Cap UX",
             hint: "Back to the recorder",
         },
     ),
@@ -1105,7 +1105,7 @@ fn shortcut_effect(
         "openRecordingPickerArea" => format!("select an area, then {}", picker_outcome(mode)),
         "openRecordingPickerWindow" => format!("choose a window, then {}", picker_outcome(mode)),
         "openRecordingPickerDisplay" => format!("choose a display, then {}", picker_outcome(mode)),
-        "openRecordingPicker" => "open Cap so you can choose what to record".into(),
+        "openRecordingPicker" => "open Cap UX so you can choose what to record".into(),
         "cycleRecordingMode" => "switch between Studio, Instant and Screenshot mode".into(),
         "stopRecording" => "stop the current recording".into(),
         "togglePauseRecording" => "pause the current recording, or resume it".into(),
@@ -1482,7 +1482,7 @@ impl SettingsWindow {
             self.render_outcome_panel(
                 "outcome-screenshot",
                 "After a screenshot",
-                "For every screenshot, from a shortcut or from Cap",
+                "For every screenshot, from a shortcut or from Cap UX",
                 &SCREENSHOT_OUTCOMES
                     .iter()
                     .map(|(value, option)| {
@@ -1569,7 +1569,7 @@ impl SettingsWindow {
             .into_any_element(),
             self.section(
                 "Recording",
-                Some("Start a recording without opening Cap first."),
+                Some("Start a recording without opening Cap UX first."),
                 None,
                 vec![card("shortcuts-recording", recording, cx)],
             )
@@ -2035,7 +2035,7 @@ impl SettingsWindow {
             self.section(
                 "Command Line",
                 Some(
-                    "Install the Cap command for terminals, agents, scripts, and local automation.",
+                    "Install the Cap UX command for terminals, agents, scripts, and local automation.",
                 ),
                 None,
                 vec![self.card(true).child(body).into_any_element()],
@@ -2552,7 +2552,7 @@ pub(crate) enum SwitchBack {
 const CLASSIC_WAIT_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 const SWITCH_SENTENCES: &[&str] = &[
-    "Switching back to the classic Cap app.",
+    "Switching back to the classic Cap UX app.",
     "Your recordings and settings stay exactly where they are.",
 ];
 const SWITCH_SENTENCE_MS: u64 = 2000;
@@ -2583,7 +2583,7 @@ fn takeover_frame(elapsed_ms: f32) -> (usize, f32, u32) {
     (index, alpha, remaining)
 }
 
-/// Cap ships as this app alone, so the classic Tauri app only exists inside
+/// Cap UX ships as this app alone, so the classic Tauri app only exists inside
 /// the `tauri dev` harness: a debug cargo build can hand the session back to
 /// it through the dev-session supervisor (`store::request_classic_reopen`),
 /// and nothing else has a classic app to switch to.
@@ -2738,7 +2738,7 @@ impl SettingsWindow {
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_center()
                             .text_color(white)
-                            .child("Opening the classic Cap app"),
+                            .child("Opening the classic Cap UX app"),
                     )
                     .child(
                         div()
@@ -2746,7 +2746,7 @@ impl SettingsWindow {
                             .text_size(px(14.))
                             .text_center()
                             .text_color(gpui::hsla(0., 0., 1., 0.7))
-                            .child("This window will close when the classic Cap app is ready."),
+                            .child("This window will close when the classic Cap UX app is ready."),
                     );
             }
             SwitchBack::Failed(error) => {
@@ -2857,7 +2857,7 @@ impl SettingsWindow {
         }
         if !dev_supervisor_available() {
             self.pages.switch_back = Some(SwitchBack::Failed(
-                "Couldn't find the classic Cap app to switch back to.".to_string(),
+                "Couldn't find the classic Cap UX app to switch back to.".to_string(),
             ));
             cx.notify();
             return;
@@ -2870,7 +2870,7 @@ impl SettingsWindow {
 
         if !store::set_store_setting(GENERAL_SETTINGS, "enableGpuiApp", Value::Bool(false)) {
             self.pages.switch_back = Some(SwitchBack::Failed(
-                "Couldn't save your app preference. Cap is still open.".to_string(),
+                "Couldn't save your app preference. Cap UX is still open.".to_string(),
             ));
             cx.notify();
             return;
@@ -2888,7 +2888,7 @@ impl SettingsWindow {
                 .await;
             let mut failure = result
                 .err()
-                .map(|error| format!("Couldn't open the classic Cap app: {error}"));
+                .map(|error| format!("Couldn't open the classic Cap UX app: {error}"));
             let started = std::time::Instant::now();
             while failure.is_none() {
                 match store::classic_pending_path().try_exists() {
@@ -2900,7 +2900,7 @@ impl SettingsWindow {
                     Ok(true) => {}
                     Err(error) => {
                         failure = Some(format!(
-                            "Couldn't check whether the classic Cap app opened: {error}"
+                            "Couldn't check whether the classic Cap UX app opened: {error}"
                         ));
                         break;
                     }
@@ -2917,7 +2917,7 @@ impl SettingsWindow {
                     .await;
             }
             let message =
-                failure.unwrap_or_else(|| "Couldn't open the classic Cap app.".to_string());
+                failure.unwrap_or_else(|| "Couldn't open the classic Cap UX app.".to_string());
             tracing::error!("{message}");
             store::clear_classic_pending();
             store::set_store_setting(GENERAL_SETTINGS, "enableGpuiApp", Value::Bool(true));
@@ -3049,7 +3049,7 @@ impl SettingsWindow {
         // A stray click costs a couple of minutes of hijacked screen and loud
         // beeps, so it is confirmed the way the Tauri app confirms it.
         let message = format!(
-            "Cap will take over your screen with a flashing pattern and play loud beeps for \
+            "Cap UX will take over your screen with a flashing pattern and play loud beeps for \
              about {} seconds per pipeline. Take your headphones off, leave the volume \
              audible, and leave the machine alone until it finishes.",
             diagnostics::DEFAULT_DURATION_SECS
@@ -3124,7 +3124,7 @@ impl SettingsWindow {
                         None => (
                             None,
                             Some(
-                                "The Cap command-line tool was not found next to this build, so \
+                                "The Cap UX command-line tool was not found next to this build, so \
                                  the sync test could not run."
                                     .to_string(),
                             ),
@@ -3369,7 +3369,7 @@ impl SettingsWindow {
                     .text_color(theme.settings_muted())
                     .child(
                         "A fullscreen window flashes black and white while 1kHz beeps play \
-                         through your speakers, and Cap records it and measures how far the \
+                         through your speakers, and Cap UX records it and measures how far the \
                          picture and the sound have drifted apart. Leave the machine alone \
                          while it runs. Both modes together take a couple of minutes.",
                     ),
@@ -3444,7 +3444,7 @@ impl SettingsWindow {
                             .text_size(px(11.))
                             .text_color(theme.settings_muted())
                             .child(
-                                "The Cap command-line tool was not found next to this build, so \
+                                "The Cap UX command-line tool was not found next to this build, so \
                                  the report will cover your environment only.",
                             ),
                     );
@@ -3512,7 +3512,7 @@ impl SettingsWindow {
                     .label(if self.pages.diagnostic_upload == UploadStatus::Pending {
                         "Sending..."
                     } else {
-                        "Send to Cap"
+                        "Send to upstream"
                     })
                     .disabled_settings(
                         &theme,
@@ -3638,6 +3638,11 @@ impl SettingsWindow {
 
     pub(crate) fn render_feedback(&self, cx: &mut Context<Self>) -> Vec<gpui::AnyElement> {
         let theme = self.theme;
+        if cfg!(feature = "ux-walk") {
+            return vec![self.section("Cap UX feedback", Some("Report a bug, suggest an improvement or share your workflow with the Cap UX project."), None, vec![
+                ui::Button::settings(&theme, "cap-ux-feedback", ui::ButtonVariant::Dark, ui::ButtonSize::Sm).label("Open GitHub issues ↗").on_click(|_, _, cx| cx.open_url("https://github.com/CantrellJax/ux-walk-cap/issues")).into_any_element()
+            ]).into_any_element()];
+        }
         let pending = self.pages.feedback == FeedbackStatus::Pending;
         // `disabled={feedback().trim().length < 4}`.
         let submit_disabled = pending || self.pages.feedback_draft.trim().chars().count() < 4;
@@ -3836,7 +3841,7 @@ impl SettingsWindow {
             self.section(
                 "Feedback",
                 Some(
-                    "Help us improve Cap by submitting feedback or reporting bugs. We'll get \
+                    "Help us improve Cap UX by submitting feedback or reporting bugs. We'll get \
                      right on it.",
                 ),
                 None,
@@ -3846,7 +3851,7 @@ impl SettingsWindow {
             self.section(
                 "Join the Community",
                 Some(
-                    "Have questions, want to share ideas, or just hang out? Join the Cap \
+                    "Have questions, want to share ideas, or just hang out? Join the Cap UX \
                      Discord community.",
                 ),
                 None,
@@ -3868,7 +3873,7 @@ impl SettingsWindow {
             self.section(
                 "Debug Information",
                 Some(
-                    "Upload your logs to help us diagnose issues with Cap. No personal \
+                    "Upload your logs to help us diagnose issues with Cap UX. No personal \
                      information is included.",
                 ),
                 None,
@@ -4177,27 +4182,39 @@ impl SettingsWindow {
 
     pub(crate) fn render_license(&self, cx: &mut Context<Self>) -> Vec<gpui::AnyElement> {
         let theme = self.theme;
+        if cfg!(feature = "ux-walk") {
+            return vec![
+                self.section("Cap UX", Some("Open source screen recording and product walkthroughs."), None, vec![
+                    self.card(true).child(div().flex().flex_col().gap(px(12.))
+                        .child(div().text_size(px(18.)).font_weight(FontWeight::SEMIBOLD).child("AGPL-3.0"))
+                        .child(div().text_size(px(13.)).line_height(px(20.)).child("Use, modify and share Cap UX, including for commercial work, under its open source license. No desktop license key is required for this fork."))
+                        .child(ui::Button::settings(&theme, "cap-ux-source", ui::ButtonVariant::Dark, ui::ButtonSize::Sm).label("Source & license ↗").on_click(|_, _, cx| cx.open_url("https://github.com/CantrellJax/ux-walk-cap")))
+                    ).into_any_element()
+                ]).into_any_element(),
+                self.section("Cloud services", Some("An upstream cloud account or subscription is separate from the Cap UX desktop app. Connected services keep their own terms and limits."), None, vec![]).into_any_element(),
+            ];
+        }
         let auth = store::auth_snapshot();
         let pro = auth.is_upgraded();
         let license = store::commercial_license();
         let (name, description) = if pro {
             (
-                "Cap Pro",
+                "the upstream Pro plan",
                 "Your account includes cloud sharing, Pro features and a desktop license for commercial use.",
             )
         } else if license.is_some() {
             (
                 "Desktop License",
-                "Your desktop license covers commercial recording and editing. Cap Pro adds cloud sharing and collaboration features.",
+                "Your desktop license covers commercial recording and editing. the upstream Pro plan adds cloud sharing and collaboration features.",
             )
         } else {
             (
-                "Cap Free",
+                "Upstream Free",
                 "Record and edit locally for personal use. Choose a paid plan for commercial use or more cloud features.",
             )
         };
         let mut content = vec![
-            self.section("Plan & license", Some("Your Cap plan and desktop license, in one place."), None, vec![]).into_any_element(),
+            self.section("Plan & license", Some("Your Cap UX plan and desktop license, in one place."), None, vec![]).into_any_element(),
             self.section("Your plan", None, None, vec![self.card(true).child(
                 div().flex().flex_col().gap(px(8.))
                     .child(div().text_size(px(18.)).font_weight(FontWeight::SEMIBOLD).child(name))
@@ -4209,12 +4226,12 @@ impl SettingsWindow {
                             self.plan_refresh_pending, cx, |this, window, cx| this.refresh_plan(window, cx),
                         )).when(self.plan_refresh_failed, |this| this.child(div().text_size(px(12.)).text_color(theme.settings_muted()).child("Couldn't refresh your plan. Please try again.")))
                     ))
-                    .when(!auth.signed_in(), |this| this.child(div().text_size(px(12.)).line_height(px(18.)).text_color(theme.settings_muted()).child("Already have Cap Pro? Sign in with your account from the sidebar.")))
+                    .when(!auth.signed_in(), |this| this.child(div().text_size(px(12.)).line_height(px(18.)).text_color(theme.settings_muted()).child("Already have the upstream Pro plan? Sign in with your account from the sidebar.")))
             ).into_any_element()]).into_any_element(),
             self.section("Explore plans", Some("Compare current pricing and everything included on our website."), None, vec![self.card(true).child(
                 div().flex().flex_col().items_start().gap(px(12.))
                     .child(div().text_size(px(12.)).line_height(px(18.)).child("Desktop License · Commercial use of the desktop recorder and editor."))
-                    .child(div().text_size(px(12.)).line_height(px(18.)).child("Cap Pro · A desktop license, plus cloud sharing, AI features and collaboration."))
+                    .child(div().text_size(px(12.)).line_height(px(18.)).child("the upstream Pro plan · A desktop license, plus cloud sharing, AI features and collaboration."))
                     .child(ui::Button::settings(&theme, "license-pricing", ui::ButtonVariant::Dark, ui::ButtonSize::Sm).label("View plans & pricing ↗").on_click(|_, _, cx| cx.open_url(crate::auth::PRICING_URL)))
                     .child(div().text_size(px(12.)).text_color(theme.settings_muted()).child("Opens cap.so/pricing in your browser."))
             ).into_any_element()]).into_any_element(),
@@ -4984,8 +5001,8 @@ impl SettingsWindow {
             (
                 "Google Drive",
                 "icons/google-drive.svg",
-                "Connect Google Drive for new shareable link uploads. Cap stores new videos in \
-                 a private Cap folder in your Drive and continues serving them through Cap \
+                "Connect Google Drive for new shareable link uploads. Cap UX stores new videos in \
+                 a private cloud folder in your Drive and continues serving them through Cap UX \
                  after normal access checks.",
                 IntegrationsView::GoogleDrive,
             ),
@@ -5081,7 +5098,7 @@ impl SettingsWindow {
             self.section(
                 "Integrations",
                 Some(
-                    "Configure integrations to extend Cap's functionality and connect with \
+                    "Configure integrations to extend Cap UX's functionality and connect with \
                      third-party services.",
                 ),
                 None,
@@ -5232,7 +5249,7 @@ impl SettingsWindow {
                     .text_color(theme.settings_muted())
                     .child(
                         "It should take under 10 minutes to set up and connect your storage \
-                         bucket to Cap. View the\u{a0}",
+                         bucket to Cap UX. View the\u{a0}",
                     )
                     .child(
                         div()
@@ -5328,8 +5345,8 @@ impl SettingsWindow {
                 self.section(
                     "Connection",
                     Some(
-                        "Google Drive stores new uploads in a private Cap folder in your Drive. \
-                         Existing Cap-hosted and S3 videos keep using their current storage.",
+                        "Google Drive stores new uploads in a private cloud folder in your Drive. \
+                         Existing upstream-hosted and S3 videos keep using their current storage.",
                     ),
                     None,
                     vec![self.render_sign_in_required()],
@@ -5491,8 +5508,8 @@ impl SettingsWindow {
             self.section(
                 "Connection",
                 Some(
-                    "Google Drive stores new uploads in a private Cap folder in your Drive. \
-                     Existing Cap-hosted and S3 videos keep using their current storage.",
+                    "Google Drive stores new uploads in a private cloud folder in your Drive. \
+                     Existing upstream-hosted and S3 videos keep using their current storage.",
                 ),
                 None,
                 vec![self.card(true).child(card).into_any_element()],
@@ -5952,7 +5969,7 @@ fn default_action(kind: ActionType) -> Action {
         },
         ActionType::RecognizeTextToClipboard => Action::RecognizeTextToClipboard,
         ActionType::Notify => Action::Notify {
-            title_template: "Cap".to_string(),
+            title_template: "Cap UX".to_string(),
             body_template: String::new(),
         },
         ActionType::OpenEditor => Action::OpenEditor,
@@ -6160,7 +6177,7 @@ const TEMPLATES: [Template; 8] = [
     Template {
         id: "ocr-screenshot",
         name: "Pull the text out of screenshots",
-        description: "Cap reads the text in your screenshot and copies it for you.",
+        description: "Cap UX reads the text in your screenshot and copies it for you.",
         icon: "icons/scan-text.svg",
         build: || {
             template_rule(
@@ -6232,7 +6249,7 @@ const TEMPLATES: [Template; 8] = [
                 "Ping me when an upload is ready",
                 Trigger::UploadCompleted,
                 vec![Action::Notify {
-                    title_template: "Cap".to_string(),
+                    title_template: "Cap UX".to_string(),
                     body_template: "Your recording is ready to share.".to_string(),
                 }],
             )
@@ -6742,7 +6759,7 @@ impl SettingsWindow {
             self.section(
                 "Automations",
                 Some(
-                    "Rules are shared with the Cap CLI. Cap saves these rules but does not \
+                    "Rules are shared with the Cap UX CLI. Cap UX saves these rules but does not \
                      run automations yet.",
                 ),
                 None,
@@ -7335,7 +7352,7 @@ impl SettingsWindow {
                         .line_height(px(18.))
                         .text_color(Hsla::from(theme.amber_11))
                         .child(
-                            "In the Cap CLI, this automation runs commands or sends network \
+                            "In the Cap UX CLI, this automation runs commands or sends network \
                              requests with your permissions. Only use values you trust.",
                         ),
                 )
@@ -7348,8 +7365,8 @@ impl SettingsWindow {
                         .line_height(px(18.))
                         .text_color(Hsla::from(theme.amber_11))
                         .child(
-                            "Compatibility checked: this automation doesn't run in Cap yet. \
-                             Saved rules remain available to the Cap CLI. No actions were run.",
+                            "Compatibility checked: this automation doesn't run in Cap UX yet. \
+                             Saved rules remain available to the Cap UX CLI. No actions were run.",
                         ),
                 )
             })
@@ -8415,8 +8432,8 @@ mod tests {
     #[test]
     fn only_debug_cargo_builds_can_switch_back_to_the_dev_harness() {
         let cargo_build =
-            std::path::Path::new("/Users/x/Cap/apps/desktop-gpui/target/debug/cap-gpui");
-        let installed_app = std::path::Path::new("/Applications/Cap.app/Contents/MacOS/Cap");
+            std::path::Path::new("/Users/x/Cap UX/apps/desktop-gpui/target/debug/cap-gpui");
+        let installed_app = std::path::Path::new("/Applications/Cap UX.app/Contents/MacOS/Cap UX");
 
         assert!(dev_supervisor_available_for(Some(cargo_build), true));
         assert!(!dev_supervisor_available_for(Some(cargo_build), false));

@@ -1,6 +1,6 @@
 {
 	"$schema": "https://schema.tauri.app/config/2",
-	"productName": "Cap-UX",
+	"productName": "Cap UX",
 	"mainBinaryName": "Cap",
 	"identifier": "com.cantrell.cap-ux",
 	"plugins": {
@@ -21,7 +21,7 @@
 		"createUpdaterArtifacts": false,
 		"targets": "all",
 		"category": "Video",
-		"longDescription": "Cap-UX combines Cap screen recording and editing with UX Walk notes, chapters, transcripts and agent-ready evidence.",
+		"longDescription": "Cap UX combines Cap screen recording and editing with UX Walk notes, chapters, transcripts and agent-ready evidence.",
 		"externalBin": [
 			"../desktop/src-tauri/binaries/cap-muxer",
 			"../desktop/src-tauri/binaries/cap-cli"

@@ -89,7 +89,9 @@ mod ui;
 mod updates;
 mod upload;
 mod ux_walk;
+mod ux_walk_journal;
 mod ux_walk_preferences;
+mod ux_walk_window;
 
 use gpui::{App, AppContext as _, Bounds, WindowBounds, WindowOptions, px, size};
 

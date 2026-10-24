@@ -94,7 +94,11 @@ impl ModeSelectWindow {
     /// `ModeOption`: one card per mode, the whole card a button.
     fn render_card(&self, mode: ModeChoice, cx: &mut Context<Self>) -> gpui::AnyElement {
         let theme = self.theme;
-        let selected = mode.capture_mode() == Some(self.mode);
+        let selected = if crate::store::ux_walk_selected() {
+            mode == ModeChoice::UxWalk
+        } else {
+            mode.capture_mode() == Some(self.mode)
+        };
         let dark = theme.is_dark();
 
         div()

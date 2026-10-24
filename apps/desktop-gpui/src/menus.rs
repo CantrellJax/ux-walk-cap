@@ -1010,16 +1010,16 @@ mod tests {
                 (
                     "Cap".to_string(),
                     vec![
-                        "About Cap".to_string(),
+                        "About Cap UX".to_string(),
                         "-".into(),
                         "Settings…".into(),
                         "-".into(),
                         "Services".into(),
                         "-".into(),
-                        "Hide Cap".into(),
+                        "Hide Cap UX".into(),
                         "Hide Others".into(),
                         "-".into(),
-                        "Quit Cap".into(),
+                        "Quit Cap UX".into(),
                     ]
                 ),
                 ("File".into(), vec!["Close Window".into()]),

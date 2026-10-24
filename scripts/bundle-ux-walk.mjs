@@ -14,14 +14,6 @@ function run(command, args) {
 	});
 }
 
-function xml(value) {
-	return String(value)
-		.replaceAll("&", "&amp;")
-		.replaceAll("<", "&lt;")
-		.replaceAll(">", "&gt;")
-		.replaceAll('"', "&quot;");
-}
-
 export async function bundleUxWalk(app) {
 	if (process.platform !== "darwin") throw new Error("Bundle UX Walk on macOS");
 	const contents = path.join(path.resolve(app), "Contents");
@@ -41,11 +33,8 @@ export async function bundleUxWalk(app) {
 	await fs.access(
 		path.join(source, "node_modules/playwright-core/package.json"),
 	);
-	const helper = path.join(contents, "Helpers", "UX Walk.app");
-	const resources = path.join(helper, "Contents", "Resources");
-	const binaries = path.join(helper, "Contents", "MacOS");
-	const engine = path.join(resources, "engine");
-	await fs.mkdir(binaries, { recursive: true });
+	const resources = path.join(contents, "Resources");
+	const engine = path.join(resources, "ux-walk");
 	await fs.mkdir(engine, { recursive: true });
 	for (const item of [
 		"src",
@@ -81,66 +70,20 @@ export async function bundleUxWalk(app) {
 		path.join(resources, "CAP-LICENSE"),
 	);
 	await fs.copyFile(
-		path.join(root, "apps/desktop-gpui/assets/branding/cap-ux.icns"),
-		path.join(resources, "cap-ux.icns"),
+		path.join(root, "apps/desktop-gpui/ux-walk/native-walk.mjs"),
+		path.join(engine, "native-walk.mjs"),
 	);
-	await fs.copyFile(
-		path.join(source, "assets/foot.svg"),
-		path.join(resources, "foot.svg"),
-	);
-	const architecture = process.arch === "arm64" ? "arm64" : "x86_64";
-	for (const [file, output] of [
-		["uxw-menubar.swift", path.join(binaries, "ux-walk")],
-		["uxw-capture.swift", path.join(engine, "bin", "uxw-capture")],
-	]) {
-		run("swiftc", [
-			"-O",
-			"-suppress-warnings",
-			"-target",
-			`${architecture}-apple-macos15.0`,
-			path.join(source, "swift", file),
-			"-o",
-			output,
-		]);
-	}
-	const environment = parent.LSEnvironment ?? {};
-	const environmentXML = Object.entries(environment)
-		.map(
-			([key, value]) => `<key>${xml(key)}</key><string>${xml(value)}</string>`,
-		)
-		.join("");
-	const plist = `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-<key>CFBundleIdentifier</key><string>${xml(parent.CFBundleIdentifier)}.ux-walk</string>
-<key>CFBundleName</key><string>UX Walk</string>
-<key>CFBundleExecutable</key><string>ux-walk</string>
-<key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleIconFile</key><string>cap-ux</string>
-<key>CFBundleShortVersionString</key><string>${xml(parent.CFBundleShortVersionString)}</string>
-<key>LSMinimumSystemVersion</key><string>15.0</string>
-<key>LSUIElement</key><true/>
-<key>NSMicrophoneUsageDescription</key><string>UX Walk records your narration with the walkthrough.</string>
-<key>NSCameraUsageDescription</key><string>UX Walk includes your camera when you select it.</string>
-<key>NSAudioCaptureUsageDescription</key><string>UX Walk records call audio when you select it.</string>
-<key>LSEnvironment</key><dict>${environmentXML}</dict>
-</dict></plist>
-`;
-	await fs.writeFile(path.join(helper, "Contents", "Info.plist"), plist);
 	await fs.writeFile(
 		path.join(resources, "engine-source.json"),
 		`${JSON.stringify({ repository: "https://github.com/CantrellJax/ux-walk-cap", sourceURL: `${parent.UXWalkSourceURL ?? `https://github.com/CantrellJax/ux-walk-cap/tree/${run("git", ["-C", root, "rev-parse", "HEAD"]).trim()}`}/vendor/ux-walk`, revision, node: process.version }, null, 2)}\n`,
 	);
-	for (const target of [
-		path.join(engine, "bin", "node"),
-		path.join(engine, "bin", "uxw-capture"),
-		helper,
-		path.resolve(app),
-	]) {
+	for (const target of [path.join(engine, "bin", "node"), path.resolve(app)]) {
 		run("codesign", ["--force", "--sign", "-", target]);
 	}
 	run("codesign", ["--verify", "--deep", "--strict", path.resolve(app)]);
-	console.log(`Bundled UX Walk ${revision} into ${path.basename(app)}`);
+	console.log(
+		`Bundled the native UX Walk engine ${revision} into ${path.basename(app)}`,
+	);
 }
 
 if (

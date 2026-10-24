@@ -50,13 +50,6 @@ jobs:
           node-version: '22'
       - name: Check packaging profiles and staging
         run: node --test scripts/bundle-gpui.test.mjs scripts/build-desktop-binaries-cache.test.mjs scripts/build-macos-packages.test.mjs
-      - name: Check the native helper SDK before building Cap
-        run: |
-          xcodebuild -version
-          xcrun --sdk macosx --show-sdk-version
-          task_target="$(uname -m)-apple-macos15.0"
-          swiftc -typecheck -target "$task_target" vendor/ux-walk/swift/uxw-menubar.swift
-          swiftc -typecheck -target "$task_target" vendor/ux-walk/swift/uxw-capture.swift
       - uses: dtolnay/rust-toolchain@1.95.0
         with:
           components: rustfmt
@@ -69,7 +62,7 @@ jobs:
             apps/desktop-gpui -> target
       - name: Format changed Rust surfaces
         run: |
-          rustfmt +1.95.0 --edition 2024 apps/desktop-gpui/src/tray.rs apps/desktop-gpui/src/updates.rs apps/desktop-gpui/src/installer.rs apps/desktop-gpui/src/ux_walk.rs apps/desktop-gpui/src/ux_walk_preferences.rs apps/desktop-gpui/src/settings_ux_walk.rs apps/desktop-gpui/src/settings_window.rs apps/desktop-gpui/src/settings_pages.rs apps/desktop-gpui/src/store.rs apps/desktop-gpui/src/diagnostics.rs apps/desktop-gpui/src/transcription.rs apps/desktop-gpui/src/mode_choice.rs apps/desktop-gpui/src/mode_select_window.rs apps/desktop-gpui/src/main_window.rs apps/desktop-gpui/src/onboarding_window.rs apps/desktop-gpui/src/onboarding_doodles.rs apps/desktop-gpui/src/app_windows.rs apps/cli/src/credentials.rs apps/cli/src/automation.rs apps/cli/src/recordings.rs apps/cli/src/update.rs
+          rustfmt +1.95.0 --edition 2024 apps/desktop-gpui/src/tray.rs apps/desktop-gpui/src/updates.rs apps/desktop-gpui/src/installer.rs apps/desktop-gpui/src/ux_walk.rs apps/desktop-gpui/src/ux_walk_journal.rs apps/desktop-gpui/src/ux_walk_window.rs apps/desktop-gpui/src/session.rs apps/desktop-gpui/src/controls_window.rs apps/desktop-gpui/src/recording.rs apps/desktop-gpui/src/deeplink.rs apps/desktop-gpui/src/menus.rs apps/desktop-gpui/tests/ux_walk_journal_contract.rs apps/desktop-gpui/src/ux_walk_preferences.rs apps/desktop-gpui/src/settings_ux_walk.rs apps/desktop-gpui/src/settings_window.rs apps/desktop-gpui/src/settings_pages.rs apps/desktop-gpui/src/store.rs apps/desktop-gpui/src/diagnostics.rs apps/desktop-gpui/src/transcription.rs apps/desktop-gpui/src/mode_choice.rs apps/desktop-gpui/src/mode_select_window.rs apps/desktop-gpui/src/main_window.rs apps/desktop-gpui/src/onboarding_window.rs apps/desktop-gpui/src/onboarding_doodles.rs apps/desktop-gpui/src/app_windows.rs apps/cli/src/credentials.rs apps/cli/src/automation.rs apps/cli/src/recordings.rs apps/cli/src/update.rs
           git diff > "$RUNNER_TEMP/rustfmt.patch"
       - uses: actions/upload-artifact@v4
         if: always()
@@ -85,12 +78,15 @@ jobs:
         run: |
           cargo +1.95.0 check --manifest-path apps/desktop-gpui/Cargo.toml --locked -p cap-desktop-gpui
           cargo +1.95.0 check --locked -p cap
+      - name: Exercise the native walk processor
+        run: node --test apps/desktop-gpui/ux-walk/native-walk.test.mjs
       - name: Exercise menu and fork update protection
         run: |
           task_frameworks="apps/desktop-gpui/target/debug/Frameworks"
           mkdir -p "$task_frameworks"
           ln -sfn "$GITHUB_WORKSPACE/target/Frameworks/Spacedrive.framework" "$task_frameworks/Spacedrive.framework"
           cargo +1.95.0 test --manifest-path apps/desktop-gpui/Cargo.toml --locked --bin cap-gpui tray::tests
+          cargo +1.95.0 test --manifest-path apps/desktop-gpui/Cargo.toml --locked --test ux_walk_journal_contract
           cargo +1.95.0 test --manifest-path apps/desktop-gpui/Cargo.toml --locked --bin cap-gpui ux_walk_preferences::tests
           cargo +1.95.0 test --manifest-path apps/desktop-gpui/Cargo.toml --locked --bin cap-gpui main_window::mode_hover_tests
           cargo +1.95.0 test --manifest-path apps/desktop-gpui/Cargo.toml --locked --bin cap-gpui onboarding_window::tests
@@ -138,7 +134,7 @@ jobs:
           plist.write_bytes(plistlib.dumps(info))
           (root / 'apps/desktop-gpui/Info.plist').write_bytes(plist.read_bytes())
           config = {
-              'productName': 'Cap-UX Preview',
+              'productName': 'Cap UX Preview',
               'mainBinaryName': 'Cap',
               'identifier': 'com.cantrell.cap-ux.preview',
               'bundle': {
@@ -167,23 +163,23 @@ jobs:
         run: |
           npm ci --ignore-scripts --prefix vendor/ux-walk
           node --test vendor/ux-walk/test/unit/embedded-config.test.mjs vendor/ux-walk/test/unit/start-link.test.mjs vendor/ux-walk/test/unit/cap-editor-handoff.test.mjs
-          node scripts/bundle-ux-walk.mjs 'apps/desktop-gpui/target/debug/bundle/macos/Cap-UX Preview.app'
+          node scripts/bundle-ux-walk.mjs 'apps/desktop-gpui/target/debug/bundle/macos/Cap UX Preview.app'
       - name: Verify and retain the preview
         if: (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.preview))
         run: |
-          task_app='apps/desktop-gpui/target/debug/bundle/macos/Cap-UX Preview.app'
+          task_app='apps/desktop-gpui/target/debug/bundle/macos/Cap UX Preview.app'
           test -d "$task_app"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$task_app/Contents/Info.plist")" = com.cantrell.cap-ux.preview
           test "$(/usr/libexec/PlistBuddy -c 'Print :UXWalkBuildSHA' "$task_app/Contents/Info.plist")" = "$GITHUB_SHA"
           codesign --verify --deep --strict "$task_app"
           python3 - <<'PY'
           import os, pathlib, plistlib
-          app = pathlib.Path('apps/desktop-gpui/target/debug/bundle/macos/Cap-UX Preview.app')
+          app = pathlib.Path('apps/desktop-gpui/target/debug/bundle/macos/Cap UX Preview.app')
           info = plistlib.loads((app / 'Contents/Info.plist').read_bytes())
           profile = '/tmp/ux-walk-cap-preview-' + os.environ['GITHUB_SHA'][:12]
           assert not info.get('CFBundleDocumentTypes'), 'Preview must not claim recordings'
           assert not info.get('CFBundleURLTypes'), 'Preview must not claim URL schemes'
-          assert info['LSMinimumSystemVersion'] == '15.0', 'The bundled helper requires macOS 15'
+          assert info['LSMinimumSystemVersion'] == '15.0', 'Cap UX requires macOS 15'
           assert info['LSEnvironment'] == {
               'CAP_GPUI_APP_DATA_DIR': profile + '/data',
               'CAP_GPUI_LOG_DIR': profile + '/logs',

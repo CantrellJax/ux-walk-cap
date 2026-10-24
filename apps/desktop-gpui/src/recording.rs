@@ -35,6 +35,7 @@ pub enum RecordingMode {
 /// config around for the bar's restart button.
 #[derive(Clone)]
 pub struct StartConfig {
+    pub ux_walk: Option<crate::ux_walk_journal::Request>,
     pub mode: RecordingMode,
     pub target: ScreenCaptureTarget,
     /// Microphone by name -- the identity `MicrophoneFeed` keys on.

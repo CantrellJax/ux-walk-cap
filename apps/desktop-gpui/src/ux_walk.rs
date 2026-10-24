@@ -3,28 +3,86 @@ use std::process::{Command, Stdio};
 pub use crate::ux_walk_preferences::*;
 
 pub fn start(cx: &mut gpui::App) {
-    let helper = std::env::current_exe()
-        .ok()
-        .and_then(|executable| Some(executable.parent()?.parent()?.join("Helpers/UX Walk.app")));
-    let Some(helper) = helper.filter(|path| path.is_dir()) else {
-        cx.open_url("ux-walk://start?capture=cap");
-        return;
+    use gpui::AppContext as _;
+    let main = cx.global::<crate::app_windows::AppWindows>().main;
+    main.update(cx, |view, _, cx| view.set_ux_walk(cx)).ok();
+    crate::app_windows::show_main_window(cx);
+}
+
+pub fn request(topic: &str) -> Result<crate::ux_walk_journal::Request, String> {
+    let settings = load()?;
+    let output = text(&settings, "outDir");
+    let output = if output == "~" {
+        dirs::home_dir().ok_or("Home folder is unavailable.")?
+    } else if let Some(relative) = output.strip_prefix("~/") {
+        dirs::home_dir()
+            .ok_or("Home folder is unavailable.")?
+            .join(relative)
+    } else {
+        std::path::PathBuf::from(output)
     };
-    cx.spawn(async move |cx| {
-        let opened = cx.background_executor().spawn(async move {
-            Command::new("/usr/bin/open")
-                .arg("-a")
-                .arg(helper)
-                .arg("ux-walk://start?capture=cap")
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status()
-                .is_ok_and(|status| status.success())
-        }).await;
-        if !opened {
-            crate::platform::alert_dialog("Cap-UX", "The bundled UX Walk helper could not open. Reinstall this Cap-UX build and try again.");
-        }
-    }).detach();
+    if !output.is_absolute() {
+        return Err("Choose an absolute walk recordings folder in Settings.".into());
+    }
+    std::fs::create_dir_all(&output).map_err(|_| "Could not create the walk recordings folder.")?;
+    let speakers = text(&settings, "speakers");
+    let speakers = if speakers.is_empty() {
+        text(&settings, "me")
+    } else {
+        speakers
+    };
+    Ok(crate::ux_walk_journal::Request {
+        directory: output.join(format!("walk-{}", crate::store::new_uuid_v4())),
+        topic: if topic.trim().is_empty() {
+            "UX Walk".into()
+        } else {
+            topic.trim().to_string()
+        },
+        url: text(&settings, "url").to_string(),
+        speakers: speakers
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect(),
+    })
+}
+
+pub fn run_engine(command: &str, file: &std::path::Path) -> Result<(), String> {
+    let executable = std::env::current_exe().map_err(|e| e.to_string())?;
+    let contents = executable
+        .parent()
+        .and_then(|p| p.parent())
+        .ok_or("Cap UX app bundle is unavailable.")?;
+    let engine = contents.join("Resources/ux-walk");
+    let cli = contents.join("MacOS/cap-cli");
+    let output = Command::new(engine.join("bin/node"))
+        .arg(engine.join("native-walk.mjs"))
+        .arg(command)
+        .arg(file)
+        .env("UXW_CAP_BINARY", cli)
+        .env(
+            "CAP_UX_WALK_CONFIG_DIR",
+            config_path().parent().ok_or("Invalid settings folder.")?,
+        )
+        .env(
+            "PATH",
+            format!(
+                "/opt/homebrew/bin:/usr/local/bin:{}",
+                std::env::var("PATH").unwrap_or_default()
+            ),
+        )
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("Could not start walk processing: {e}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr)
+            .chars()
+            .take(1000)
+            .collect())
+    }
 }
 
 #[cfg(target_os = "macos")]

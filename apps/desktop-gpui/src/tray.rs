@@ -341,8 +341,8 @@ pub fn build_menu(mode: Mode, previous: &[PreviousItem], version: &str) -> Vec<E
     // `logging::upload_log_file` needs the auth token and the HTTP client,
     // neither of which this app has.
     entries.push(Entry::disabled("Upload Logs"));
-    entries.push(Entry::disabled(format!("Cap-UX v{version}")));
-    entries.push(Entry::item("Quit Cap-UX", TrayItem::Quit));
+    entries.push(Entry::disabled(format!("Cap UX v{version}")));
+    entries.push(Entry::item("Quit Cap UX", TrayItem::Quit));
 
     entries
 }
@@ -351,8 +351,8 @@ pub fn build_onboarding_menu(version: &str) -> Vec<Entry> {
     vec![
         Entry::item("Request Permissions", TrayItem::RequestPermissions),
         Entry::Separator,
-        Entry::disabled(format!("Cap-UX v{version}")),
-        Entry::item("Quit Cap-UX", TrayItem::Quit),
+        Entry::disabled(format!("Cap UX v{version}")),
+        Entry::item("Quit Cap UX", TrayItem::Quit),
     ]
 }
 
@@ -1351,7 +1351,7 @@ mod tests {
         let menu = build_onboarding_menu("0.1.0");
         assert_eq!(
             titles(&menu),
-            vec!["Request Permissions", "-", "Cap-UX v0.1.0", "Quit Cap-UX",]
+            vec!["Request Permissions", "-", "Cap UX v0.1.0", "Quit Cap UX",]
         );
     }
 
@@ -1376,8 +1376,8 @@ mod tests {
                 "Settings",
                 "-",
                 "Upload Logs",
-                "Cap-UX v0.1.0",
-                "Quit Cap-UX",
+                "Cap UX v0.1.0",
+                "Quit Cap UX",
             ]
         );
     }
@@ -1502,6 +1502,6 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(disabled, vec!["Upload Logs", "Cap-UX v0.1.0"]);
+        assert_eq!(disabled, vec!["Upload Logs", "Cap UX v0.1.0"]);
     }
 }

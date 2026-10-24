@@ -1066,7 +1066,7 @@ impl SettingsWindow {
     fn delete_recording(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
         cx.spawn_in(window, async move |this, cx| {
             let confirmed = crate::platform::confirm_dialog(
-                "Cap",
+                "Cap UX",
                 "Are you sure you want to delete this recording?",
                 "Yes",
                 "No",
@@ -1192,7 +1192,7 @@ impl SettingsWindow {
     fn delete_screenshot(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
         cx.spawn_in(window, async move |this, cx| {
             let confirmed = crate::platform::confirm_dialog(
-                "Cap",
+                "Cap UX",
                 "Are you sure you want to delete this screenshot?",
                 "Yes",
                 "No",
@@ -3060,7 +3060,7 @@ impl SettingsWindow {
 
         self.section(
             "Appearance",
-            Some("Match Cap to your system theme or pick a fixed look."),
+            Some("Match Cap UX to your system theme or pick a fixed look."),
             None,
             vec![self.card(true).child(tiles).into_any_element()],
         )
@@ -3070,13 +3070,13 @@ impl SettingsWindow {
     fn render_app_section(&self, cx: &mut Context<Self>) -> impl IntoElement {
         self.section(
             "App",
-            Some("Choose how Cap shows up on your system."),
+            Some("Choose how Cap UX shows up on your system."),
             None,
             vec![
                 self.rows(vec![
                     self.setting_row(
                         "Always show dock icon",
-                        Some("Keep Cap in the dock even when no windows are open."),
+                        Some("Keep Cap UX in the dock even when no windows are open."),
                         // The row is the *inverse* of the stored key.
                         self.toggle(
                             "hide-dock-icon",
@@ -3100,7 +3100,7 @@ impl SettingsWindow {
                         "System notifications",
                         Some(
                             "Show notifications for clipboard copies, saved files, and more. \
-                             You may need to allow Cap in your system's notification settings.",
+                             You may need to allow Cap UX in your system's notification settings.",
                         ),
                         self.toggle(
                             "enable-notifications",
@@ -3210,7 +3210,7 @@ impl SettingsWindow {
         let description = if self.has_cap_pro {
             summary.to_string()
         } else {
-            "720p on the free plan. Cap Pro records up to 4K.".to_string()
+            "720p on the free plan. the upstream Pro plan records up to 4K.".to_string()
         };
 
         let options = INSTANT_RESOLUTION_TIERS
@@ -3516,7 +3516,7 @@ impl SettingsWindow {
                     ),
                     self.setting_row(
                         "Delete Instant recordings after upload",
-                        Some("Cap removes the local file once it has uploaded successfully."),
+                        Some("Cap UX removes the local file once it has uploaded successfully."),
                         self.toggle(
                             "delete-after-upload",
                             "Delete Instant recordings after upload",
@@ -3725,7 +3725,7 @@ impl SettingsWindow {
 
         self.section(
             "Storage",
-            Some("Where Cap saves your recordings."),
+            Some("Where Cap UX saves your recordings."),
             None,
             vec![
                 self.card(true)
@@ -4105,7 +4105,7 @@ impl SettingsWindow {
                                 div()
                                     .text_size(px(12.))
                                     .font_weight(FontWeight::MEDIUM)
-                                    .child("Recommended Cap windows are not excluded"),
+                                    .child("Recommended Cap UX windows are not excluded"),
                             )
                             .child(div().text_size(px(10.)).line_height(px(14.)).child(format!(
                                 "Camera, settings, or recording windows can appear as black \
@@ -4168,7 +4168,7 @@ impl SettingsWindow {
                                     .text_size(px(12.))
                                     .line_height(px(16.))
                                     .text_color(theme.settings_muted())
-                                    .child("Which release channel Cap updates from."),
+                                    .child("Which release channel Cap UX updates from."),
                             ),
                     )
                     .child(self.segmented::<UpdateChannel>(
@@ -4207,7 +4207,7 @@ impl SettingsWindow {
 
         self.section(
             "Updates",
-            Some("Choose which Cap builds you receive."),
+            Some("Choose which Cap UX builds you receive."),
             None,
             vec![self.card(false).child(body).into_any_element()],
         )
@@ -4227,7 +4227,7 @@ impl SettingsWindow {
                     .flex()
                     .flex_col()
                     .gap(px(6.))
-                    .child(div().text_size(px(13.)).child("Cap Server URL"))
+                    .child(div().text_size(px(13.)).child("Cap UX Server URL"))
                     .child(self.text_field(Field::ServerUrl, cx)),
             )
             .child(
@@ -4269,7 +4269,7 @@ impl SettingsWindow {
 
         self.section(
             "Self-host",
-            Some("Only change this if you are running your own instance of Cap Web."),
+            Some("Only change this if you are running your own instance of the upstream web service."),
             None,
             vec![self.card(true).child(body).into_any_element()],
         )
@@ -4318,7 +4318,7 @@ impl SettingsWindow {
                     self.setting_row(
                         "Share anonymous telemetry",
                         Some(
-                            "Cap uses anonymous telemetry to improve reliability and fix bugs. We \
+                            "Cap UX uses anonymous telemetry to improve reliability and fix bugs. We \
                          never collect recording contents, window titles, file paths, or \
                          personal information.",
                         ),
@@ -4827,21 +4827,21 @@ mod tests {
     #[test]
     fn default_exclusions_are_covered_by_title() {
         let default = WindowExclusion {
-            window_title: Some("Cap Camera".into()),
+            window_title: Some("Cap UX Camera".into()),
             ..Default::default()
         };
         assert!(covers_default_exclusion(&default, &default));
         assert!(covers_default_exclusion(
             &WindowExclusion {
-                owner_name: Some("Cap".into()),
-                window_title: Some("Cap Camera".into()),
+                owner_name: Some("Cap UX".into()),
+                window_title: Some("Cap UX Camera".into()),
                 ..Default::default()
             },
             &default
         ));
         assert!(!covers_default_exclusion(
             &WindowExclusion {
-                window_title: Some("Cap Settings".into()),
+                window_title: Some("Cap UX Settings".into()),
                 ..Default::default()
             },
             &default

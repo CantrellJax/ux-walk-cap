@@ -469,7 +469,27 @@ impl ControlsWindow {
                                 },
                             ))
                             // TODO: the recording settings popover menu.
-                            .child(self.action_button("settings", "icons/settings.svg", true)),
+                            .child(
+                                self.action_button(
+                                    "settings",
+                                    if session.walk.is_some() {
+                                        "icons/ux-walk.svg"
+                                    } else {
+                                        "icons/settings.svg"
+                                    },
+                                    session.walk.is_none(),
+                                )
+                                .when(
+                                    session.walk.is_some(),
+                                    |this| {
+                                        this.tooltip(move |_, cx| {
+                                            ui::Tooltip::new(&theme, "Walk notes & chapters")
+                                                .view(cx)
+                                        })
+                                        .on_click(|_, _, cx| cx.defer(crate::ux_walk_window::open))
+                                    },
+                                ),
+                            ),
                     ),
             )
             .child(

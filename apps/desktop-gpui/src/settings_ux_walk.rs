@@ -336,7 +336,7 @@ impl SettingsWindow {
         }
         self.section(
             "UX Walk transcription",
-            Some("Cloud providers receive recording audio when transcription runs. Cap editor captions keep their existing local models."),
+            Some("Cloud providers receive recording audio when transcription runs. Cap UX editor captions keep their existing local models."),
             None,
             vec![self.rows(rows).into_any_element(), self.ux_walk_notice()],
         ).into_any_element()

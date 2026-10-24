@@ -78,7 +78,7 @@ impl ModeChoice {
             }
             Self::Capture(Mode::Screenshot) => "Capture and annotate stills.",
             Self::UxWalk => {
-                "Open walkthrough setup, then record with notes and chapters using the UX Walk controls."
+                "Record with Cap UX capture controls, then review notes, chapters and transcripts."
             }
         }
     }

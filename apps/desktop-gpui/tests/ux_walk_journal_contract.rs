@@ -1,17 +1,30 @@
 #[path = "../src/ux_walk_journal.rs"]
 mod journal;
 use journal::{Journal, Request};
-use std::{fs, path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
+use std::{
+    fs,
+    path::PathBuf,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 fn request() -> Request {
-    let id = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-    Request { directory: std::env::temp_dir().join(format!("cap-ux-journal-{id}")), topic: "Checkout walk".into(), url: "https://example.com".into(), speakers: vec!["Tester".into()] }
+    let id = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    Request {
+        directory: std::env::temp_dir().join(format!("cap-ux-journal-{id}")),
+        topic: "Checkout walk".into(),
+        url: "https://example.com".into(),
+        speakers: vec!["Tester".into()],
+    }
 }
 
 #[test]
 fn native_notes_use_capture_elapsed_time_and_survive_reopening() {
     let req = request();
-    let mut walk = Journal::begin(req.clone(), PathBuf::from("/recordings/test.cap"), 100_000).unwrap();
+    let mut walk =
+        Journal::begin(req.clone(), PathBuf::from("/recordings/test.cap"), 100_000).unwrap();
     walk.add("note", "Button is clipped", 1_500).unwrap();
     walk.add("chapter", "Payment", 4_000).unwrap();
     assert!(walk.add("note", "Stale timestamp", 3_999).is_err());

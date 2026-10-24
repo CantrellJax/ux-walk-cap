@@ -3167,3 +3167,17 @@ mod tests {
         assert!(cleared.excluded_windows.is_empty());
     }
 }
+
+pub fn ux_walk_selected() -> bool {
+    cfg!(all(target_os = "macos", feature = "ux-walk"))
+        && store_section(RECORDING_SETTINGS)
+            .get("uxWalkEnabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+}
+
+pub fn set_ux_walk_selected(selected: bool) {
+    if !set_store_setting(RECORDING_SETTINGS, "uxWalkEnabled", Value::Bool(selected)) {
+        tracing::warn!("Could not save UX Walk mode");
+    }
+}
