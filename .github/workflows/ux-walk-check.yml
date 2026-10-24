@@ -32,7 +32,7 @@ permissions:
 
 concurrency:
   group: ux-walk-native-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   native:
@@ -89,12 +89,12 @@ jobs:
         if: always()
         run: git diff --exit-code
       - name: Set up preview packaging tools
-        if: github.event_name == 'workflow_dispatch' && inputs.preview
+        if: (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.preview))
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: 1.4.0
       - name: Install only the existing bundler's tools
-        if: github.event_name == 'workflow_dispatch' && inputs.preview
+        if: (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.preview))
         run: |
           task_tools="$RUNNER_TEMP/ux-walk-packaging-tools"
           mkdir -p "$task_tools"
@@ -103,7 +103,7 @@ jobs:
           bun add --exact @tauri-apps/cli@2.8.4 dotenv-cli@11.0.0
           printf '%s\n' "$task_tools/node_modules/.bin" >> "$GITHUB_PATH"
       - name: Prepare an isolated preview configuration
-        if: github.event_name == 'workflow_dispatch' && inputs.preview
+        if: (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.preview))
         run: |
           python3 - <<'PY'
           import json, os, pathlib, plistlib
@@ -144,7 +144,7 @@ jobs:
           }, indent=2) + '\n')
           PY
       - name: Build a genuine debug preview through the existing pipeline
-        if: github.event_name == 'workflow_dispatch' && inputs.preview
+        if: (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.preview))
         env:
           RUSTUP_TOOLCHAIN: '1.95.0'
         run: |
@@ -152,13 +152,13 @@ jobs:
           node scripts/build-desktop-binaries.mjs "$task_target" --debug
           node scripts/bundle-gpui.mjs "$task_target" --debug --bundles app --config "$RUNNER_TEMP/ux-walk-preview/preview.json"
       - name: Bundle the pinned UX Walk engine and native controls
-        if: github.event_name == 'workflow_dispatch' && inputs.preview
+        if: (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.preview))
         run: |
           npm ci --ignore-scripts --prefix vendor/ux-walk
-          node --test vendor/ux-walk/test/unit/embedded-config.test.mjs vendor/ux-walk/test/unit/start-link.test.mjs
+          node --test vendor/ux-walk/test/unit/embedded-config.test.mjs vendor/ux-walk/test/unit/start-link.test.mjs vendor/ux-walk/test/unit/cap-editor-handoff.test.mjs
           node scripts/bundle-ux-walk.mjs 'apps/desktop-gpui/target/debug/bundle/macos/Cap-UX Preview.app'
       - name: Verify and retain the preview
-        if: github.event_name == 'workflow_dispatch' && inputs.preview
+        if: (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.preview))
         run: |
           task_app='apps/desktop-gpui/target/debug/bundle/macos/Cap-UX Preview.app'
           test -d "$task_app"
@@ -185,7 +185,7 @@ jobs:
           cp LICENSE UX-WALK.md "$RUNNER_TEMP/ux-walk-preview/"
           shasum -a 256 "$RUNNER_TEMP/ux-walk-preview/Cap-UX-Preview.zip" > "$RUNNER_TEMP/ux-walk-preview/SHA256.txt"
       - uses: actions/upload-artifact@v4
-        if: success() && github.event_name == 'workflow_dispatch' && inputs.preview
+        if: success() && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.preview))
         with:
           name: cap-walkthrough-preview
           path: ${{ runner.temp }}/ux-walk-preview/

@@ -198,7 +198,9 @@ if (cmd === 'cap') {
     else if (action === 'edit' && project) {
       const file = prepareCapEdit(path.resolve(project));
       if (!flags['no-open']) {
-        const r = spawnSync('open', ['-a', 'Cap', file], { stdio: 'inherit' });
+        const binary = new CapClient().binary;
+        const app = binary.match(/^(.*\.app)\/Contents\/MacOS\/cap-cli$/)?.[1] || 'Cap';
+        const r = spawnSync('open', ['-a', app, file], { stdio: 'inherit' });
         if (r.status !== 0) throw new Error('Could not open Cap Desktop');
       }
       console.log(JSON.stringify({ project: file, source: path.resolve(project), opened: !flags['no-open'] }, null, 2));

@@ -21,6 +21,7 @@ const included = [
 	"assets/ux-walk.icns",
 	"test/unit/embedded-config.test.mjs",
 	"test/unit/start-link.test.mjs",
+	"test/unit/cap-editor-handoff.test.mjs",
 ];
 
 export async function verifyUxWalkSource(directory = engineDirectory) {
