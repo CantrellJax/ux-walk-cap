@@ -1,77 +1,56 @@
 <p align="center">
-	<img width="150" height="150" src="https://github.com/CapSoftware/Cap/blob/main/apps/desktop/src-tauri/icons/Square310x310Logo.png" alt="Cap logo">
+  <img width="144" height="144" src="apps/desktop-gpui/assets/branding/cap-ux.svg" alt="Cap UX logo: blue Cap rings with UX in the center">
 </p>
 
-<h1 align="center">Cap</h1>
+<h1 align="center">Cap UX</h1>
+
+<p align="center">Record the walkthrough. Keep the evidence. Give your agent the context.</p>
 
 <p align="center">
-	Beautiful, shareable screen recordings. Open source, fast, and built for teams that want to own their data.
+  <a href="https://github.com/CantrellJax/ux-walk-cap/releases">Releases</a> ·
+  <a href="UX-WALK.md">How it works</a> ·
+  <a href="https://github.com/CantrellJax/ux-walk-cap/issues">Feedback</a> ·
+  <a href="https://github.com/CapSoftware/Cap">Built on Cap</a>
 </p>
 
-<p align="center">
-	<a href="https://cap.so">Website</a>
-	 |
-	<a href="https://cap.so/download">Download</a>
-	 |
-	<a href="https://cap.so/docs">Docs</a>
-	 |
-	<a href="https://cap.so/pricing">Pricing</a>
-	 |
-	<a href="https://cap.link/discord">Discord</a>
-</p>
+Cap UX combines [Cap](https://github.com/CapSoftware/Cap)'s screen recorder and editor with [UX Walk](https://github.com/CantrellJax/ux-walk)'s chapters, notes, transcripts and agent-ready evidence. It is an independent open-source fork for product walkthroughs, bug reports and design reviews.
 
-<p align="center">
-	<a href="https://console.algora.io/org/CapSoftware/bounties?status=open">
-		<img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fconsole.algora.io%2Fapi%2Fshields%2FCapSoftware%2Fbounties%3Fstatus%3Dopen" alt="Open bounties">
-	</a>
-</p>
+## What you get
 
-<img src="https://raw.githubusercontent.com/CapSoftware/Cap/refs/heads/main/apps/web/public/landing-cover.png" alt="Cap app preview">
+- **UX Walk in the menu.** Select Mode → UX Walk… opens the bundled walkthrough setup and native recording controls.
+- **One settings window.** Walk defaults live in General, the output folder in Recordings, and providers in Transcription. The CLI reads the same preferences.
+- **Your transcription provider.** ElevenLabs Scribe, AssemblyAI, Descript, or no transcription. Existing Keychain entries are reused. Cap editor captions keep their local models.
+- **Evidence an agent can read.** Video, screenshots, timestamped notes, chapters and a local report stay together. Browser telemetry depends on the capture mode and optional selected-tab extension.
+- **Cap's editor.** Keep the original recording as evidence and edit a copy for sharing.
 
-Cap is the open source alternative to Loom. It gives you fast screen recording, polished local editing, instant share links, comments, transcripts, analytics, team workspaces, custom domains, custom S3 storage, and full self-hosting when you need complete control.
+## Try it
 
-Use Cap for product demos, bug reports, onboarding, tutorials, design reviews, engineering walkthroughs, async standups, client updates, and any moment where showing the work is faster than scheduling another call.
+Cap UX is currently a macOS 15+ developer preview. A signed public installer is not available yet. The native CI workflow can build an isolated **Cap-UX Preview.app** with its own profile, the pinned UX Walk engine, a Node runtime and native helpers.
 
-## Why Cap
+The walkthrough processor currently needs FFmpeg on your Mac. Optional chapter briefs need your configured Claude CLI; agent handoffs to cmux need cmux. Cloud transcription needs your own provider key. The app does not automatically publish recordings.
 
-- **Record, edit, share.** Capture your screen, camera, and microphone, then share a link or export a finished video.
-- **Instant Mode for speed.** Upload while recording and get a shareable link the moment you stop.
-- **Studio Mode for polish.** Record locally, edit with backgrounds, zooms, trimming, captions, and export controls.
-- **Desktop apps for your team.** Cap runs on macOS and Windows, with a web dashboard for viewing, sharing, and managing recordings.
-- **Own your storage.** Use Cap Cloud, connect your own S3-compatible bucket, keep recordings local, or self-host the full platform.
-- **Privacy by default.** Share publicly or privately, add passwords, use your own domain, or keep sensitive recordings off hosted infrastructure.
-- **Async collaboration.** Comments, reactions, transcripts, viewer analytics, and team workspaces keep feedback attached to the video.
-- **Cap AI.** Generate titles, summaries, clickable chapters, captions, and transcripts automatically.
-- **Move from Loom.** Import existing Loom videos into Cap and keep your library in one place.
+For a source build, clone with submodules:
 
-## Recording Modes
+```sh
+git clone --recurse-submodules https://github.com/CantrellJax/ux-walk-cap.git
+cd ux-walk-cap
+```
 
-| Mode | Best for | How it works |
-| --- | --- | --- |
-| Instant Mode | Fast feedback, bug reports, async updates | Cap uploads while you record, then gives you a share link as soon as recording stops. |
-| Studio Mode | Product demos, tutorials, launches, client work | Cap records locally, opens the editor, and lets you export or share a polished video. |
+Use the existing Cap setup/build pipeline below, install the engine dependencies with `npm ci --ignore-scripts --prefix packages/ux-walk`, then run `node scripts/bundle-ux-walk.mjs /path/to/Cap-UX.app` after packaging. The helper is built from the pinned submodule; a separate UX Walk installation is unnecessary.
 
-## Data Ownership
+## Contribute
 
-Cap is designed for people and teams who do not want their recording workflow locked inside a black box.
+Try a real workflow and tell us where the recording, notes or handoff lose context. Issues and small pull requests are welcome. If this helps your team, a GitHub star helps other people find it.
 
-- Use Cap Cloud for the fastest hosted experience.
-- Connect AWS S3, Cloudflare R2, Backblaze B2, MinIO, Wasabi, or another S3-compatible provider.
-- Serve share pages from your own domain.
-- Self-host Cap Web, the API, database, media server, and object storage with Docker Compose.
-- Point Cap Desktop at your self-hosted instance from `Settings > Cap Server URL`.
+## License and attribution
 
-## Get Started
+Cap UX is distributed under AGPLv3 with the MIT and third-party exceptions in [LICENSE](LICENSE). The bundled UX Walk engine is also AGPLv3. The logo adapts Cap's ring mark with a UX monogram. Cap's team built the recording and editing foundation; this fork is independently maintained and is not an official Cap release.
 
-For most users, the fastest path is:
+Upstream changes are proposed as update pull requests, reviewed and built before release. Cap UX has its own application identity and library, and official Cap update installers are disabled for fork builds. Cap Cloud and other hosted services retain their own terms and costs.
 
-1. Download Cap for macOS or Windows from [cap.so/download](https://cap.so/download).
-2. Sign in or create an account.
-3. Choose Instant Mode or Studio Mode.
-4. Record your first Cap.
-5. Share the link, export the file, or keep it local.
+## Upstream Cap development and self-hosting
 
-The full product docs live at [cap.so/docs](https://cap.so/docs).
+The remaining documentation describes the underlying Cap platform. Its cloud features require the appropriate service or a self-hosted deployment.
 
 ## Self-Hosting
 

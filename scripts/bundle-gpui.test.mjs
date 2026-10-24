@@ -42,10 +42,10 @@ test("targets map to their packaging platform and main binary", () => {
 	);
 });
 
-test("the GPUI app keeps the identity every existing install updates into", () => {
-	assert.equal(gpuiConfig.productName, "Cap");
+test("Cap-UX has its own identity and does not publish official updater artifacts", () => {
+	assert.equal(gpuiConfig.productName, "Cap-UX");
 	assert.equal(gpuiConfig.mainBinaryName, "Cap");
-	assert.equal(gpuiConfig.identifier, "so.cap.desktop");
+	assert.equal(gpuiConfig.identifier, "com.cantrell.cap-ux");
 	assert.equal(
 		gpuiConfig.plugins.updater.pubkey,
 		tauriProduction.plugins.updater.pubkey,
@@ -63,16 +63,17 @@ test("the GPUI app keeps the identity every existing install updates into", () =
 			`const UPDATER_PUBLIC_KEY: &str = "${gpuiConfig.plugins.updater.pubkey}";`,
 		),
 	);
-	assert.deepEqual(
-		gpuiConfig.plugins["deep-link"],
-		tauriConfig.plugins["deep-link"],
-	);
-	assert.equal(gpuiConfig.bundle.createUpdaterArtifacts, true);
+	assert.deepEqual(gpuiConfig.plugins["deep-link"].desktop.schemes, ["cap-ux"]);
+	assert.equal(gpuiConfig.bundle.createUpdaterArtifacts, false);
 });
 
-test("the GPUI bundle takes over the identity the Tauri app shipped with", () => {
-	assert.equal(tauriProduction.productName, gpuiConfig.productName);
-	assert.equal(tauriProduction.identifier, gpuiConfig.identifier);
+test("the fork and original Cap can be installed side by side", () => {
+	assert.notEqual(tauriProduction.productName, gpuiConfig.productName);
+	assert.notEqual(tauriProduction.identifier, gpuiConfig.identifier);
+	assert.notDeepEqual(
+		tauriConfig.plugins["deep-link"],
+		gpuiConfig.plugins["deep-link"],
+	);
 	assert.deepEqual(
 		tauriProduction.plugins.updater.endpoints,
 		gpuiConfig.plugins.updater.endpoints,

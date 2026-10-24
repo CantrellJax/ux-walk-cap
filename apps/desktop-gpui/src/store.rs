@@ -153,6 +153,12 @@ pub struct ExportPrefs {
 /// Same identifier the Tauri app uses (`so.cap.desktop`), resolved the way
 /// each OS's app-data convention spells it so a recording made on Windows or
 /// Linux lands in the folder both apps already agree on.
+pub const APP_IDENTIFIER: &str = if cfg!(feature = "ux-walk") {
+    "com.cantrell.cap-ux"
+} else {
+    "so.cap.desktop"
+};
+
 pub fn app_data_dir() -> PathBuf {
     if let Ok(dir) = std::env::var("CAP_GPUI_APP_DATA_DIR")
         && !dir.trim().is_empty()
@@ -163,14 +169,15 @@ pub fn app_data_dir() -> PathBuf {
     #[cfg(target_os = "macos")]
     {
         PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into()))
-            .join("Library/Application Support/so.cap.desktop")
+            .join("Library/Application Support")
+            .join(APP_IDENTIFIER)
     }
     #[cfg(target_os = "windows")]
     {
         std::env::var_os("APPDATA")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("."))
-            .join("so.cap.desktop")
+            .join(APP_IDENTIFIER)
     }
     #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
     {
@@ -180,7 +187,7 @@ pub fn app_data_dir() -> PathBuf {
                 PathBuf::from(std::env::var_os("HOME").unwrap_or_else(|| ".".into()))
                     .join(".local/share")
             });
-        base.join("so.cap.desktop")
+        base.join(APP_IDENTIFIER)
     }
 }
 

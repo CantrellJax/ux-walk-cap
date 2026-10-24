@@ -185,6 +185,8 @@ impl Page {
 /// index and, where present, the condition/action index within it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MenuKind {
+    UxWalkProvider,
+    UxWalkHandoff,
     Countdown,
     MainWindowStart,
     PostDeletion,
@@ -631,6 +633,7 @@ pub struct SettingsWindow {
     /// Everything the pages in `settings_pages.rs` own -- their fetch state,
     /// drafts and text-input entities.
     pub(crate) pages: crate::settings_pages::PagesState,
+    pub(crate) ux_walk: crate::settings_ux_walk::UxWalkSettings,
     /// Drafts for the two text fields. Both are Save/Update-committed in the
     /// shipping page too, so the store only sees them on the button.
     project_name: String,
@@ -750,6 +753,7 @@ impl SettingsWindow {
         ];
 
         let pages = crate::settings_pages::PagesState::new(window, cx);
+        let ux_walk = crate::settings_ux_walk::UxWalkSettings::new(window, cx);
         let page_scroll = ScrollHandle::new();
         let keyboard_nav = ui::keyboard_nav::install(window, cx, |this: &Self, _| {
             this.menu.is_some() || this.shortcut_listening() || this.switch_back_running()
@@ -759,6 +763,7 @@ impl SettingsWindow {
             theme,
             page,
             pages,
+            ux_walk,
             project_name: settings
                 .default_project_name_template
                 .clone()
@@ -871,6 +876,7 @@ impl SettingsWindow {
     /// `open_window`'s builder closure updates the model without ever
     /// scheduling a frame.
     pub fn page_shown(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.ux_walk_refresh(window, cx);
         self.pages_shown(window, cx);
         if matches!(self.page, Page::Quality | Page::License) {
             self.refresh_plan(window, cx);
@@ -1394,6 +1400,7 @@ impl SettingsWindow {
     /// One row per option, check-marked when it is the value in force.
     fn menu_items(&self, kind: MenuKind) -> Vec<ui::MenuItem> {
         match kind {
+            MenuKind::UxWalkProvider | MenuKind::UxWalkHandoff => self.ux_walk_menu_items(kind),
             MenuKind::Countdown => {
                 let current = self.settings.recording_countdown.unwrap_or(0);
                 COUNTDOWN_OPTIONS
@@ -1427,6 +1434,9 @@ impl SettingsWindow {
     ) {
         self.menu = None;
         match kind {
+            MenuKind::UxWalkProvider | MenuKind::UxWalkHandoff => {
+                self.ux_walk_choose(kind, index, window, cx);
+            }
             MenuKind::Countdown => {
                 if let Some((value, _)) = COUNTDOWN_OPTIONS.get(index) {
                     self.settings.recording_countdown = Some(*value);
@@ -2195,6 +2205,7 @@ impl SettingsWindow {
         };
 
         vec![
+            self.render_ux_walk_recordings(cx),
             self.section(
                 "Recordings",
                 Some("Manage your recordings and perform actions."),
@@ -2971,6 +2982,7 @@ impl SettingsWindow {
             self.render_appearance(cx).into_any_element(),
             self.render_app_section(cx).into_any_element(),
             self.render_recording(cx).into_any_element(),
+            self.render_ux_walk_general(cx),
             self.render_storage(cx).into_any_element(),
             self.render_project_name(window, cx).into_any_element(),
             self.render_excluded_windows(cx).into_any_element(),

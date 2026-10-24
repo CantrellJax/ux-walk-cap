@@ -1,16 +1,24 @@
-# Cap with ux-walk
+# Cap UX
 
 This fork extends [Cap](https://github.com/CapSoftware/Cap) with a small macOS walkthrough entry point. Changes began on October 23, 2026. Cap's copyright notices and AGPLv3 license remain in [LICENSE](LICENSE); the MIT and third-party exceptions described there remain unchanged.
 
-## First slice
+## Native integration
 
-**Select Mode → Walkthrough…** opens `ux-walk://start?capture=cap`. Install the [ux-walk companion](https://github.com/CantrellJax/ux-walk) first. The existing Start a walk dialog asks for a topic, display and optional devices. Opening a link never starts capture by itself.
+**Select Mode → UX Walk…** opens the bundled UX Walk helper. The existing Start a walk dialog asks for a topic, display and optional devices. Opening setup never starts capture by itself. Developer builds without the bundled helper can still open the standalone companion.
 
 Cap's Studio CLI owns the continuous screen recording and separate camera/audio assets. ux-walk owns notes, chapters, screenshots, observations and its report. The ux-walk floating bar controls this CLI recording. Cap's desktop recording controls do not mirror it. Studio, Instant and Screenshot remain Cap's three persisted capture modes; Walkthrough is a launch preset, indicated by its ellipsis.
 
 Opening a second link focuses the existing setup or leaves the current walk intact. Stop ends a recording ux-walk started. Ending a log attached to another recording leaves that recording running. A log-only session can still use ux-walk's native instructions capture without Cap.
 
 This does not yet attach to a recording started with Cap's GUI. Shipping GPUI needs a lifecycle contract containing recording identity, project path, target and bounded start/pause/stop clocks. Legacy Tauri automation hooks do not establish that contract.
+
+## Settings and providers
+
+General contains walkthrough identity, start page, speaker defaults, end-of-walk handoff, chapter briefs, source folder and browser trace defaults. Recordings contains the walkthrough output folder. Transcription contains ElevenLabs Scribe, AssemblyAI, Descript and None, plus language and glossary preferences. These controls reuse Cap's settings rows and menus. Cap editor caption models and hints retain their existing behavior.
+
+Native settings write the same ~/.config/ux-walk/config.json that the recorder and CLI read. Unsupported or malformed values are refused; unrelated keys are preserved. API keys stay in the existing login Keychain items, and custom item names are respected. Key entry uses a native secure field; the secret reaches the security utility over stdin, never process arguments or JSON.
+
+Cap UX stores its own library, account and logs under its own app identifier. Preview builds additionally isolate the UX Walk config, and pass the same profile to the bundled helper and CLI. The engine is a pinned submodule with source and license metadata in the helper bundle. FFmpeg remains a runtime prerequisite; optional Claude/cmux handoffs keep their existing requirements.
 
 ## Updates
 
@@ -20,9 +28,9 @@ The fork-owned upstream workflow merges upstream main into an update PR and disp
 
 ## Local preview
 
-Manually run **ux-walk native checks** with `preview=true` to build a debug app after the checks pass. This extends the existing GPUI/Tauri packaging pipeline. Debug previews use the native host target and genuine debug artifact paths; release packaging keeps its existing target and source checks.
+Manually run **ux-walk native checks** with `preview=true` to build a debug app after the checks pass. This extends the existing GPUI/Tauri packaging pipeline and then packages the pinned UX Walk helper with its Node runtime. Debug previews use the native host target and genuine debug artifact paths; release packaging keeps its existing target and source checks.
 
-The artifact contains **Cap Walkthrough Preview.app** in a zip, its source revision, checksum and license. The preview has its own bundle identifier and temporary data/log/recording directories per revision. It registers no Cap URL scheme or recording file association. It does not copy the installed Cap account, settings or library. Opening the preview still follows macOS's ordinary permission flow; a fresh profile can show onboarding until required permissions are granted. Native compile/tests alone do not count as a menu, URL-delivery or recording pass.
+The artifact contains **Cap-UX Preview.app** in a zip, its source revision, checksum, engine provenance and licenses. The preview has its own bundle identifier and temporary data/log/recording directories per revision. It registers no Cap URL scheme or recording file association. It does not copy the installed Cap account, settings or library. Opening the preview still follows macOS's ordinary permission flow; a fresh profile can show onboarding until required permissions are granted. Native compile/tests alone do not count as a menu, URL-delivery or recording pass.
 
 ## Sharing
 

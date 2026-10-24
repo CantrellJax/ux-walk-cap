@@ -80,13 +80,13 @@ pub fn logs_dir() -> PathBuf {
         dirs::home_dir()
             .unwrap_or_else(|| PathBuf::from("."))
             .join("Library/Logs")
-            .join("so.cap.desktop")
+            .join(crate::store::APP_IDENTIFIER)
     }
     #[cfg(not(target_os = "macos"))]
     {
         dirs::data_local_dir()
             .unwrap_or_else(|| PathBuf::from("."))
-            .join("so.cap.desktop")
+            .join(crate::store::APP_IDENTIFIER)
             .join("logs")
     }
 }

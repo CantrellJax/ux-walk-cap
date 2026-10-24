@@ -14,17 +14,16 @@ use cap_automation::{
 use cap_recording::screen_capture::ScreenCaptureTarget;
 use serde_json::Value;
 
-const DESKTOP_BUNDLE_IDS: [&str; 2] = ["so.cap.desktop", "so.cap.desktop.dev"];
-
 const WEBHOOK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 const COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 
 fn load_desktop_store_value() -> Option<Value> {
-    let data_dir = dirs::data_dir()?;
-    DESKTOP_BUNDLE_IDS.into_iter().find_map(|id| {
-        let bytes = std::fs::read(data_dir.join(id).join("store")).ok()?;
-        serde_json::from_slice::<Value>(&bytes).ok()
-    })
+    crate::credentials::desktop_store_paths()
+        .into_iter()
+        .find_map(|path| {
+            let bytes = std::fs::read(path).ok()?;
+            serde_json::from_slice::<Value>(&bytes).ok()
+        })
 }
 
 pub fn load_store() -> Option<AutomationsStore> {

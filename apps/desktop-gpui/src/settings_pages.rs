@@ -2466,6 +2466,7 @@ impl SettingsWindow {
             );
 
         let mut sections = vec![
+            self.render_ux_walk_transcription(cx),
             self.section(
                 "Transcription",
                 Some(

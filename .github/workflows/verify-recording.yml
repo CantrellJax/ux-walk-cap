@@ -74,8 +74,9 @@ permissions:
 
 jobs:
   scope:
+    if: github.repository == 'CapSoftware/Cap' || github.event_name == 'workflow_dispatch'
     name: Scope
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: ${{ github.repository == 'CapSoftware/Cap' && 'blacksmith-8vcpu-ubuntu-2404' || 'ubuntu-latest' }}
     timeout-minutes: 5
     outputs:
       run: ${{ steps.scope.outputs.run }}
@@ -439,8 +440,8 @@ jobs:
   gate:
     name: Verify recording
     needs: [scope, real-capture, real-capture-windows]
-    if: always()
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    if: always() && (github.repository == 'CapSoftware/Cap' || github.event_name == 'workflow_dispatch')
+    runs-on: ${{ github.repository == 'CapSoftware/Cap' && 'blacksmith-8vcpu-ubuntu-2404' || 'ubuntu-latest' }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4

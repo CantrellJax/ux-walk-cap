@@ -14,6 +14,9 @@ on:
       - scripts/bundle-gpui*
       - scripts/build-desktop-binaries*
       - scripts/build-macos-packages*
+      - scripts/bundle-ux-walk.mjs
+      - packages/ux-walk
+      - .gitmodules
       - .github/workflows/ux-walk-*.yml
   push:
     branches: [main, feat/walkthrough-entry]
@@ -41,6 +44,8 @@ jobs:
       CARGO_PROFILE_DEV_DEBUG: '0'
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -56,7 +61,7 @@ jobs:
             apps/desktop-gpui -> target
       - name: Format changed Rust surfaces
         run: |
-          rustfmt +1.95.0 --edition 2024 apps/desktop-gpui/src/tray.rs apps/desktop-gpui/src/updates.rs apps/desktop-gpui/src/installer.rs apps/desktop-gpui/src/ux_walk.rs apps/cli/src/update.rs
+          rustfmt +1.95.0 --edition 2024 apps/desktop-gpui/src/tray.rs apps/desktop-gpui/src/updates.rs apps/desktop-gpui/src/installer.rs apps/desktop-gpui/src/ux_walk.rs apps/desktop-gpui/src/ux_walk_preferences.rs apps/desktop-gpui/src/settings_ux_walk.rs apps/desktop-gpui/src/settings_window.rs apps/desktop-gpui/src/settings_pages.rs apps/desktop-gpui/src/store.rs apps/desktop-gpui/src/diagnostics.rs apps/desktop-gpui/src/transcription.rs apps/cli/src/credentials.rs apps/cli/src/automation.rs apps/cli/src/recordings.rs apps/cli/src/update.rs
           git diff > "$RUNNER_TEMP/rustfmt.patch"
       - uses: actions/upload-artifact@v4
         if: always()
@@ -78,7 +83,7 @@ jobs:
           mkdir -p "$task_frameworks"
           ln -sfn "$GITHUB_WORKSPACE/target/Frameworks/Spacedrive.framework" "$task_frameworks/Spacedrive.framework"
           cargo +1.95.0 test --manifest-path apps/desktop-gpui/Cargo.toml --locked --bin cap-gpui tray::tests
-          cargo +1.95.0 test --manifest-path apps/desktop-gpui/Cargo.toml --locked --bin cap-gpui ux_walk::tests
+          cargo +1.95.0 test --manifest-path apps/desktop-gpui/Cargo.toml --locked --bin cap-gpui ux_walk_preferences::tests
           cargo +1.95.0 test --manifest-path apps/desktop-gpui/Cargo.toml --locked --bin cap-gpui installer::tests::fork_refuses_official_update_resolution
           cargo +1.95.0 test --locked -p cap update::tests::fork_refuses_official_installer
       - name: Verify formatting
@@ -117,14 +122,15 @@ jobs:
               'CAP_GPUI_APP_DATA_DIR': profile + '/data',
               'CAP_GPUI_LOG_DIR': profile + '/logs',
               'CAP_GPUI_RECORDINGS_DIR': profile + '/recordings',
+              'CAP_UX_WALK_CONFIG_DIR': profile + '/ux-walk',
           }
           plist = out / 'Preview.plist'
           plist.write_bytes(plistlib.dumps(info))
           (root / 'apps/desktop-gpui/Info.plist').write_bytes(plist.read_bytes())
           config = {
-              'productName': 'Cap Walkthrough Preview',
+              'productName': 'Cap-UX Preview',
               'mainBinaryName': 'Cap',
-              'identifier': 'com.uxwalk.cap-preview',
+              'identifier': 'com.cantrell.cap-ux.preview',
               'bundle': {
                   'createUpdaterArtifacts': False,
                   'fileAssociations': [],
@@ -146,17 +152,23 @@ jobs:
           task_target="$(rustc -vV | sed -n 's/host: //p')"
           node scripts/build-desktop-binaries.mjs "$task_target" --debug
           node scripts/bundle-gpui.mjs "$task_target" --debug --bundles app --config "$RUNNER_TEMP/ux-walk-preview/preview.json"
+      - name: Bundle the pinned UX Walk engine and native controls
+        if: github.event_name == 'workflow_dispatch' && inputs.preview
+        run: |
+          npm ci --ignore-scripts --prefix packages/ux-walk
+          node --test packages/ux-walk/test/unit/embedded-config.test.mjs packages/ux-walk/test/unit/start-link.test.mjs
+          node scripts/bundle-ux-walk.mjs 'apps/desktop-gpui/target/debug/bundle/macos/Cap-UX Preview.app'
       - name: Verify and retain the preview
         if: github.event_name == 'workflow_dispatch' && inputs.preview
         run: |
-          task_app='apps/desktop-gpui/target/debug/bundle/macos/Cap Walkthrough Preview.app'
+          task_app='apps/desktop-gpui/target/debug/bundle/macos/Cap-UX Preview.app'
           test -d "$task_app"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$task_app/Contents/Info.plist")" = com.uxwalk.cap-preview
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$task_app/Contents/Info.plist")" = com.cantrell.cap-ux.preview
           test "$(/usr/libexec/PlistBuddy -c 'Print :UXWalkBuildSHA' "$task_app/Contents/Info.plist")" = "$GITHUB_SHA"
           codesign --verify --deep --strict "$task_app"
           python3 - <<'PY'
           import os, pathlib, plistlib
-          app = pathlib.Path('apps/desktop-gpui/target/debug/bundle/macos/Cap Walkthrough Preview.app')
+          app = pathlib.Path('apps/desktop-gpui/target/debug/bundle/macos/Cap-UX Preview.app')
           info = plistlib.loads((app / 'Contents/Info.plist').read_bytes())
           profile = '/tmp/ux-walk-cap-preview-' + os.environ['GITHUB_SHA'][:12]
           assert not info.get('CFBundleDocumentTypes'), 'Preview must not claim recordings'
@@ -165,13 +177,14 @@ jobs:
               'CAP_GPUI_APP_DATA_DIR': profile + '/data',
               'CAP_GPUI_LOG_DIR': profile + '/logs',
               'CAP_GPUI_RECORDINGS_DIR': profile + '/recordings',
+              'CAP_UX_WALK_CONFIG_DIR': profile + '/ux-walk',
           }, 'Preview profile isolation was not retained by the bundler'
           print('Bundled preview associations and isolated profile verified')
           PY
           file "$task_app/Contents/MacOS/Cap" > "$RUNNER_TEMP/ux-walk-preview/executable.txt"
-          ditto -c -k --sequesterRsrc --keepParent "$task_app" "$RUNNER_TEMP/ux-walk-preview/Cap-Walkthrough-Preview.zip"
+          ditto -c -k --sequesterRsrc --keepParent "$task_app" "$RUNNER_TEMP/ux-walk-preview/Cap-UX-Preview.zip"
           cp LICENSE UX-WALK.md "$RUNNER_TEMP/ux-walk-preview/"
-          shasum -a 256 "$RUNNER_TEMP/ux-walk-preview/Cap-Walkthrough-Preview.zip" > "$RUNNER_TEMP/ux-walk-preview/SHA256.txt"
+          shasum -a 256 "$RUNNER_TEMP/ux-walk-preview/Cap-UX-Preview.zip" > "$RUNNER_TEMP/ux-walk-preview/SHA256.txt"
       - uses: actions/upload-artifact@v4
         if: success() && github.event_name == 'workflow_dispatch' && inputs.preview
         with:

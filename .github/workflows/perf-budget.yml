@@ -22,6 +22,7 @@ permissions:
 
 jobs:
   scope:
+    if: github.repository == 'CapSoftware/Cap'
     runs-on: blacksmith-2vcpu-ubuntu-2404
     outputs:
       run: ${{ steps.scope.outputs.run }}
@@ -135,7 +136,7 @@ jobs:
   verdict:
     name: Perf budget
     needs: [scope, measure]
-    if: always()
+    if: always() && github.repository == 'CapSoftware/Cap'
     runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - env:

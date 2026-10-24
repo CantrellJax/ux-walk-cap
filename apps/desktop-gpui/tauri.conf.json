@@ -1,8 +1,8 @@
 {
 	"$schema": "https://schema.tauri.app/config/2",
-	"productName": "Cap",
+	"productName": "Cap-UX",
 	"mainBinaryName": "Cap",
-	"identifier": "so.cap.desktop",
+	"identifier": "com.cantrell.cap-ux",
 	"plugins": {
 		"updater": {
 			"endpoints": [
@@ -12,16 +12,16 @@
 		},
 		"deep-link": {
 			"desktop": {
-				"schemes": ["cap-desktop"]
+				"schemes": ["cap-ux"]
 			}
 		}
 	},
 	"bundle": {
 		"active": true,
-		"createUpdaterArtifacts": true,
+		"createUpdaterArtifacts": false,
 		"targets": "all",
 		"category": "Video",
-		"longDescription": "Cap is the open source alternative to Loom. Lightweight, powerful, and cross-platform. Record and share in seconds.",
+		"longDescription": "Cap-UX combines Cap screen recording and editing with UX Walk notes, chapters, transcripts and agent-ready evidence.",
 		"externalBin": [
 			"../desktop/src-tauri/binaries/cap-muxer",
 			"../desktop/src-tauri/binaries/cap-cli"
@@ -30,7 +30,7 @@
 			"../desktop/src-tauri/icons/32x32.png",
 			"../desktop/src-tauri/icons/128x128.png",
 			"../desktop/src-tauri/icons/128x128@2x.png",
-			"../desktop/src-tauri/icons/macos/icon.icns",
+			"assets/branding/cap-ux.icns",
 			"../desktop/src-tauri/icons/icon.ico"
 		],
 		"resources": {
@@ -51,7 +51,7 @@
 			}
 		],
 		"macOS": {
-			"minimumSystemVersion": "12.3",
+			"minimumSystemVersion": "15.0",
 			"entitlements": "../desktop/src-tauri/Entitlements.plist",
 			"frameworks": ["../../target/native-deps/Spacedrive.framework"],
 			"dmg": {

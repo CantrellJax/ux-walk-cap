@@ -60,7 +60,7 @@ function harness(results) {
 	};
 }
 
-test("macOS packaging uses the ScreenCaptureKit minimum across both app manifests", () => {
+test("Cap-UX requires macOS 15 while the underlying capture pipeline keeps its baseline", () => {
 	const minimum = resolveMacosDeploymentTarget();
 	assert.equal(minimum, "12.3");
 	assert.equal(resolveMacosDeploymentTarget(""), minimum);
@@ -70,7 +70,7 @@ test("macOS packaging uses the ScreenCaptureKit minimum across both app manifest
 			"utf8",
 		),
 	);
-	assert.equal(gpui.bundle.macOS.minimumSystemVersion, minimum);
+	assert.equal(gpui.bundle.macOS.minimumSystemVersion, "15.0");
 });
 
 test("the GPUI app is packaged by rebundling its prebuilt binary on every attempt", async () => {

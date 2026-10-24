@@ -10,9 +10,19 @@ use crate::{OutputFormat, write_json};
 
 // Production bundle identifier; matches tauri.prod.conf.json. Dev builds use `so.cap.desktop.dev`,
 // which the user can reach with an explicit `--dir`.
-const DESKTOP_BUNDLE_IDENTIFIER: &str = "so.cap.desktop";
+const DESKTOP_BUNDLE_IDENTIFIER: &str = if cfg!(feature = "ux-walk") {
+    "com.cantrell.cap-ux"
+} else {
+    "so.cap.desktop"
+};
 
 fn default_library_dir() -> Result<PathBuf, String> {
+    if let Some(directory) = std::env::var_os("CAP_GPUI_RECORDINGS_DIR") {
+        return Ok(directory.into());
+    }
+    if let Some(directory) = std::env::var_os("CAP_GPUI_APP_DATA_DIR") {
+        return Ok(PathBuf::from(directory).join("recordings"));
+    }
     dirs::data_dir()
         .ok_or_else(|| "Could not determine the OS application-data directory".to_string())
         .map(|dir| dir.join(DESKTOP_BUNDLE_IDENTIFIER).join("recordings"))

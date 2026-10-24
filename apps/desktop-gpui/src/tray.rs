@@ -294,7 +294,7 @@ fn mode_submenu(mode: Mode) -> Entry {
         let mut items = items;
         items.extend([
             Entry::Separator,
-            Entry::item("Walkthrough…", TrayItem::StartWalkthrough),
+            Entry::item("UX Walk…", TrayItem::StartWalkthrough),
         ]);
         items
     };
@@ -341,8 +341,8 @@ pub fn build_menu(mode: Mode, previous: &[PreviousItem], version: &str) -> Vec<E
     // `logging::upload_log_file` needs the auth token and the HTTP client,
     // neither of which this app has.
     entries.push(Entry::disabled("Upload Logs"));
-    entries.push(Entry::disabled(format!("Cap v{version}")));
-    entries.push(Entry::item("Quit Cap", TrayItem::Quit));
+    entries.push(Entry::disabled(format!("Cap-UX v{version}")));
+    entries.push(Entry::item("Quit Cap-UX", TrayItem::Quit));
 
     entries
 }
@@ -351,8 +351,8 @@ pub fn build_onboarding_menu(version: &str) -> Vec<Entry> {
     vec![
         Entry::item("Request Permissions", TrayItem::RequestPermissions),
         Entry::Separator,
-        Entry::disabled(format!("Cap v{version}")),
-        Entry::item("Quit Cap", TrayItem::Quit),
+        Entry::disabled(format!("Cap-UX v{version}")),
+        Entry::item("Quit Cap-UX", TrayItem::Quit),
     ]
 }
 
@@ -419,7 +419,7 @@ pub fn handle_item(item: TrayItem, cx: &mut App) {
         TrayItem::ModeInstant => set_mode(Mode::Instant, cx),
         TrayItem::ModeScreenshot => set_mode(Mode::Screenshot, cx),
         #[cfg(target_os = "macos")]
-        TrayItem::StartWalkthrough => cx.open_url("ux-walk://start?capture=cap"),
+        TrayItem::StartWalkthrough => crate::ux_walk::start(cx),
     }
 }
 
@@ -1351,7 +1351,7 @@ mod tests {
         let menu = build_onboarding_menu("0.1.0");
         assert_eq!(
             titles(&menu),
-            vec!["Request Permissions", "-", "Cap v0.1.0", "Quit Cap",]
+            vec!["Request Permissions", "-", "Cap-UX v0.1.0", "Quit Cap-UX",]
         );
     }
 
@@ -1376,8 +1376,8 @@ mod tests {
                 "Settings",
                 "-",
                 "Upload Logs",
-                "Cap v0.1.0",
-                "Quit Cap",
+                "Cap-UX v0.1.0",
+                "Quit Cap-UX",
             ]
         );
     }
@@ -1424,7 +1424,7 @@ mod tests {
             assert_eq!(titles(&items[..3]), expected.to_vec());
             #[cfg(target_os = "macos")]
             {
-                assert_eq!(titles(&items[3..]), vec!["-", "Walkthrough…"]);
+                assert_eq!(titles(&items[3..]), vec!["-", "UX Walk…"]);
                 assert!(matches!(
                     items[4],
                     Entry::Item {
@@ -1502,6 +1502,6 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(disabled, vec!["Upload Logs", "Cap v0.1.0"]);
+        assert_eq!(disabled, vec!["Upload Logs", "Cap-UX v0.1.0"]);
     }
 }
