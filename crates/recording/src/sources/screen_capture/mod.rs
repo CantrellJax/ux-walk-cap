@@ -18,6 +18,8 @@ pub use windows::*;
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]
+mod window_target;
+#[cfg(target_os = "macos")]
 pub use macos::*;
 
 #[cfg(target_os = "linux")]
@@ -375,6 +377,8 @@ impl<TCaptureFormat: ScreenCaptureFormat> Clone for ScreenCaptureConfig<TCapture
 #[derive(Clone, Debug)]
 pub struct Config {
     display: DisplayId,
+    #[cfg(target_os = "macos")]
+    window: Option<WindowId>,
     crop_bounds: Option<CropBounds>,
     fps: u32,
     show_cursor: bool,
@@ -475,6 +479,7 @@ impl<TCaptureFormat: ScreenCaptureFormat> ScreenCaptureConfig<TCaptureFormat> {
         #[cfg(windows)] d3d_device: ::windows::Win32::Graphics::Direct3D11::ID3D11Device,
         #[cfg(target_os = "macos")] shareable_content: SendableShareableContent,
         #[cfg(target_os = "macos")] excluded_windows: Vec<WindowId>,
+        #[cfg(target_os = "macos")] target_window: Option<WindowId>,
     ) -> Result<Self, ScreenCaptureInitError> {
         cap_fail::fail!("ScreenCaptureSource::init");
 
@@ -525,9 +530,18 @@ impl<TCaptureFormat: ScreenCaptureFormat> ScreenCaptureConfig<TCaptureFormat> {
             "Screen capture configured"
         );
 
+        #[cfg(target_os = "macos")]
+        let crop_bounds = if target_window.is_some() {
+            None
+        } else {
+            crop_bounds
+        };
+
         Ok(Self {
             config: Config {
                 display: display.id(),
+                #[cfg(target_os = "macos")]
+                window: target_window,
                 crop_bounds,
                 fps,
                 show_cursor,

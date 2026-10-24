@@ -11,6 +11,7 @@ on:
     paths:
       - apps/desktop-gpui/**
       - apps/cli/**
+      - crates/recording/**
       - scripts/bundle-gpui*
       - scripts/build-desktop-binaries*
       - scripts/build-macos-packages*
@@ -23,6 +24,7 @@ on:
     paths:
       - apps/desktop-gpui/**
       - apps/cli/**
+      - crates/recording/**
       - scripts/bundle-gpui*
       - scripts/build-desktop-binaries*
       - scripts/build-macos-packages*
@@ -63,6 +65,7 @@ jobs:
       - name: Format changed Rust surfaces
         run: |
           rustfmt +1.95.0 --edition 2024 --config skip_children=true apps/desktop-gpui/src/main.rs apps/desktop-gpui/src/assets.rs apps/desktop-gpui/src/platform.rs apps/desktop-gpui/src/permission_guide.rs apps/desktop-gpui/src/camera_window.rs apps/desktop-gpui/src/target_overlay.rs apps/desktop-gpui/src/ux_walk_browser.rs apps/desktop-gpui/src/ux_walk_browser_target.rs apps/desktop-gpui/tests/ux_walk_browser_contract.rs apps/desktop-gpui/src/tray.rs apps/desktop-gpui/src/updates.rs apps/desktop-gpui/src/installer.rs apps/desktop-gpui/src/ux_walk.rs apps/desktop-gpui/src/ux_walk_journal.rs apps/desktop-gpui/src/ux_walk_window.rs apps/desktop-gpui/src/session.rs apps/desktop-gpui/src/controls_window.rs apps/desktop-gpui/src/recording.rs apps/desktop-gpui/src/deeplink.rs apps/desktop-gpui/src/menus.rs apps/desktop-gpui/src/hotkeys.rs apps/desktop-gpui/tests/ux_walk_journal_contract.rs apps/desktop-gpui/src/ux_walk_preferences.rs apps/desktop-gpui/src/settings_ux_walk.rs apps/desktop-gpui/src/settings_window.rs apps/desktop-gpui/src/settings_pages.rs apps/desktop-gpui/src/store.rs apps/desktop-gpui/src/diagnostics.rs apps/desktop-gpui/src/transcription.rs apps/desktop-gpui/src/mode_choice.rs apps/desktop-gpui/src/mode_select_window.rs apps/desktop-gpui/src/main_window.rs apps/desktop-gpui/src/onboarding_window.rs apps/desktop-gpui/src/onboarding_doodles.rs apps/desktop-gpui/src/app_windows.rs apps/cli/src/credentials.rs apps/cli/src/automation.rs apps/cli/src/recordings.rs apps/cli/src/update.rs
+          rustfmt +1.95.0 --edition 2024 --config skip_children=true crates/recording/src/sources/screen_capture/mod.rs crates/recording/src/sources/screen_capture/macos.rs crates/recording/src/sources/screen_capture/window_target.rs crates/recording/src/studio_recording.rs crates/recording/src/instant_recording.rs crates/recording/tests/macos_window_target_contract.rs
           git diff > "$RUNNER_TEMP/rustfmt.patch"
       - uses: actions/upload-artifact@v4
         if: always()
@@ -80,6 +83,10 @@ jobs:
           cargo +1.95.0 check --locked -p cap
       - name: Exercise the native walk processor
         run: node --test apps/desktop-gpui/ux-walk/native-walk.test.mjs
+      - name: Exercise isolated window selection
+        run: |
+          rustc +1.95.0 --edition 2024 --test crates/recording/tests/macos_window_target_contract.rs -o "$RUNNER_TEMP/window-capture-contract"
+          "$RUNNER_TEMP/window-capture-contract"
       - name: Exercise menu and fork update protection
         run: |
           task_frameworks="apps/desktop-gpui/target/debug/Frameworks"
