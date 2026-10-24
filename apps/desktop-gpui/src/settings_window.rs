@@ -1895,14 +1895,20 @@ impl SettingsWindow {
                     .px(px(4.))
                     .py(px(2.))
                     .rounded(px(4.))
-                    .child(format!("v{}", env!("CARGO_PKG_VERSION"))),
+                    .child(format!("Cap UX v{}", env!("CARGO_PKG_VERSION"))),
             )
             .child(
                 div()
                     .id("settings-previous-versions")
                     .child("View previous versions")
                     .hover(|style| style.text_color(theme.settings_text()))
-                    .on_click(|_, _, cx| cx.open_url("https://cap.so/download/versions")),
+                    .on_click(|_, _, cx| {
+                        cx.open_url(if cfg!(feature = "ux-walk") {
+                            "https://github.com/CantrellJax/ux-walk-cap/releases"
+                        } else {
+                            "https://cap.so/download/versions"
+                        })
+                    }),
             )
             .child(
                 div()

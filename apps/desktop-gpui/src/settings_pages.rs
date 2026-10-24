@@ -3930,6 +3930,9 @@ impl SettingsWindow {
     /// `/api/changelog?origin=..`; the server only reads `origin` for CORS,
     /// so the configured server origin stands in for `window.location.origin`.
     fn changelog_fetch(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if cfg!(feature = "ux-walk") {
+            return;
+        }
         let server = self.settings.server_url.clone();
         let url = format!("{server}/api/changelog");
         self.spawn_tokio(
@@ -3960,6 +3963,15 @@ impl SettingsWindow {
 
     pub(crate) fn render_changelog(&self, _cx: &mut Context<Self>) -> Vec<gpui::AnyElement> {
         let theme = self.theme;
+        if cfg!(feature = "ux-walk") {
+            return vec![self.section("Cap UX updates", Some("Native UX Walk recording, notes, chapters, transcripts and explicit agent handoffs."), None, vec![
+                self.card(true).child(div().flex().flex_col().items_start().gap(px(12.))
+                    .child(div().text_size(px(13.)).line_height(px(20.)).child("This is a developer preview. Follow Cap UX releases and source changes on GitHub."))
+                    .child(ui::Button::settings(&theme, "cap-ux-releases", ui::ButtonVariant::Dark, ui::ButtonSize::Sm).label("Cap UX releases ↗").on_click(|_, _, cx| cx.open_url("https://github.com/CantrellJax/ux-walk-cap/releases")))
+                    .child(ui::Button::settings(&theme, "cap-ux-changes", ui::ButtonVariant::Gray, ui::ButtonSize::Sm).label("View source changes ↗").on_click(|_, _, cx| cx.open_url("https://github.com/CantrellJax/ux-walk-cap/commits/main/")))
+                ).into_any_element()
+            ]).into_any_element()];
+        }
 
         match &self.pages.changelog {
             None => vec![
