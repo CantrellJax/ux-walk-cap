@@ -13,7 +13,7 @@
   <a href="https://github.com/CapSoftware/Cap">Built on Cap</a>
 </p>
 
-Cap UX combines [Cap](https://github.com/CapSoftware/Cap)'s screen recorder and editor with [UX Walk](https://github.com/CantrellJax/ux-walk)'s chapters, notes, transcripts and agent-ready evidence. It is an independent open-source fork for product walkthroughs, bug reports and design reviews.
+Cap UX combines [Cap](https://github.com/CapSoftware/Cap)'s screen recorder and editor with [UX Walk](packages/ux-walk)'s chapters, notes, transcripts and agent-ready evidence. It is an independent open-source fork for product walkthroughs, bug reports and design reviews.
 
 ## What you get
 
@@ -29,14 +29,14 @@ Cap UX is currently a macOS 15+ developer preview. A signed public installer is 
 
 The walkthrough processor currently needs FFmpeg on your Mac. Optional chapter briefs need your configured Claude CLI; agent handoffs to cmux need cmux. Cloud transcription needs your own provider key. The app does not automatically publish recordings.
 
-For a source build, clone with submodules:
+For a source build, clone the repository:
 
 ```sh
-git clone --recurse-submodules https://github.com/CantrellJax/ux-walk-cap.git
+git clone https://github.com/CantrellJax/ux-walk-cap.git
 cd ux-walk-cap
 ```
 
-Use the existing Cap setup/build pipeline below, install the engine dependencies with `npm ci --ignore-scripts --prefix packages/ux-walk`, then run `node scripts/bundle-ux-walk.mjs /path/to/Cap-UX.app` after packaging. The helper is built from the pinned submodule; a separate UX Walk installation is unnecessary.
+Use the existing Cap setup/build pipeline below, install the engine dependencies with `npm ci --ignore-scripts --prefix packages/ux-walk`, then run `node scripts/bundle-ux-walk.mjs /path/to/Cap-UX.app` after packaging. The helper is built from the pinned source snapshot; a separate UX Walk installation is unnecessary.
 
 ## Contribute
 

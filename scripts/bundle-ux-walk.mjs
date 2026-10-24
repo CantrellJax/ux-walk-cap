@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import * as fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { verifyUxWalkSource } from "./sync-ux-walk.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const source = path.join(root, "packages", "ux-walk");
@@ -36,10 +37,7 @@ export async function bundleUxWalk(app) {
 	if (!String(parent.CFBundleIdentifier).startsWith("com.cantrell.cap-ux")) {
 		throw new Error("UX Walk can only be bundled into a Cap-UX app");
 	}
-	const revision = run("git", ["-C", source, "rev-parse", "HEAD"]).trim();
-	if (run("git", ["-C", source, "status", "--porcelain"]).trim()) {
-		throw new Error("The pinned UX Walk source has uncommitted changes");
-	}
+	const { revision } = await verifyUxWalkSource(source);
 	await fs.access(
 		path.join(source, "node_modules/playwright-core/package.json"),
 	);
@@ -57,6 +55,7 @@ export async function bundleUxWalk(app) {
 		"package.json",
 		"package-lock.json",
 		"LICENSE",
+		"SOURCE.json",
 	]) {
 		await fs.cp(path.join(source, item), path.join(engine, item), {
 			recursive: true,
@@ -128,7 +127,7 @@ export async function bundleUxWalk(app) {
 	await fs.writeFile(path.join(helper, "Contents", "Info.plist"), plist);
 	await fs.writeFile(
 		path.join(resources, "engine-source.json"),
-		`${JSON.stringify({ repository: "https://github.com/CantrellJax/ux-walk", revision, node: process.version }, null, 2)}\n`,
+		`${JSON.stringify({ repository: "https://github.com/CantrellJax/ux-walk-cap", sourceURL: `${parent.UXWalkSourceURL ?? `https://github.com/CantrellJax/ux-walk-cap/tree/${run("git", ["-C", root, "rev-parse", "HEAD"]).trim()}`}/packages/ux-walk`, revision, node: process.version }, null, 2)}\n`,
 	);
 	for (const target of [
 		path.join(engine, "bin", "node"),

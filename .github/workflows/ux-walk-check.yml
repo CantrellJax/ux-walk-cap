@@ -15,8 +15,8 @@ on:
       - scripts/build-desktop-binaries*
       - scripts/build-macos-packages*
       - scripts/bundle-ux-walk.mjs
-      - packages/ux-walk
-      - .gitmodules
+      - packages/ux-walk/**
+      - scripts/sync-ux-walk.mjs
       - .github/workflows/ux-walk-*.yml
   push:
     branches: [main, feat/walkthrough-entry]
@@ -44,8 +44,6 @@ jobs:
       CARGO_PROFILE_DEV_DEBUG: '0'
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
       - uses: actions/setup-node@v4
         with:
           node-version: '22'

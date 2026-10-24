@@ -1,4 +1,0 @@
-[submodule "packages/ux-walk"]
-	path = packages/ux-walk
-	url = https://github.com/CantrellJax/ux-walk.git
-	branch = main

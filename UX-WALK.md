@@ -18,7 +18,7 @@ General contains walkthrough identity, start page, speaker defaults, end-of-walk
 
 Native settings write the same ~/.config/ux-walk/config.json that the recorder and CLI read. Unsupported or malformed values are refused; unrelated keys are preserved. API keys stay in the existing login Keychain items, and custom item names are respected. Key entry uses a native secure field; the secret reaches the security utility over stdin, never process arguments or JSON.
 
-Cap UX stores its own library, account and logs under its own app identifier. Preview builds additionally isolate the UX Walk config, and pass the same profile to the bundled helper and CLI. The engine is a pinned submodule with source and license metadata in the helper bundle. FFmpeg remains a runtime prerequisite; optional Claude/cmux handoffs keep their existing requirements.
+Cap UX stores its own library, account and logs under its own app identifier. Preview builds additionally isolate the UX Walk config, and pass the same profile to the bundled helper and CLI. The engine is a pinned source snapshot with source and license metadata in the helper bundle. FFmpeg remains a runtime prerequisite; optional Claude/cmux handoffs keep their existing requirements.
 
 ## Updates
 
@@ -28,7 +28,7 @@ The fork-owned upstream workflow merges upstream main into an update PR and disp
 
 ## Local preview
 
-Manually run **ux-walk native checks** with `preview=true` to build a debug app after the checks pass. This extends the existing GPUI/Tauri packaging pipeline and then packages the pinned UX Walk helper with its Node runtime. Debug previews use the native host target and genuine debug artifact paths; release packaging keeps its existing target and source checks.
+Manually run **ux-walk native checks** with `preview=true` to build a debug app after the checks pass. This extends the existing GPUI/Tauri packaging pipeline and then packages the pinned UX Walk helper with its Node runtime. The public snapshot contains only the required engine sources, license and focused contract tests, with per-file hashes in SOURCE.json. Refresh it from a reviewed canonical commit using scripts/sync-ux-walk.mjs; direct snapshot edits are refused by packaging. Debug previews use the native host target and genuine debug artifact paths; release packaging keeps its existing target and source checks.
 
 The artifact contains **Cap-UX Preview.app** in a zip, its source revision, checksum, engine provenance and licenses. The preview has its own bundle identifier and temporary data/log/recording directories per revision. It registers no Cap URL scheme or recording file association. It does not copy the installed Cap account, settings or library. Opening the preview still follows macOS's ordinary permission flow; a fresh profile can show onboarding until required permissions are granted. Native compile/tests alone do not count as a menu, URL-delivery or recording pass.
 
