@@ -89,6 +89,8 @@ jobs:
           cargo +1.95.0 test --manifest-path apps/desktop-gpui/Cargo.toml --locked --test ux_walk_journal_contract
           cargo +1.95.0 test --manifest-path apps/desktop-gpui/Cargo.toml --locked --bin cap-gpui ux_walk_preferences::tests
           cargo +1.95.0 test --manifest-path apps/desktop-gpui/Cargo.toml --locked --bin cap-gpui session::
+          cargo +1.95.0 test --manifest-path apps/desktop-gpui/Cargo.toml --locked --bin cap-gpui app_windows::tests::defaults_exclude_our_windows_with_the_instant_camera_carve_out
+          cargo +1.95.0 test --manifest-path apps/desktop-gpui/Cargo.toml --locked --bin cap-gpui app_windows::tests::default_exclusion_titles_line_up_with_the_table
           cargo +1.95.0 test --manifest-path apps/desktop-gpui/Cargo.toml --locked --bin cap-gpui main_window::mode_hover_tests
           cargo +1.95.0 test --manifest-path apps/desktop-gpui/Cargo.toml --locked --bin cap-gpui onboarding_window::tests
           cargo +1.95.0 test --manifest-path apps/desktop-gpui/Cargo.toml --locked --bin cap-gpui installer::tests::fork_refuses_official_update_resolution

@@ -2661,7 +2661,7 @@ fn own_window_exclusion_rules(
     for rule in &mut rules {
         if let Some(title) = &mut rule.window_title {
             for kind in OwnWindow::ALL {
-                if *title == kind.title().replace("Cap UX", "Cap UX") {
+                if *title == kind.title().replace("Cap UX", "Cap") {
                     *title = kind.title().into();
                     break;
                 }
@@ -7931,9 +7931,9 @@ mod tests {
         assert_eq!(
             defaults_without_a_window,
             vec![
-                &"Cap Window Capture Occluder",
-                &"Cap Capture Area",
-                &"Cap Recordings Overlay",
+                &"Cap UX Window Capture Occluder",
+                &"Cap UX Capture Area",
+                &"Cap UX Recordings Overlay",
             ]
         );
 

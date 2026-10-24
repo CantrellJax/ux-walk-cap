@@ -961,15 +961,15 @@ impl WindowExclusion {
 /// `DEFAULT_EXCLUDED_WINDOW_TITLES` in `general_settings.rs`, which is what
 /// the page's Reset button asks the backend for.
 pub const DEFAULT_EXCLUDED_WINDOW_TITLES: &[&str] = &[
-    "Cap",
-    "Cap Settings",
-    "Cap Recording Controls",
-    "Cap Camera",
-    "Cap Window Capture Occluder",
-    "Cap Capture Area",
-    "Cap Mode Selection",
-    "Cap Recordings Overlay",
-    "Cap Teleprompter",
+    "Cap UX",
+    "Cap UX Settings",
+    "Cap UX Recording Controls",
+    "Cap UX Camera",
+    "Cap UX Window Capture Occluder",
+    "Cap UX Capture Area",
+    "Cap UX Mode Selection",
+    "Cap UX Recordings Overlay",
+    "Cap UX Teleprompter",
 ];
 
 pub fn default_excluded_windows() -> Vec<WindowExclusion> {
@@ -1322,11 +1322,25 @@ impl GeneralSettings {
         let store = cached_store(&tauri_store_path()).unwrap_or_default();
         let empty = Map::new();
         let section = |name: &str| store.get(name).and_then(Value::as_object).unwrap_or(&empty);
-        Self::from_sections(
+        let mut settings = Self::from_sections(
             section(GENERAL_SETTINGS),
             section(RECORDING_START_SAFETY),
             section(AUDIO_ENHANCEMENT),
-        )
+        );
+        for rule in &mut settings.excluded_windows {
+            if rule.bundle_identifier.is_none()
+                && rule.owner_name.is_none()
+                && let Some(title) = &mut rule.window_title
+            {
+                if let Some(current) = DEFAULT_EXCLUDED_WINDOW_TITLES
+                    .iter()
+                    .find(|current| current.replace("Cap UX", "Cap") == *title)
+                {
+                    *title = (*current).into();
+                }
+            }
+        }
+        settings
     }
 
     fn from_sections(
