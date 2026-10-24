@@ -656,7 +656,7 @@ impl RecordingSession {
                 .is_some_and(|pending| pending.capture_stopped)
     }
 
-    pub fn start(&mut self, config: StartConfig, cx: &mut Context<Self>) {
+    pub fn start(&mut self, mut config: StartConfig, cx: &mut Context<Self>) {
         if self.phase != Phase::Idle {
             return;
         }
@@ -666,6 +666,11 @@ impl RecordingSession {
         }
         self.storage_monitor = None;
         self.failure_monitor = None;
+        if let Some(request) = &mut config.ux_walk
+            && request.directory.exists()
+        {
+            *request = request.for_restart(&crate::store::new_uuid_v4());
+        }
         self.recording_generation = self.recording_generation.wrapping_add(1);
         self.preparing_studio_editor = None;
         self.walk = None;

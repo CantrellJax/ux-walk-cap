@@ -10,6 +10,15 @@ pub struct Request {
     pub speakers: Vec<String>,
 }
 
+impl Request {
+    pub fn for_restart(&self, unique: &str) -> Self {
+        Self {
+            directory: self.directory.with_file_name(format!("walk-{unique}")),
+            ..self.clone()
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Event {
@@ -95,7 +104,7 @@ impl Journal {
             offset_ms,
         });
         if let Err(error) = self.save() {
-            self.events.pop();
+            let _ = self.events.pop();
             return Err(error);
         }
         Ok(())

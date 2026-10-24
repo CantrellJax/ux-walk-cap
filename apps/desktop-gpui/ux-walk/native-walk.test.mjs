@@ -171,12 +171,26 @@ test("reprocessing recovers a lock left by a process that no longer exists", asy
 	const f = fixture(t);
 	const lock = path.join(f.directory, ".processing-lock");
 	fs.mkdirSync(lock);
-	fs.writeFileSync(path.join(lock, "owner.json"), JSON.stringify({ pid: 2147483647 }));
-	await finishNativeWalk(f.file, { transcriber: "none", brief: false }, {
-		client: { export: async (_project, output) => { fs.writeFileSync(output, "export"); return {durationS: 10}; } },
-		clip: async (_input, output) => fs.writeFileSync(output, "clip"),
-		processChapter: async () => ({}), writeIndex: () => {}, writeReport: () => {},
-	});
+	fs.writeFileSync(
+		path.join(lock, "owner.json"),
+		JSON.stringify({ pid: 2147483647 }),
+	);
+	await finishNativeWalk(
+		f.file,
+		{ transcriber: "none", brief: false },
+		{
+			client: {
+				export: async (_project, output) => {
+					fs.writeFileSync(output, "export");
+					return { durationS: 10 };
+				},
+			},
+			clip: async (_input, output) => fs.writeFileSync(output, "clip"),
+			processChapter: async () => ({}),
+			writeIndex: () => {},
+			writeReport: () => {},
+		},
+	);
 	assert.equal(fs.existsSync(lock), false);
 	assert.equal(fs.existsSync(path.join(f.directory, "report.html")), true);
 });

@@ -59,6 +59,13 @@ export function snapshotNativeWalk(file) {
 		return source;
 	}
 	checkCapProject(journal.sourceProject);
+	const realSource = fs.realpathSync(journal.sourceProject);
+	const realWalk = fs.realpathSync(journal.request.directory);
+	if (
+		realWalk === realSource ||
+		realWalk.startsWith(`${realSource}${path.sep}`)
+	)
+		throw new Error("Walk output must be outside its source project");
 	if (
 		path
 			.resolve(media)
@@ -146,7 +153,34 @@ export async function finishNativeWalk(file, cfg, dependencies = {}) {
 	const journal = readJournal(file);
 	const directory = journal.request.directory;
 	const lock = path.join(directory, ".processing-lock");
-	fs.mkdirSync(lock);
+	const owner = path.join(lock, "owner.json");
+	try {
+		fs.mkdirSync(lock);
+	} catch (error) {
+		if (error.code !== "EEXIST") throw error;
+		const { pid } = JSON.parse(fs.readFileSync(owner, "utf8"));
+		if (!Number.isSafeInteger(pid) || pid < 1)
+			throw new Error(
+				"The processing lock has no valid owner. Your source and journal are preserved.",
+			);
+		let active = true;
+		try {
+			process.kill(pid, 0);
+		} catch (error) {
+			if (error.code === "ESRCH") active = false;
+			else throw error;
+		}
+		if (active)
+			throw new Error(
+				"This walk is already being processed. Its existing worker will keep the files up to date.",
+			);
+		fs.unlinkSync(owner);
+		fs.rmdirSync(lock);
+		fs.mkdirSync(lock);
+	}
+	fs.writeFileSync(owner, JSON.stringify({ pid: process.pid }), {
+		mode: 0o600,
+	});
 	const progress = (state, error) =>
 		save(path.join(directory, "processing.json"), {
 			state,
@@ -288,6 +322,7 @@ export async function finishNativeWalk(file, cfg, dependencies = {}) {
 		progress("failed", error.message);
 		throw error;
 	} finally {
+		fs.unlinkSync(owner);
 		fs.rmdirSync(lock);
 	}
 }

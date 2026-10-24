@@ -1331,13 +1331,11 @@ impl GeneralSettings {
             if rule.bundle_identifier.is_none()
                 && rule.owner_name.is_none()
                 && let Some(title) = &mut rule.window_title
-            {
-                if let Some(current) = DEFAULT_EXCLUDED_WINDOW_TITLES
+                && let Some(current) = DEFAULT_EXCLUDED_WINDOW_TITLES
                     .iter()
                     .find(|current| current.replace("Cap UX", "Cap") == *title)
-                {
-                    *title = (*current).into();
-                }
+            {
+                *title = (*current).into();
             }
         }
         settings
