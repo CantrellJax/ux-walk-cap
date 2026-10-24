@@ -34,7 +34,7 @@ mod tests {
     #[test]
     fn native_provider_choice_preserves_companion_preferences() {
         let fixture = Fixture::new();
-        fs::write(&fixture.0, r#"{"transcriber":"elevenlabs","sourceRoot":"/work/app","contextSelectors":{"org":"#org"},"assemblyaiKeychainItem":"custom-item"}"#).unwrap();
+        fs::write(&fixture.0, r##"{"transcriber":"elevenlabs","sourceRoot":"/work/app","contextSelectors":{"org":"#org"},"assemblyaiKeychainItem":"custom-item"}"##).unwrap();
         update_file(&fixture.0, "transcriber", json!("assemblyai")).unwrap();
         let saved: Value = serde_json::from_slice(&fs::read(&fixture.0).unwrap()).unwrap();
         assert_eq!(saved["transcriber"], "assemblyai");
