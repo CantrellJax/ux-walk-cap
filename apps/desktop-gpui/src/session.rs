@@ -2030,6 +2030,7 @@ impl RecordingSession {
             return;
         };
         let file = walk.file();
+        let completed = file.clone();
         cx.spawn(async move |this, cx| {
             let result = cx
                 .background_executor()
@@ -2040,11 +2041,21 @@ impl RecordingSession {
                     })
                 })
                 .await;
-            this.update(cx, |this, cx| match result {
-                Ok(path) => cx.defer(move |cx| crate::app_windows::open_editor(path, cx)),
-                Err(error) => {
-                    this.walk_notice = format!("Could not prepare an editing copy: {error}");
-                    cx.notify();
+            this.update(cx, |this, cx| {
+                if this.phase != Phase::Idle
+                    || this
+                        .walk
+                        .as_ref()
+                        .is_none_or(|walk| walk.file() != completed)
+                {
+                    return;
+                }
+                match result {
+                    Ok(path) => cx.defer(move |cx| crate::app_windows::open_editor(path, cx)),
+                    Err(error) => {
+                        this.walk_notice = format!("Could not prepare an editing copy: {error}");
+                        cx.notify();
+                    }
                 }
             })
             .ok();
