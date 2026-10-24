@@ -752,7 +752,7 @@ mod mac {
     /// Install the status item. Called once from `main`, after the window
     /// registry exists -- every handler reaches into it.
     pub fn init(cx: &mut App) {
-        let Some(tray) = create_status_item() else {
+        let Some(tray) = create_status_item(cx) else {
             tracing::error!("no NSStatusItem; the tray is not available");
             return;
         };
@@ -798,7 +798,7 @@ mod mac {
         .detach();
     }
 
-    fn create_status_item() -> Option<Tray> {
+    fn create_status_item(cx: &App) -> Option<Tray> {
         unsafe {
             let status_bar: *mut AnyObject = msg_send![class!(NSStatusBar), systemStatusBar];
             if status_bar.is_null() {
