@@ -92,7 +92,7 @@ impl ModeSelectWindow {
     }
 
     /// `ModeOption`: one card per mode, the whole card a button.
-    fn render_card(&self, mode: ModeChoice, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_card(&self, mode: ModeChoice, cx: &mut Context<Self>) -> gpui::AnyElement {
         let theme = self.theme;
         let selected = mode.capture_mode() == Some(self.mode);
         let dark = theme.is_dark();
@@ -236,6 +236,7 @@ impl ModeSelectWindow {
                     cx.defer(crate::app_windows::start_ux_walk_from_mode_select);
                 }
             }))
+            .into_any_element()
     }
 }
 
