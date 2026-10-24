@@ -15,7 +15,7 @@ on:
       - scripts/build-desktop-binaries*
       - scripts/build-macos-packages*
       - scripts/bundle-ux-walk.mjs
-      - packages/ux-walk/**
+      - vendor/ux-walk/**
       - scripts/sync-ux-walk.mjs
       - .github/workflows/ux-walk-*.yml
   push:
@@ -54,6 +54,7 @@ jobs:
           components: rustfmt
       - uses: Swatinem/rust-cache@v2
         with:
+          cache-on-failure: true
           workspaces: |
             . -> target
             apps/desktop-gpui -> target
@@ -153,8 +154,8 @@ jobs:
       - name: Bundle the pinned UX Walk engine and native controls
         if: github.event_name == 'workflow_dispatch' && inputs.preview
         run: |
-          npm ci --ignore-scripts --prefix packages/ux-walk
-          node --test packages/ux-walk/test/unit/embedded-config.test.mjs packages/ux-walk/test/unit/start-link.test.mjs
+          npm ci --ignore-scripts --prefix vendor/ux-walk
+          node --test vendor/ux-walk/test/unit/embedded-config.test.mjs vendor/ux-walk/test/unit/start-link.test.mjs
           node scripts/bundle-ux-walk.mjs 'apps/desktop-gpui/target/debug/bundle/macos/Cap-UX Preview.app'
       - name: Verify and retain the preview
         if: github.event_name == 'workflow_dispatch' && inputs.preview

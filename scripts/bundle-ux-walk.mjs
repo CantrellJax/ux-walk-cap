@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { verifyUxWalkSource } from "./sync-ux-walk.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const source = path.join(root, "packages", "ux-walk");
+const source = path.join(root, "vendor", "ux-walk");
 
 function run(command, args) {
 	return execFileSync(command, args, {
@@ -127,7 +127,7 @@ export async function bundleUxWalk(app) {
 	await fs.writeFile(path.join(helper, "Contents", "Info.plist"), plist);
 	await fs.writeFile(
 		path.join(resources, "engine-source.json"),
-		`${JSON.stringify({ repository: "https://github.com/CantrellJax/ux-walk-cap", sourceURL: `${parent.UXWalkSourceURL ?? `https://github.com/CantrellJax/ux-walk-cap/tree/${run("git", ["-C", root, "rev-parse", "HEAD"]).trim()}`}/packages/ux-walk`, revision, node: process.version }, null, 2)}\n`,
+		`${JSON.stringify({ repository: "https://github.com/CantrellJax/ux-walk-cap", sourceURL: `${parent.UXWalkSourceURL ?? `https://github.com/CantrellJax/ux-walk-cap/tree/${run("git", ["-C", root, "rev-parse", "HEAD"]).trim()}`}/vendor/ux-walk`, revision, node: process.version }, null, 2)}\n`,
 	);
 	for (const target of [
 		path.join(engine, "bin", "node"),

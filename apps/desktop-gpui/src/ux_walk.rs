@@ -29,11 +29,15 @@ pub fn start(cx: &mut gpui::App) {
 
 #[cfg(target_os = "macos")]
 pub fn prompt_key(label: &str) -> Option<String> {
-    use objc2::{class, msg_send, msg_send_id, rc::Id, runtime::AnyObject};
+    use objc2::{
+        class, msg_send, msg_send_id,
+        rc::{Allocated, Id},
+        runtime::AnyObject,
+    };
     use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
     unsafe {
         let alert: Id<AnyObject> = msg_send_id![class!(NSAlert), new];
-        let field: Id<AnyObject> = msg_send_id![class!(NSSecureTextField), alloc];
+        let field: Allocated<AnyObject> = msg_send_id![class!(NSSecureTextField), alloc];
         let field: Id<AnyObject> = msg_send_id![field, initWithFrame: NSRect::new(NSPoint::new(0., 0.), NSSize::new(320., 24.))];
         let _: () =
             msg_send![&*alert, setMessageText: &*NSString::from_str(&format!("{label} API key"))];

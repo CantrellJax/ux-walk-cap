@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-export const engineDirectory = path.join(root, "packages", "ux-walk");
+export const engineDirectory = path.join(root, "vendor", "ux-walk");
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const included = [
 	".gitignore",
@@ -96,6 +96,7 @@ async function synchronize(source, revision) {
 			const target = path.join(staged, file);
 			await fs.mkdir(path.dirname(target), { recursive: true });
 			await fs.writeFile(target, bytes);
+			if (file.startsWith("bin/")) await fs.chmod(target, 0o755);
 			files[file] = digest(bytes);
 		}
 		await fs.writeFile(

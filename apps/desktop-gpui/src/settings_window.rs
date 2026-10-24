@@ -2981,8 +2981,8 @@ impl SettingsWindow {
         vec![
             self.render_appearance(cx).into_any_element(),
             self.render_app_section(cx).into_any_element(),
-            self.render_recording(cx).into_any_element(),
             self.render_ux_walk_general(cx),
+            self.render_recording(cx).into_any_element(),
             self.render_storage(cx).into_any_element(),
             self.render_project_name(window, cx).into_any_element(),
             self.render_excluded_windows(cx).into_any_element(),
