@@ -117,6 +117,7 @@ jobs:
           }
           plist = out / 'Preview.plist'
           plist.write_bytes(plistlib.dumps(info))
+          (root / 'apps/desktop-gpui/Info.plist').write_bytes(plist.read_bytes())
           config = {
               'productName': 'Cap Walkthrough Preview',
               'mainBinaryName': 'Cap',
@@ -125,7 +126,7 @@ jobs:
               'bundle': {
                   'createUpdaterArtifacts': False,
                   'fileAssociations': [],
-                  'macOS': {'infoPlist': str(plist), 'signingIdentity': '-'},
+                  'macOS': {'signingIdentity': '-'},
               },
           }
           (out / 'preview.json').write_text(json.dumps(config, indent=2) + '\n')
@@ -151,6 +152,20 @@ jobs:
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$task_app/Contents/Info.plist")" = com.uxwalk.cap-preview
           test "$(/usr/libexec/PlistBuddy -c 'Print :UXWalkBuildSHA' "$task_app/Contents/Info.plist")" = "$GITHUB_SHA"
           codesign --verify --deep --strict "$task_app"
+          python3 - <<'PY'
+          import os, pathlib, plistlib
+          app = pathlib.Path('apps/desktop-gpui/target/debug/bundle/macos/Cap Walkthrough Preview.app')
+          info = plistlib.loads((app / 'Contents/Info.plist').read_bytes())
+          profile = '/tmp/ux-walk-cap-preview-' + os.environ['GITHUB_SHA'][:12]
+          assert not info.get('CFBundleDocumentTypes'), 'Preview must not claim recordings'
+          assert not info.get('CFBundleURLTypes'), 'Preview must not claim URL schemes'
+          assert info['LSEnvironment'] == {
+              'CAP_GPUI_APP_DATA_DIR': profile + '/data',
+              'CAP_GPUI_LOG_DIR': profile + '/logs',
+              'CAP_GPUI_RECORDINGS_DIR': profile + '/recordings',
+          }, 'Preview profile isolation was not retained by the bundler'
+          print('Bundled preview associations and isolated profile verified')
+          PY
           file "$task_app/Contents/MacOS/Cap" > "$RUNNER_TEMP/ux-walk-preview/executable.txt"
           ditto -c -k --sequesterRsrc --keepParent "$task_app" "$RUNNER_TEMP/ux-walk-preview/Cap-Walkthrough-Preview.zip"
           cp LICENSE UX-WALK.md "$RUNNER_TEMP/ux-walk-preview/"
