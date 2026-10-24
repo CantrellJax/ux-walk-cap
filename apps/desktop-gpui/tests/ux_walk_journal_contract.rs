@@ -65,3 +65,20 @@ fn completion_requires_a_confirmed_end_and_preserves_notes_after_abort() {
     assert_eq!(saved["events"][0]["text"], "Recover me");
     fs::remove_dir_all(req.directory).unwrap();
 }
+
+#[test]
+fn restart_creates_a_new_walk_without_overwriting_the_previous_notes() {
+    let first = request();
+    let mut journal = Journal::begin(first.clone(), PathBuf::from("first.cap"), 100_000).unwrap();
+    journal.add("note", "Retain the discarded attempt", 500).unwrap();
+    journal.abort().unwrap();
+    let next = first.for_restart("second-attempt");
+    assert_ne!(next.directory, first.directory);
+    let restarted = Journal::begin(next.clone(), PathBuf::from("second.cap"), 200_000).unwrap();
+    assert_eq!(restarted.events.len(), 0);
+    let old: serde_json::Value = serde_json::from_slice(&fs::read(journal.file()).unwrap()).unwrap();
+    assert_eq!(old["state"], "aborted");
+    assert_eq!(old["events"][0]["text"], "Retain the discarded attempt");
+    fs::remove_dir_all(first.directory).unwrap();
+    fs::remove_dir_all(next.directory).unwrap();
+}
