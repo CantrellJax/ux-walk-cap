@@ -131,3 +131,25 @@ test("chapters and notes keep Cap elapsed offsets and retries reuse their saved 
 	assert.equal(exports, 1);
 	assert.equal(session.coverage.dom, "not captured");
 });
+
+test("a partial failed export cannot block a retry or replace the source", async (t) => {
+	const f = fixture(t);
+	let failed = false;
+	const deps = {
+		client: { export: async (_project, output) => {
+			assert.equal(fs.existsSync(output), false);
+			fs.writeFileSync(output, "derived movie");
+			if (!failed) { failed = true; throw new Error("Interrupted export"); }
+			return { durationS: 10 };
+		} },
+		clip: async (_input, output) => fs.writeFileSync(output, "clip"),
+		processChapter: async () => ({}), writeIndex: () => {}, writeReport: () => {},
+	};
+	await assert.rejects(finishNativeWalk(f.file, { brief: false }, deps), /Interrupted export/);
+	await finishNativeWalk(f.file, { brief: false }, deps);
+	assert.equal(fs.readFileSync(path.join(f.source, "source.mp4"), "utf8"), "original media");
+	const report = fs.readFileSync(path.join(f.directory, "report.html"), "utf8");
+	assert.ok(report.includes("Clipped button"));
+	assert.ok(report.includes("Payment"));
+	assert.ok(report.includes("video.mp4"));
+});
