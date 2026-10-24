@@ -39,7 +39,13 @@ const THUMBNAIL_SIZE: u32 = 32;
 /// `get_mode_icon(mode)`. Template images (`icon_as_template(true)`), so macOS
 /// tints them for the current menu-bar appearance.
 #[cfg(target_os = "macos")]
+const UX_WALK_ICON: &[u8] = include_bytes!("../assets/tray/tray-default-icon-ux-walk.png");
+
+#[cfg(target_os = "macos")]
 fn mode_icon(mode: Mode) -> &'static [u8] {
+    if crate::store::ux_walk_selected() {
+        return UX_WALK_ICON;
+    }
     match mode {
         Mode::Studio => include_bytes!("../assets/tray/tray-default-icon-studio.png"),
         Mode::Instant => include_bytes!("../assets/tray/tray-default-icon-instant.png"),
@@ -296,13 +302,10 @@ fn mode_submenu_choice(mode: Mode, ux_walk: bool) -> Entry {
     #[cfg(target_os = "macos")]
     let items = {
         let mut items = items;
-        items.extend([
-            Entry::Separator,
-            Entry::item(
-                if ux_walk { "✓ UX Walk" } else { "   UX Walk" },
-                TrayItem::StartWalkthrough,
-            ),
-        ]);
+        items.extend([Entry::item(
+            if ux_walk { "✓ UX Walk" } else { "   UX Walk" },
+            TrayItem::StartWalkthrough,
+        )]);
         items
     };
     Entry::Submenu {
@@ -856,6 +859,9 @@ mod mac {
         if std::ptr::eq(png.as_ptr(), STOP_ICON.as_ptr()) {
             return "stop";
         }
+        if std::ptr::eq(png.as_ptr(), UX_WALK_ICON.as_ptr()) {
+            return "ux-walk";
+        }
         for mode in [Mode::Studio, Mode::Instant, Mode::Screenshot] {
             if std::ptr::eq(png.as_ptr(), mode_icon(mode).as_ptr()) {
                 return match mode {
@@ -1055,10 +1061,6 @@ mod mac {
     /// on the old mode and the icon never swaps).
     pub fn mode_changed(mode: Mode, cx: &mut App) {
         if !cx.has_global::<Tray>() {
-            return;
-        }
-        if cx.global::<Tray>().mode == mode {
-            rebuild(cx);
             return;
         }
         cx.global_mut::<Tray>().mode = mode;
@@ -1438,9 +1440,9 @@ mod tests {
             assert_eq!(titles(&items[..3]), expected.to_vec());
             #[cfg(target_os = "macos")]
             {
-                assert_eq!(titles(&items[3..]), vec!["-", "   UX Walk"]);
+                assert_eq!(titles(&items[3..]), vec!["   UX Walk"]);
                 assert!(matches!(
-                    items[4],
+                    items[3],
                     Entry::Item {
                         item: Some(TrayItem::StartWalkthrough),
                         enabled: true,

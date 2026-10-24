@@ -235,10 +235,10 @@ const MODES: &[ModeDetail] = &[
         mode: ModeChoice::UxWalk,
         title: "UX Walk Mode",
         tagline: "Record, note & review",
-        description: "Walk through your product and keep screen recordings, observations and chapters together. Review the evidence and hand it to your agent.",
+        description: "Open a fresh browser window, already selected for recording. Walk through your product with native capture controls, notes, chapters and transcripts.",
         icon: "icons/ux-walk.svg",
         features: [
-            "Screen recording & narration",
+            "Fresh browser window, ready to record",
             "Timestamped notes & chapters",
             "Your transcription provider",
             "Evidence for your agent",
@@ -248,16 +248,16 @@ const MODES: &[ModeDetail] = &[
 
 const FAQ: [(&str, &str); 5] = [
     (
-        "Is Cap free to use?",
-        "Cap is free for personal use. For teams and commercial use, check out our pricing plans.",
+        "Is Cap UX free to use?",
+        "Cap UX is open source under AGPLv3, including for personal and commercial work. Connected cloud services have their own terms and costs.",
     ),
     (
-        "What's the difference between Instant and Studio?",
-        "Instant mode uploads as you record — stop recording and you'll have a shareable link immediately. Studio mode records locally in full quality, letting you edit with backgrounds, effects, and more before sharing.",
+        "How do the recording modes differ?",
+        "Instant records a shareable link through your connected cloud service. Studio records locally for editing. Screenshot captures a still image. UX Walk opens a fresh browser window and keeps its recording, notes, chapters and transcripts together.",
     ),
     (
         "Where are my recordings stored?",
-        "All recordings are stored locally on your computer. In Instant mode, they're also uploaded to Cap's cloud for easy sharing. You can manage storage in Settings.",
+        "All recordings are stored locally on your computer. In Instant mode, they're also uploaded to your connected cloud service for easy sharing. You can manage storage in Settings.",
     ),
     (
         "Can I change my shortcuts later?",
@@ -265,7 +265,7 @@ const FAQ: [(&str, &str); 5] = [
     ),
     (
         "How does sharing work?",
-        "In Instant mode, you get a shareable link automatically when you stop recording. In Studio mode, export your edited video and share via Cap's cloud or save locally.",
+        "In Instant mode, you get a shareable link automatically when you stop recording. In Studio mode, export your edited video and share via your connected cloud service or save locally.",
     ),
 ];
 
@@ -1494,7 +1494,7 @@ impl OnboardingWindow {
             .gap(px(32.))
             .child(self.heading(
                 "Switch modes anytime",
-                "Toggle between modes with a single click from the main Cap window.",
+                "Toggle between modes with a single click from the main Cap UX window.",
             ))
             .child(
                 div()
@@ -1573,7 +1573,7 @@ impl OnboardingWindow {
     fn render_shortcuts(&self) -> AnyElement {
         let theme = self.theme;
         div().flex().flex_col().items_center().justify_center().min_h_full().px(px(48.)).gap(px(24.))
-            .child(self.heading("Make Cap yours", "Customize everything from keyboard shortcuts to storage. Cap adapts to your workflow."))
+            .child(self.heading("Make Cap UX yours", "Customize everything from keyboard shortcuts to storage. Cap UX adapts to your workflow."))
             .child(div().flex().flex_col().w_full().max_w(px(420.)).gap(px(8.)).children([
                 ("Keyboard Shortcuts", "Global hotkeys for recording, screenshots, and switching modes"),
                 ("Custom S3 Storage", "Connect your own S3-compatible bucket for full control over your recordings"),
@@ -2239,7 +2239,7 @@ impl OnboardingWindow {
                             .items_center()
                             .gap(px(8.))
                             .child(self.demo_window_dots())
-                            .child(copy("Cap Editor", 10., theme.gray_11)),
+                            .child(copy("Cap UX Editor", 10., theme.gray_11)),
                     )
                     .child(
                         copy("Export", 9., gpui::white())
@@ -2603,8 +2603,8 @@ impl OnboardingWindow {
                     [
                         (
                             "1",
-                            "Record your walkthrough",
-                            "Capture your screen and narration.",
+                            "Open your walk window",
+                            "A new browser window is selected for recording.",
                         ),
                         (
                             "2",

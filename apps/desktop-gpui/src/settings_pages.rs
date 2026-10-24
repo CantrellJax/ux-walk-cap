@@ -1067,6 +1067,9 @@ fn screenshot_outcome(behaviour: store::PostScreenshotBehaviour) -> &'static str
 }
 
 fn picker_outcome(mode: crate::main_window::Mode) -> &'static str {
+    if crate::store::ux_walk_selected() {
+        return "record it in UX Walk mode";
+    }
     match mode {
         crate::main_window::Mode::Studio => "record it in Studio mode",
         crate::main_window::Mode::Instant => "record it in Instant mode",

@@ -54,7 +54,7 @@ impl ModeChoice {
         match self {
             Self::Capture(mode) => mode.panel_description(),
             Self::UxWalk => {
-                "Record a product walkthrough with notes, chapters and transcripts. Keep evidence ready for your agent."
+                "Open a new browser window, record a product walkthrough, and keep notes, chapters and transcripts ready for your agent."
             }
         }
     }
@@ -64,7 +64,9 @@ impl ModeChoice {
             Self::Capture(Mode::Instant) => "Share instantly with a link. Uploads as you record.",
             Self::Capture(Mode::Studio) => "Highest quality local recording for editing later.",
             Self::Capture(Mode::Screenshot) => "Capture and annotate screenshots instantly.",
-            Self::UxWalk => "Record a walkthrough with notes, chapters and findings.",
+            Self::UxWalk => {
+                "Open a new browser window and record a walk with notes, chapters and transcripts."
+            }
         }
     }
 
@@ -78,7 +80,7 @@ impl ModeChoice {
             }
             Self::Capture(Mode::Screenshot) => "Capture and annotate stills.",
             Self::UxWalk => {
-                "Record with Cap UX capture controls, then review notes, chapters and transcripts."
+                "Opens a new browser window and selects it for recording. Keep Cap UX’s camera, microphone and capture options, then review notes, chapters and transcripts."
             }
         }
     }

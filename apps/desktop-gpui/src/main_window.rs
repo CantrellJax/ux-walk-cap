@@ -781,6 +781,9 @@ pub struct MainWindow {
     theme: Theme,
     mode: Mode,
     ux_walk_selected: bool,
+    walk_browser_opening: bool,
+    walk_browser_generation: u64,
+    walk_browser_notice: Option<String>,
     walk_topic: Entity<ui::TextInputState>,
     walk_speakers: Entity<ui::TextInputState>,
     _walk_topic_events: gpui::Subscription,
@@ -1142,6 +1145,9 @@ impl MainWindow {
             // hardcoded Instant.
             mode: Mode::from_store(),
             ux_walk_selected: crate::store::ux_walk_selected(),
+            walk_browser_opening: false,
+            walk_browser_generation: 0,
+            walk_browser_notice: None,
             walk_topic,
             walk_speakers,
             _walk_topic_events: walk_topic_events,
@@ -1767,7 +1773,7 @@ impl MainWindow {
         };
         if !recover
             && !crate::platform::confirm_dialog(
-                "Cap",
+                "Cap UX",
                 "Are you sure you want to delete this recording?",
                 "Yes",
                 "No",
@@ -1917,7 +1923,8 @@ impl MainWindow {
     }
 
     pub(crate) fn set_ux_walk(&mut self, cx: &mut Context<Self>) {
-        if self.is_preparing_recording()
+        if self.session.read(cx).phase != Phase::Idle
+            || self.is_preparing_recording()
             || self.session.read(cx).editor_recording_target().is_some()
         {
             return;
@@ -1925,8 +1932,48 @@ impl MainWindow {
         self.set_mode(Mode::Studio, cx);
         self.ux_walk_selected = true;
         crate::store::set_ux_walk_selected(true);
-        cx.defer(crate::tray::refresh_previous);
+        self.walk_browser_generation = self.walk_browser_generation.wrapping_add(1);
+        let generation = self.walk_browser_generation;
+        self.walk_browser_opening = true;
+        self.walk_browser_notice = Some("Opening a new Chrome window…".into());
+        self.target = Some(TargetType::Window);
+        self.selected_window = None;
+        cx.defer(crate::app_windows::dismiss_target_overlays);
+        cx.defer(|cx| crate::tray::mode_changed(Mode::Studio, cx));
         cx.notify();
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move { crate::ux_walk_browser::open() })
+                .await;
+            this.update(cx, |this, cx| {
+                if this.walk_browser_generation != generation || !this.ux_walk_selected {
+                    return;
+                }
+                this.walk_browser_opening = false;
+                if this.session.read(cx).phase != Phase::Idle {
+                    this.walk_browser_notice = None;
+                    cx.notify();
+                    return;
+                }
+                match result {
+                    Ok(window) => {
+                        this.devices.windows.retain(|known| known.id != window.id);
+                        this.devices.windows.push(window.clone());
+                        this.selected_window = Some(window);
+                        this.target = Some(TargetType::Window);
+                        this.panel = None;
+                        this.walk_browser_notice = None;
+                        this.sync_overlays(cx);
+                    }
+                    Err(error) => this.walk_browser_notice = Some(error),
+                }
+                cx.defer(crate::app_windows::show_main_window);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     pub(crate) fn effective_mode(&self, cx: &gpui::App) -> Mode {
@@ -1949,6 +1996,8 @@ impl MainWindow {
             return;
         }
         self.ux_walk_selected = false;
+        self.walk_browser_generation = self.walk_browser_generation.wrapping_add(1);
+        self.walk_browser_notice = None;
         crate::store::set_ux_walk_selected(false);
         self.mode = mode;
         // Open overlays label their start button with the mode.
@@ -2288,7 +2337,10 @@ impl MainWindow {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.session.read(cx).phase != Phase::Idle || self.checking_storage {
+        if self.session.read(cx).phase != Phase::Idle
+            || self.checking_storage
+            || self.walk_browser_opening
+        {
             return;
         }
         // An armed editor recording target forces Studio before this window's
@@ -2467,6 +2519,7 @@ impl MainWindow {
 
     pub(crate) fn is_preparing_recording(&self) -> bool {
         self.checking_storage
+            || self.walk_browser_opening
             || self.deep_link_start.is_some()
             || self.device_format_pending.is_some()
     }
@@ -3938,17 +3991,8 @@ impl MainWindow {
                                         ui::ButtonVariant::Gray,
                                         ui::ButtonSize::Sm,
                                     )
-                                    .label("Open start page ↗")
-                                    .on_click(|_, _, cx| {
-                                        if let Ok(settings) = crate::ux_walk::load() {
-                                            let url = crate::ux_walk::text(&settings, "url");
-                                            if let Ok(url) = reqwest::Url::parse(url)
-                                                && matches!(url.scheme(), "http" | "https")
-                                            {
-                                                cx.open_url(url.as_str());
-                                            }
-                                        }
-                                    }),
+                                    .label("New walk window ↗")
+                                    .on_click(cx.listener(|this, _, _, cx| this.set_ux_walk(cx))),
                                 ),
                         )
                     })
@@ -3968,6 +4012,14 @@ impl MainWindow {
                             )
                         },
                     )
+                    .when_some(self.walk_browser_notice.clone(), |this, notice| {
+                        this.child(
+                            div()
+                                .text_size(px(11.))
+                                .text_color(self.theme.gray_10)
+                                .child(notice),
+                        )
+                    })
                     .child(self.render_targets(cx))
                     .child(self.render_base_controls(cx)),
             ),
@@ -4038,7 +4090,7 @@ impl MainWindow {
                         .flex_col()
                         .gap(px(8.))
                         .text_size(px(12.))
-                        .child("Recording paused. Cap will hide before resuming.")
+                        .child("Recording paused. Cap UX will hide before resuming.")
                         .child(
                             div()
                                 .id("resume-clean-recording")
@@ -5141,7 +5193,7 @@ impl MainWindow {
     ) {
         cx.spawn_in(window, async move |this, cx| {
             if !crate::platform::confirm_dialog(
-                "Cap",
+                "Cap UX",
                 "Are you sure you want to delete this recording?",
                 "Yes",
                 "No",
@@ -5175,7 +5227,7 @@ impl MainWindow {
     ) {
         cx.spawn_in(window, async move |this, cx| {
             if !crate::platform::confirm_dialog(
-                "Cap",
+                "Cap UX",
                 "Are you sure you want to delete this screenshot?",
                 "Yes",
                 "No",
@@ -6072,11 +6124,11 @@ impl MainWindow {
             DeviceMenu::Microphone => "microphone",
         };
         let message = if denied {
-            format!("Cap can't use your {noun}. Turn it on in System Settings.")
+            format!("Cap UX can't use your {noun}. Turn it on in System Settings.")
         } else if requesting {
             "Choose Allow in the macOS prompt.".to_string()
         } else {
-            format!("Cap needs your OK to use your {noun}.")
+            format!("Cap UX needs your OK to use your {noun}.")
         };
         let label = if denied {
             "Open System Settings"
@@ -6317,25 +6369,19 @@ impl MainWindow {
         }
     }
 
-    /// This goes through `img()`, not `svg()`. The two take different paths in
-    /// gpui: `svg()` keeps only the alpha and tints it with one colour, which
-    /// would flatten the badge, the three blue rings and the wordmark into a
-    /// single silhouette, whereas `img()` rasterises through resvg and keeps
-    /// the colour. `img()` also renders at `SMOOTH_SVG_SCALE_FACTOR` (2x), so
-    /// the 103px-wide source becomes a 206px raster -- more than the 168 device
-    /// pixels an 84px lockup needs on a 2x display.
-    ///
-    /// The app ships two files rather than recolouring one, so this picks the
-    /// same way it does.
     fn render_logo(&self) -> impl IntoElement {
-        img(if self.theme.is_dark() {
-            "icons/logo-full-dark.svg"
-        } else {
-            "icons/logo-full.svg"
-        })
-        .w(px(84.))
-        .h(px(84. * 40. / 103.))
-        .flex_shrink_0()
+        div()
+            .flex()
+            .items_center()
+            .gap(px(7.))
+            .flex_shrink_0()
+            .child(img("branding/cap-ux.png").size(px(26.)))
+            .child(
+                div()
+                    .text_size(px(22.))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child("Cap UX"),
+            )
     }
 
     fn clear_mode_hover(&mut self) {

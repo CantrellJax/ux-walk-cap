@@ -1008,7 +1008,7 @@ mod tests {
             menus,
             vec![
                 (
-                    "Cap".to_string(),
+                    "Cap UX".to_string(),
                     vec![
                         "About Cap UX".to_string(),
                         "-".into(),

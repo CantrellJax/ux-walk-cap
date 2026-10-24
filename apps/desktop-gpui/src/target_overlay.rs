@@ -628,18 +628,43 @@ struct OverlayDeviceMenu {
     choices: Vec<OverlayDeviceChoice>,
 }
 
-/// `menuModes` (`target-select-overlay.tsx:2064-2090`): three check items, in
+/// `menuModes` (`target-select-overlay.tsx:2064-2090`): mode check items, in
 /// this order, checked on the current mode. Picking one switches the mode and
 /// never starts a recording.
-const MODE_MENU: [(&str, Mode); 3] = [
-    ("Studio Mode", Mode::Studio),
-    ("Instant Mode", Mode::Instant),
-    ("Screenshot Mode", Mode::Screenshot),
+const MODE_MENU: &[(&str, crate::mode_choice::ModeChoice)] = &[
+    (
+        "Studio Mode",
+        crate::mode_choice::ModeChoice::Capture(Mode::Studio),
+    ),
+    (
+        "Instant Mode",
+        crate::mode_choice::ModeChoice::Capture(Mode::Instant),
+    ),
+    (
+        "Screenshot Mode",
+        crate::mode_choice::ModeChoice::Capture(Mode::Screenshot),
+    ),
+    #[cfg(target_os = "macos")]
+    ("UX Walk Mode", crate::mode_choice::ModeChoice::UxWalk),
 ];
 
-fn mode_menu_items(current: Mode) -> Vec<crate::ui::MenuItem> {
+fn overlay_mode(mode: Mode, cx: &gpui::App) -> crate::mode_choice::ModeChoice {
+    if crate::store::ux_walk_selected()
+        && crate::session::RecordingSession::global(cx)
+            .read(cx)
+            .editor_recording_target()
+            .is_none()
+    {
+        crate::mode_choice::ModeChoice::UxWalk
+    } else {
+        crate::mode_choice::ModeChoice::Capture(mode)
+    }
+}
+
+fn mode_menu_items(current: crate::mode_choice::ModeChoice) -> Vec<crate::ui::MenuItem> {
     MODE_MENU
-        .into_iter()
+        .iter()
+        .copied()
         .map(|(label, mode)| crate::ui::MenuItem::new(label, mode == current))
         .collect()
 }
@@ -1306,7 +1331,7 @@ impl OverlayWindow {
     /// dismissal and Escape behave the same).
     fn render_mode_menu(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
         let state = self.mode_menu.as_ref()?;
-        let items = mode_menu_items(self.select.read(cx).recording_mode);
+        let items = mode_menu_items(overlay_mode(self.select.read(cx).recording_mode, cx));
         Some(
             crate::ui::Menu::plain(&self.theme, "overlay-mode-menu", items, state)
                 .on_select(cx.listener(|this, index: &usize, _window, cx| {
@@ -1372,7 +1397,7 @@ impl OverlayWindow {
             return;
         }
         if let Some((_, mode)) = MODE_MENU.get(index).copied() {
-            app_windows::set_recording_mode(mode, cx);
+            cx.defer(move |cx| mode.activate(cx));
         }
         cx.notify();
     }
@@ -2214,23 +2239,32 @@ impl OverlayWindow {
         } else {
             (theme.blue_10, theme.blue_11)
         };
+        let ux_walk = overlay_mode(mode, cx) == crate::mode_choice::ModeChoice::UxWalk;
         let needs_sign_in = self.needs_sign_in(mode, cx);
         let label = match mode {
             Mode::Screenshot => "Take Screenshot",
             _ if needs_sign_in => "Sign In To Use",
             _ => "Start Recording",
         };
-        let icon = match mode {
-            Mode::Instant if needs_sign_in => "icons/user-round.svg",
-            Mode::Instant => "icons/instant.svg",
-            Mode::Studio => "icons/film-cut.svg",
-            Mode::Screenshot => "icons/camera.svg",
+        let icon = if ux_walk {
+            "icons/ux-walk.svg"
+        } else {
+            match mode {
+                Mode::Instant if needs_sign_in => "icons/user-round.svg",
+                Mode::Instant => "icons/instant.svg",
+                Mode::Studio => "icons/film-cut.svg",
+                Mode::Screenshot => "icons/camera.svg",
+            }
         };
-        let mode_label = match mode {
-            Mode::Instant if needs_sign_in => "Instant Mode — Sign in to record instantly",
-            Mode::Instant => "Instant Mode — Record shareable link",
-            Mode::Studio => "Studio Mode — Record and edit locally",
-            Mode::Screenshot => "Screenshot Mode",
+        let mode_label = if ux_walk {
+            "UX Walk Mode — Record notes, chapters and transcripts"
+        } else {
+            match mode {
+                Mode::Instant if needs_sign_in => "Instant Mode — Sign in to record instantly",
+                Mode::Instant => "Instant Mode — Record shareable link",
+                Mode::Studio => "Studio Mode — Record and edit locally",
+                Mode::Screenshot => "Screenshot Mode",
+            }
         };
         let _ = target;
 
@@ -2341,7 +2375,7 @@ impl OverlayWindow {
                             this.countdown_menu = None;
                             this.mode_menu = Some(crate::ui::MenuState::new(
                                 event.position,
-                                &mode_menu_items(current),
+                                &mode_menu_items(overlay_mode(current, cx)),
                             ));
                             cx.notify();
                         }),
@@ -2658,7 +2692,7 @@ mod tests {
     fn mode_menu_matches_menu_modes() {
         // `menuModes` order (`target-select-overlay.tsx:2064-2090`) with the
         // check on the current mode.
-        let items = mode_menu_items(Mode::Instant);
+        let items = mode_menu_items(crate::mode_choice::ModeChoice::Capture(Mode::Instant));
         assert_eq!(
             items
                 .iter()
@@ -2668,9 +2702,14 @@ mod tests {
                 ("Studio Mode".to_string(), false),
                 ("Instant Mode".to_string(), true),
                 ("Screenshot Mode".to_string(), false),
+                #[cfg(target_os = "macos")]
+                ("UX Walk Mode".to_string(), false),
             ],
         );
-        assert_eq!(MODE_MENU[2].1, Mode::Screenshot);
+        assert_eq!(
+            MODE_MENU[2].1,
+            crate::mode_choice::ModeChoice::Capture(Mode::Screenshot)
+        );
     }
 
     #[test]

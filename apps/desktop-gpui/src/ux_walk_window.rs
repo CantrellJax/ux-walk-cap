@@ -65,6 +65,7 @@ fn ensure(show: bool, cx: &mut App) -> Result<isize, String> {
             crate::platform::window_number(window)
         })
         .map_err(|e| e.to_string())?
+        .filter(|number| *number > 0)
         .ok_or_else(|| "Could not exclude the walk notes window from capture.".into())
 }
 

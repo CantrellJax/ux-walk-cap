@@ -89,6 +89,8 @@ mod ui;
 mod updates;
 mod upload;
 mod ux_walk;
+mod ux_walk_browser;
+mod ux_walk_browser_target;
 mod ux_walk_journal;
 mod ux_walk_preferences;
 mod ux_walk_window;

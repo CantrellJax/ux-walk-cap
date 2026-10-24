@@ -94,7 +94,13 @@ impl ModeSelectWindow {
     /// `ModeOption`: one card per mode, the whole card a button.
     fn render_card(&self, mode: ModeChoice, cx: &mut Context<Self>) -> gpui::AnyElement {
         let theme = self.theme;
-        let selected = if crate::store::ux_walk_selected() {
+        let editor_flow = crate::session::RecordingSession::global(cx)
+            .read(cx)
+            .editor_recording_target()
+            .is_some();
+        let selected = if editor_flow {
+            mode == ModeChoice::Capture(Mode::Studio)
+        } else if crate::store::ux_walk_selected() {
             mode == ModeChoice::UxWalk
         } else {
             mode.capture_mode() == Some(self.mode)

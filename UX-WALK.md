@@ -4,13 +4,13 @@ Cap UX is an independent AGPLv3 fork of [Cap](https://github.com/CapSoftware/Cap
 
 ## Record a walk
 
-1. Select **UX Walk** in the menu bar, main recorder or mode picker. Onboarding introduces the same mode alongside Instant, Studio and Screenshot.
-2. Enter a topic and, when enabled, confirm speaker names in the recorder. **Open start page** opens the configured URL in your browser; choose its window with Cap UX's normal target picker.
+1. Select **UX Walk** in the menu bar, main recorder or mode picker. A fresh Chrome window opens at your configured start page and is selected for recording. The menu bar switches to the footprint. Onboarding introduces the same mode alongside Instant, Studio and Screenshot.
+2. Enter a topic and, when enabled, confirm speaker names in the recorder. **New walk window** opens another fresh window. You can switch to any display, window, area or camera with the existing capture-source controls.
 3. Choose a display, window, area or camera, then use the existing camera, microphone and system-audio controls. Start recording normally.
 4. Open **Walk notes & chapters** from the recording bar. Add an observation or give the next chapter a title. Notes save immediately. Cap's existing Stop, Pause, Resume, Restart and Delete controls own the capture lifecycle.
 5. Stop to save the Cap project and prepare the walk. The native review window shows progress, notes, the report and files. **Edit a copy** opens an independent editing project in the existing editor.
 
-UX Walk uses Cap's Studio recording pipeline. It does not start the old Swift dialog, a second menu bar app or a CLI-controlled recording. The notes window is created before capture and its window ID is explicitly excluded. Pauses use the same elapsed clock as Cap's recording bar; first-frame alignment is approximate and the media manifest records that limit.
+UX Walk uses Cap's Studio recording pipeline. It does not start the old Swift dialog, a second menu bar app or a CLI-controlled recording. The notes window is created before capture and its window ID is explicitly excluded. A short-lived local page identifies the fresh browser window by a unique title before navigating; unrelated Chrome windows are never chosen by timing or title similarity. Browser creation starts no recording and runs no tracing or page instrumentation. Pauses use the same elapsed clock as Cap's recording bar; first-frame alignment is approximate and the media manifest records that limit.
 
 After confirmed recording finalization, the app snapshots the project into the walk folder before restoring normal completion UI. The processor exports and splits that copy into chapter clips and reuses UX Walk's screenshots, timelines, transcription and optional briefs. The original recording stays in Cap UX's library. A failed export retains source media and notes; reprocessing reuses the saved snapshot. Restart and Delete discard the current Cap capture through its existing controls and retain an aborted notes journal without processing it as a completed walk.
 
@@ -24,7 +24,7 @@ Native settings share `~/.config/ux-walk/config.json` with the engine and CLI. I
 
 Native walks record video and manual notes. They do not collect DOM, network, console or browser automation traces. The settings and report state that boundary. Browser trace preferences used by the separate CLI remain preserved in the shared config.
 
-The walkthrough processor requires FFmpeg. Optional briefs require the configured Claude CLI. Opening an agent workspace requires Claude and cmux; it is never automatic. Cloud transcription requires a provider key and sends audio to the selected provider. UX Walk does not automatically publish recordings.
+Automatic walk windows require Google Chrome. The walkthrough processor requires FFmpeg. Optional briefs require the configured Claude CLI. Opening an agent workspace requires Claude and cmux; it is never automatic. Cloud transcription requires a provider key and sends audio to the selected provider. UX Walk does not automatically publish recordings.
 
 ## Build and preview
 
