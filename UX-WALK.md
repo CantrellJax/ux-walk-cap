@@ -30,6 +30,8 @@ The fork-owned upstream workflow merges upstream main into an update PR and disp
 
 Pull requests build an isolated preview after native checks pass. The same **ux-walk native checks** workflow can be run manually with `preview=true`. This extends the existing GPUI/Tauri packaging pipeline and then packages the pinned UX Walk helper with its Node runtime. The public snapshot contains only the required engine sources, license and focused contract tests, with per-file hashes in SOURCE.json. Refresh it from a reviewed canonical commit using scripts/sync-ux-walk.mjs; direct snapshot edits are refused by packaging. Debug previews use the native host target and genuine debug artifact paths; release packaging keeps its existing target and source checks.
 
+Building the native helper requires Xcode 26 or newer, including the macOS 26 SDK. Its newer screenshot path is guarded at runtime, so the app still supports macOS 15. CI pins Xcode 26.3 and typechecks both helpers before the desktop build.
+
 The artifact contains **Cap-UX Preview.app** in a zip, its source revision, checksum, engine provenance and licenses. The preview has its own bundle identifier and temporary data/log/recording directories per revision. It registers no Cap URL scheme or recording file association. It does not copy the installed Cap account, settings or library. Opening the preview still follows macOS's ordinary permission flow; a fresh profile can show onboarding until required permissions are granted. Native compile/tests alone do not count as a menu, URL-delivery or recording pass.
 
 ## Sharing

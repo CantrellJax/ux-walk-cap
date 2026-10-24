@@ -37,11 +37,12 @@ concurrency:
 jobs:
   native:
     if: github.repository == 'CantrellJax/ux-walk-cap'
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 90
     env:
       CARGO_BUILD_JOBS: '2'
       CARGO_PROFILE_DEV_DEBUG: '0'
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -49,11 +50,19 @@ jobs:
           node-version: '22'
       - name: Check packaging profiles and staging
         run: node --test scripts/bundle-gpui.test.mjs scripts/build-desktop-binaries-cache.test.mjs scripts/build-macos-packages.test.mjs
+      - name: Check the native helper SDK before building Cap
+        run: |
+          xcodebuild -version
+          xcrun --sdk macosx --show-sdk-version
+          task_target="$(uname -m)-apple-macos15.0"
+          swiftc -typecheck -target "$task_target" vendor/ux-walk/swift/uxw-menubar.swift
+          swiftc -typecheck -target "$task_target" vendor/ux-walk/swift/uxw-capture.swift
       - uses: dtolnay/rust-toolchain@1.95.0
         with:
           components: rustfmt
       - uses: Swatinem/rust-cache@v2
         with:
+          shared-key: cap-ux-xcode26
           cache-on-failure: true
           workspaces: |
             . -> target
