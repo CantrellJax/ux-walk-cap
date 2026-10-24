@@ -43,13 +43,25 @@ const UX_WALK_ICON: &[u8] = include_bytes!("../assets/tray/tray-default-icon-ux-
 
 #[cfg(target_os = "macos")]
 fn mode_icon(mode: Mode) -> &'static [u8] {
-    if crate::store::ux_walk_selected() {
-        return UX_WALK_ICON;
-    }
     match mode {
         Mode::Studio => include_bytes!("../assets/tray/tray-default-icon-studio.png"),
         Mode::Instant => include_bytes!("../assets/tray/tray-default-icon-instant.png"),
         Mode::Screenshot => include_bytes!("../assets/tray/tray-default-icon-screenshot.png"),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn current_mode_icon(mode: Mode, cx: &gpui::App) -> &'static [u8] {
+    if crate::session::RecordingSession::global(cx)
+        .read(cx)
+        .editor_recording_target()
+        .is_some()
+    {
+        mode_icon(Mode::Studio)
+    } else if crate::store::ux_walk_selected() {
+        UX_WALK_ICON
+    } else {
+        mode_icon(mode)
     }
 }
 
@@ -370,10 +382,16 @@ fn current_menu_entries(cx: &App, mode: Mode, previous: &[PreviousItem]) -> Vec<
     if crate::app_windows::onboarding_is_open(cx) && !crate::permissions::necessary_granted() {
         return build_onboarding_menu(crate::menus::app_version());
     }
+    let editor = crate::session::RecordingSession::global(cx)
+        .read(cx)
+        .editor_recording_target()
+        .is_some();
+    let mode = if editor { Mode::Studio } else { mode };
+    let walk = crate::store::ux_walk_selected() && !editor;
     let mut entries = build_menu(mode, previous, crate::menus::app_version());
     for entry in &mut entries {
         if matches!(entry, Entry::Submenu { title, .. } if title == "Select Mode") {
-            *entry = mode_submenu_choice(mode, crate::store::ux_walk_selected());
+            *entry = mode_submenu_choice(mode, walk);
         }
     }
     entries
@@ -806,7 +824,7 @@ mod mac {
                 previous_generation: 0,
                 recording: false,
             };
-            set_button_image(&tray, mode_icon(mode));
+            set_button_image(&tray, current_mode_icon(mode, cx));
             let button: *mut AnyObject = msg_send![&*tray.status_item, button];
             let visible: bool = msg_send![&*tray.status_item, isVisible];
             let frame: objc2_foundation::NSRect = if button.is_null() {
@@ -913,6 +931,9 @@ mod mac {
             (tray.mode, tray.previous.clone())
         };
         let entries = current_menu_entries(cx, mode, &previous);
+        if !cx.global::<Tray>().recording {
+            set_button_image(cx.global::<Tray>(), current_mode_icon(mode, cx));
+        }
 
         let mut actions = Vec::new();
         let menu = {
@@ -1046,7 +1067,7 @@ mod mac {
                 if let Some(menu) = &tray.menu {
                     let _: () = msg_send![&*tray.status_item, setMenu: &**menu];
                 }
-                let icon = mode_icon(tray.mode);
+                let icon = current_mode_icon(tray.mode, cx);
                 set_button_image(tray, icon);
             }
         }
@@ -1066,7 +1087,7 @@ mod mac {
         cx.global_mut::<Tray>().mode = mode;
         if !cx.global::<Tray>().recording {
             let tray = cx.global::<Tray>();
-            set_button_image(tray, mode_icon(mode));
+            set_button_image(tray, current_mode_icon(mode, cx));
         }
         rebuild(cx);
     }

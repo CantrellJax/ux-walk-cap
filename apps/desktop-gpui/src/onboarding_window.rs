@@ -1688,11 +1688,11 @@ impl OnboardingWindow {
         let last = self.permissions_only || self.step == Step::Faq;
         let relaunch = self.step == Step::Permissions && !disabled && self.needs_relaunch();
         let label = if relaunch {
-            "Relaunch Cap"
+            "Relaunch Cap UX"
         } else if self.permissions_only {
-            "Continue to Cap"
+            "Continue to Cap UX"
         } else if last {
-            "Start Using Cap"
+            "Start Using Cap UX"
         } else {
             "Continue"
         };

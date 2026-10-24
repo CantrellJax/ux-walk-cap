@@ -600,6 +600,7 @@ pub fn init(main: WindowHandle<MainWindow>, session: Entity<RecordingSession>, c
             .ok();
             let editor_target =
                 session.update(cx, |session, _| session.take_editor_recording_target());
+            crate::tray::refresh_menu(cx);
             if let Some(editor_path) = editor_target {
                 editor_recording_finished(editor_path, finished_studio, cx);
             } else if let Some(preparing) =
@@ -1936,6 +1937,7 @@ pub fn open_target_overlays(request: OverlayRequest, cx: &mut App) {
 /// Must be reached through `cx.defer` from anything inside an entity update,
 /// same as [`open_target_overlays`].
 pub fn open_editor_target_overlays(editor_path: PathBuf, request: OverlayRequest, cx: &mut App) {
+    crate::tray::refresh_menu(cx);
     #[cfg(target_os = "linux")]
     if defer_window_until_capture_safe(cx) {
         return;
@@ -1961,6 +1963,7 @@ pub fn open_editor_target_overlays(editor_path: PathBuf, request: OverlayRequest
 }
 
 pub fn open_editor_recording_main(editor_path: PathBuf, cx: &mut App) {
+    crate::tray::refresh_menu(cx);
     let session = RecordingSession::global(cx);
     if session.read(cx).phase != Phase::Idle
         || session.read(cx).editor_recording_target().as_ref() != Some(&editor_path)
@@ -6427,6 +6430,7 @@ fn editor_recording_finished(editor_path: PathBuf, recording: Option<PathBuf>, c
 /// picker would -- target cleared, editor revealed. Without this the editor
 /// would stay hidden forever, since no phase transition is coming.
 pub fn abort_editor_recording_flow(cx: &mut App) {
+    crate::tray::refresh_menu(cx);
     let session = RecordingSession::global(cx);
     if session.read(cx).phase != Phase::Idle || session.read(cx).editor_recording_target().is_none()
     {
