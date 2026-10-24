@@ -82,6 +82,7 @@ mod target_thumbnails;
 mod teleprompter_window;
 mod theme;
 mod transcription;
+mod ux_walk;
 mod tray;
 mod ui;
 mod updates;

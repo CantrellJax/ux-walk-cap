@@ -56,11 +56,10 @@ jobs:
             apps/desktop-gpui -> target
       - name: Format changed Rust surfaces
         run: |
-          rustfmt +1.95.0 --edition 2024 apps/desktop-gpui/src/tray.rs apps/desktop-gpui/src/updates.rs apps/desktop-gpui/src/installer.rs apps/cli/src/update.rs
+          rustfmt +1.95.0 --edition 2024 apps/desktop-gpui/src/tray.rs apps/desktop-gpui/src/updates.rs apps/desktop-gpui/src/installer.rs apps/desktop-gpui/src/ux_walk.rs apps/cli/src/update.rs
           git diff > "$RUNNER_TEMP/rustfmt.patch"
-          git diff --exit-code
       - uses: actions/upload-artifact@v4
-        if: failure()
+        if: always()
         with:
           name: rustfmt-corrections
           path: ${{ runner.temp }}/rustfmt.patch
@@ -79,8 +78,12 @@ jobs:
           mkdir -p "$task_frameworks"
           ln -sfn "$GITHUB_WORKSPACE/target/Frameworks/Spacedrive.framework" "$task_frameworks/Spacedrive.framework"
           cargo +1.95.0 test --manifest-path apps/desktop-gpui/Cargo.toml --locked --bin cap-gpui tray::tests
+          cargo +1.95.0 test --manifest-path apps/desktop-gpui/Cargo.toml --locked --bin cap-gpui ux_walk::tests
           cargo +1.95.0 test --manifest-path apps/desktop-gpui/Cargo.toml --locked --bin cap-gpui installer::tests::fork_refuses_official_update_resolution
           cargo +1.95.0 test --locked -p cap update::tests::fork_refuses_official_installer
+      - name: Verify formatting
+        if: always()
+        run: git diff --exit-code
       - name: Set up preview packaging tools
         if: github.event_name == 'workflow_dispatch' && inputs.preview
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
