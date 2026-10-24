@@ -1,0 +1,7 @@
+# Names the transcript gets wrong. One per line: Right spelling: wrong one, wrong two
+# Matching ignores case; fixes apply to the timeline, not to transcript.srt.
+# ~/.config/ux-walk/glossary.txt is used for every recording; named lists live in
+# ~/.config/ux-walk/glossaries/<name>.txt and are added with --glossary <name>.
+Nguyen: Win, New when
+Siobhan: Shivon, Chevonne
+Kubernetes: cube Nettie's

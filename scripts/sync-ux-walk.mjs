@@ -12,6 +12,7 @@ const included = [
 	"LICENSE",
 	"package.json",
 	"package-lock.json",
+	"glossary.example.txt",
 	"src",
 	"bin",
 	"prompts",
