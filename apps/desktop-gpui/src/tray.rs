@@ -671,8 +671,8 @@ mod mac {
     use objc2_foundation::NSString;
 
     use super::{
-        Entry, PreviousItem, STOP_ICON, TrayItem, current_menu_entries, handle_item, mode_icon,
-        scan_previous, stop_recording,
+        Entry, PreviousItem, STOP_ICON, TrayItem, UX_WALK_ICON, current_menu_entries,
+        current_mode_icon, handle_item, mode_icon, scan_previous, stop_recording,
     };
     use crate::main_window::Mode;
 

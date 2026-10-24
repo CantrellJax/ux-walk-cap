@@ -3860,6 +3860,8 @@ fn begin_recording_after_preflight(config: StartConfig, cx: &mut App) {
                     session.error = Some(error);
                     cx.notify();
                 });
+                close_controls(&session, cx);
+                close_target_overlays(cx);
                 show_main_window(cx);
                 return;
             }
@@ -6430,7 +6432,6 @@ fn editor_recording_finished(editor_path: PathBuf, recording: Option<PathBuf>, c
 /// picker would -- target cleared, editor revealed. Without this the editor
 /// would stay hidden forever, since no phase transition is coming.
 pub fn abort_editor_recording_flow(cx: &mut App) {
-    crate::tray::refresh_menu(cx);
     let session = RecordingSession::global(cx);
     if session.read(cx).phase != Phase::Idle || session.read(cx).editor_recording_target().is_none()
     {
@@ -6446,6 +6447,7 @@ pub fn abort_editor_recording_flow(cx: &mut App) {
     }) else {
         return;
     };
+    crate::tray::refresh_menu(cx);
     close_target_overlays(cx);
     cx.global_mut::<AppWindows>().editor_hidden_for_picker = None;
     cx.global_mut::<AppWindows>().main_hidden_for_picker = false;
