@@ -69,10 +69,16 @@ export async function bundleUxWalk(app) {
 		path.join(root, "LICENSE"),
 		path.join(resources, "CAP-LICENSE"),
 	);
-	await fs.copyFile(
-		path.join(root, "apps/desktop-gpui/ux-walk/native-walk.mjs"),
-		path.join(engine, "native-walk.mjs"),
-	);
+	for (const file of [
+		"native-walk.mjs",
+		"native-browser.mjs",
+		"browser-evidence.mjs",
+	]) {
+		await fs.copyFile(
+			path.join(root, "apps/desktop-gpui/ux-walk", file),
+			path.join(engine, file),
+		);
+	}
 	await fs.writeFile(
 		path.join(resources, "engine-source.json"),
 		`${JSON.stringify({ repository: "https://github.com/CantrellJax/ux-walk-cap", sourceURL: `${parent.UXWalkSourceURL ?? `https://github.com/CantrellJax/ux-walk-cap/tree/${run("git", ["-C", root, "rev-parse", "HEAD"]).trim()}`}/vendor/ux-walk`, revision, node: process.version }, null, 2)}\n`,

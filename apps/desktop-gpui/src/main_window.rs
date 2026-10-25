@@ -2687,7 +2687,7 @@ impl MainWindow {
             }
             let available = storage.available_bytes as f64 / 1_073_741_824.0;
             let detail = if can_start {
-                format!("Only {available:.2} GB is available on your recording drive. Cap will stop automatically if storage gets too low, preserving your recording.")
+                format!("Only {available:.2} GB is available on your recording drive. {} will stop automatically if storage gets too low, preserving your recording.", crate::menus::APP_NAME)
             } else {
                 format!("Only {available:.2} GB is available on your recording drive. Free up space so at least 512 MB is available before recording.")
             };
@@ -3249,7 +3249,7 @@ impl MainWindow {
             .filter(|_| !pending);
 
         let message = if pending {
-            "Finish signing in to Cap in your browser. Cap comes back here and opens the recorder when you're done."
+            "Finish signing in to Cap in your browser. Cap UX returns to the recorder when you're done."
         } else {
             "Instant Mode uploads while you record, so your shareable link is ready the moment you stop."
         };

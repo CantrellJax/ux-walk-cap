@@ -369,6 +369,12 @@ input:focus{border-color:#4f46e5;box-shadow:0 0 0 3px rgba(79,70,229,.15)}input:
     // Keep typing in the open note (hiding can move focus).
     if (!on && card && host.shadowRoot.activeElement !== card.input) card.input.focus({ preventScroll: true }); };
   window.__uxwOpenNote = () => (card && !card.edit ? { id: card.note.id, text: card.input.value.trim() } : null);
+  window.__uxwTakeOpenNote = (ids) => {
+    if (!card || card.edit || !ids.includes(card.note.id)) return null;
+    const current = closeCard(), note = current.note;
+    note.text = current.input.value.trim(); note.saved = true;
+    return { id: note.id, text: note.text };
+  };
   const onUi = (e) => {
     const t = e.composedPath()[0], act = t?.closest?.('[data-act]')?.dataset.act;
     const inCard = card && card.node.contains(t);
@@ -726,7 +732,7 @@ input:focus{border-color:#4f46e5;box-shadow:0 0 0 3px rgba(79,70,229,.15)}input:
   addEventListener('drop', (e) => send({ ev: 'drop', el: desc(e.target) }), true);
 }
 
-export async function openBrowser({ url, metadataOnly = false, networkContext, authFile, windowSize, trace, ignoreWrites, write, onCommand, snapshotDir, notesDir, contextSelectors, genericTestids }) {
+export async function openBrowser({ url, metadataOnly = false, networkContext, authFile, windowSize, trace, ignoreWrites, write, onCommand, snapshotDir, notesDir, contextSelectors, genericTestids, canCapturePage }) {
   const browser = await chromium.launch({
     channel: 'chrome', headless: false, handleSIGINT: false, handleSIGTERM: false, handleSIGHUP: false,
     args: [`--window-size=${windowSize}`],
@@ -736,7 +742,7 @@ export async function openBrowser({ url, metadataOnly = false, networkContext, a
     storageState: fs.existsSync(authFile) && fs.statSync(authFile).size ? authFile : undefined,
   });
   if (trace) await context.tracing.start({ screenshots: false, snapshots: true, title: 'ux-walk' });
-  await context.exposeBinding('__uxw', (_src, o) => write(o));
+  await context.exposeBinding('__uxw', ({ page }, o) => write(o, page));
   await context.exposeBinding('__uxwCmd', async (_src, cmd) => (onCommand ? onCommand(String(cmd)) : ''));
   // Annotations: the page asks for a number and screenshots at the gesture, then saves the text. A box
   // moved or resized while its card is open is screenshotted again ("reshoot") with its final box.
@@ -744,8 +750,9 @@ export async function openBrowser({ url, metadataOnly = false, networkContext, a
   let noteN = 0;
   const pending = new Map(); // id -> the note event, waiting for its text
   const rel = (f) => `${path.basename(notesDir())}/${path.basename(f)}`;
-  const saveNote = (id, text) => { const n = pending.get(id); if (n) { pending.delete(id); write({ ...n, text: String(text ?? '').slice(0, 2000) }); } };
+  const saveNote = (id, text) => { const n = pending.get(id); if (n) { pending.delete(id); const { page, ...event } = n; write({ ...event, text: String(text ?? '').slice(0, 2000) }, page); } };
   const shoot = async (p, id, o) => {
+    if (canCapturePage && !(await canCapturePage(p))) throw new Error('This page is outside the recorded browser window');
     const nn = String(id).padStart(2, '0'), dir = notesDir();
     fs.mkdirSync(dir, { recursive: true });
     const shot = path.join(dir, `${nn}.png`), full = path.join(dir, `${nn}-full.png`);
@@ -755,7 +762,7 @@ export async function openBrowser({ url, metadataOnly = false, networkContext, a
     await p.evaluate((n) => window.__uxwShot?.(true, n), id).catch(() => {});
     try {
       await p.screenshot({ path: shot, clip, timeout: 5000 }).catch(() => {});
-      await p.screenshot({ path: full, timeout: 5000 }).catch(() => {});
+      if (!canCapturePage || await canCapturePage(p)) await p.screenshot({ path: full, timeout: 5000 }).catch(() => {});
     } finally { await p.evaluate(() => window.__uxwShot?.(false)).catch(() => {}); }
     return { b, ...(fs.existsSync(shot) ? { shot: rel(shot) } : {}), ...(fs.existsSync(full) ? { full: rel(full) } : {}) };
   };
@@ -764,7 +771,7 @@ export async function openBrowser({ url, metadataOnly = false, networkContext, a
     if (o.op === 'new') {
       const id = ++noteN, t = Date.now();
       const { b, ...files } = await shoot(p, id, o);
-      pending.set(id, { t, url: o.url, ev: 'note', id, mode: o.mode === 'box' ? 'box' : 'pin', text: '', el: o.el, box: b,
+      pending.set(id, { page: p, t, url: o.url, ev: 'note', id, mode: o.mode === 'box' ? 'box' : 'pin', text: '', el: o.el, box: b,
         ...(o.mode === 'box' ? { inside: (o.inside || []).slice(0, 15) } : {}), ...files });
       return id;
     }
@@ -775,10 +782,10 @@ export async function openBrowser({ url, metadataOnly = false, networkContext, a
     } else if (o.op === 'reshoot' && id > 0 && id <= noteN) {
       // A saved note moved afterwards: same files, retaken; the timeline row takes the new target.
       const { b, ...files } = await shoot(p, id, o);
-      write({ ev: 'note', id, edit: true, moved: true, mode: o.mode === 'box' ? 'box' : 'pin', el: o.el, box: b, ...(o.mode === 'box' ? { inside: (o.inside || []).slice(0, 15) } : {}), ...files, url: o.url });
+      write({ ev: 'note', id, edit: true, moved: true, mode: o.mode === 'box' ? 'box' : 'pin', el: o.el, box: b, ...(o.mode === 'box' ? { inside: (o.inside || []).slice(0, 15) } : {}), ...files, url: o.url }, p);
     } else if (o.op === 'save') {
       if (pending.has(id)) saveNote(id, o.text);
-      else if (o.edit && id > 0 && id <= noteN) write({ ev: 'note', id, edit: true, text: String(o.text ?? '').slice(0, 2000), url: o.url });
+      else if (o.edit && id > 0 && id <= noteN) write({ ev: 'note', id, edit: true, text: String(o.text ?? '').slice(0, 2000), url: o.url }, p);
     } else if (o.op === 'drop' && pending.has(id)) {
       const n = pending.get(id);
       pending.delete(id);
@@ -789,7 +796,10 @@ export async function openBrowser({ url, metadataOnly = false, networkContext, a
   };
   let noteChain = Promise.resolve();
   await context.exposeBinding('__uxwNote', ({ page: p }, o) => {
-    const run = noteChain.then(() => noteOp(p, o));
+    const run = noteChain.then(async () => {
+      if (canCapturePage && !(await canCapturePage(p))) throw new Error('This page is outside the recorded browser window');
+      return noteOp(p, o);
+    });
     noteChain = run.catch(() => {});
     return run;
   });
@@ -810,26 +820,28 @@ export async function openBrowser({ url, metadataOnly = false, networkContext, a
   const snapshot = async (p, why) => {
     if (!snapshotDir || p.isClosed()) return;
     try {
+      if (canCapturePage && !(await canCapturePage(p))) return;
       let yml = await p.locator('body').ariaSnapshot({ timeout: 3000 });
       if (yml.length > 60000) yml = yml.slice(0, 60000) + '\n# (cut at 60 KB)\n';
+      if (canCapturePage && !(await canCapturePage(p))) return;
       const t = Date.now(), dir = snapshotDir();
       fs.mkdirSync(dir, { recursive: true });
       const file = `${dir}/${t}.yml`;
       fs.writeFileSync(file, `# ${p.url()}\n${yml}\n`);
-      write({ ev: 'snapshot', file, why });
+      write({ ev: 'snapshot', file, why }, p);
     } catch {}
   };
   const settle = new WeakMap();
   const watch = (p) => {
-    watchNetwork(p, write, Date.now, networkContext);
+    watchNetwork(p, (event) => write(event, p), Date.now, networkContext);
     p.on('framenavigated', (f) => {
       if (f !== p.mainFrame()) return;
-      write({ ev: 'nav', url: f.url() });
+      write({ ev: 'nav', url: f.url() }, p);
       clearTimeout(settle.get(p));
       settle.set(p, setTimeout(() => { snapshot(p, 'nav'); flushNotes(p); }, 1500));
     });
-    p.on('console', (m) => ['error', 'warning'].includes(m.type()) && write({ ev: 'console', level: m.type(), text: m.text().slice(0, 4000) }));
-    p.on('pageerror', (e) => write({ ev: 'pageerror', text: (e.stack || String(e)).slice(0, 4000) }));
+    p.on('console', (m) => ['error', 'warning'].includes(m.type()) && write({ ev: 'console', level: m.type(), text: m.text().slice(0, 4000) }, p));
+    p.on('pageerror', (e) => write({ ev: 'pageerror', text: (e.stack || String(e)).slice(0, 4000) }, p));
     p.on('response', async (r) => {
       const req = r.request(), m = req.method(), t = Date.now(), status = r.status();
       answered.add(req);
@@ -841,14 +853,14 @@ export async function openBrowser({ url, metadataOnly = false, networkContext, a
         const res = await Promise.race([r.text(), new Promise((x) => setTimeout(() => x(null), 3000))]).catch(() => null);
         bodies = { reqBody: read ? undefined : redactBody(req.postData()), resBody: redactBody(res, RES_KEYS) };
       }
-      if (read) { write({ t, ev: 'http', status, method: m, url: r.url().slice(0, 400), ...bodies }); return; }
+      if (read) { write({ t, ev: 'http', status, method: m, url: r.url().slice(0, 400), ...bodies }, p); return; }
       const action = req.headers()['next-action'];
       const ms = Math.round(req.timing().responseStart);
-      write({ t, ev: 'write', status, method: m, url: r.url().slice(0, 400), ...(ms > 0 ? { ms } : {}), ...(action ? { serverAction: action.slice(0, 12) } : {}), ...bodies });
+      write({ t, ev: 'write', status, method: m, url: r.url().slice(0, 400), ...(ms > 0 ? { ms } : {}), ...(action ? { serverAction: action.slice(0, 12) } : {}), ...bodies }, p);
     });
     p.on('requestfailed', (req) => {
       if (answered.has(req) || ['GET', 'HEAD', 'OPTIONS'].includes(req.method()) || ignore.test(req.url())) return;
-      write({ ev: 'write', status: 0, method: req.method(), url: req.url().slice(0, 400), failure: req.failure()?.errorText, ...(!metadataOnly ? { reqBody: redactBody(req.postData()) } : {}) });
+      write({ ev: 'write', status: 0, method: req.method(), url: req.url().slice(0, 400), failure: req.failure()?.errorText, ...(!metadataOnly ? { reqBody: redactBody(req.postData()) } : {}) }, p);
     });
   };
   context.on('page', watch);
@@ -859,6 +871,16 @@ export async function openBrowser({ url, metadataOnly = false, networkContext, a
   return {
     context,
     browser,
+    async flushPendingNotes({ fromMs = 0, throughMs = Infinity, allowPage = () => true } = {}) {
+      await noteChain;
+      const eligible = () => [...pending.entries()].filter(([, note]) => note.t >= fromMs && note.t <= throughMs);
+      for (const page of new Set(eligible().map(([, note]) => note.page))) {
+        if (page.isClosed() || !(await allowPage(page))) continue;
+        const entries = eligible().filter(([, note]) => note.page === page);
+        const open = await page.evaluate((ids) => window.__uxwTakeOpenNote?.(ids), entries.map(([id]) => id));
+        for (const [id] of entries) saveNote(id, open?.id === id ? open.text : '');
+      }
+    },
     async checkpoint(file, crop) {
       const p = context.pages().at(-1);
       if (!p || p.isClosed()) throw new Error('no open page for checkpoint');

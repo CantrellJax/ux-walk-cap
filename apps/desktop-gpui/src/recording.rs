@@ -1384,8 +1384,9 @@ pub(crate) fn ensure_finalization_storage(project_path: &std::path::Path) -> any
         .context("checking storage before saving the recording")?;
     if !storage.can_finalize() {
         return Err(anyhow!(
-            "Low storage. Your recording files are preserved at {}. Free up space, then recover the recording in Cap.",
-            project_path.display()
+            "Low storage. Your recording files are preserved at {}. Free up space, then recover the recording in {}.",
+            project_path.display(),
+            crate::menus::APP_NAME
         ));
     }
     Ok(())

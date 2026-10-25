@@ -246,6 +246,29 @@ const MODES: &[ModeDetail] = &[
     },
 ];
 
+#[derive(Default)]
+struct ModeSelection {
+    preview: Option<usize>,
+    selected: Option<ModeChoice>,
+}
+
+impl ModeSelection {
+    fn select(&mut self, index: usize) -> Option<ModeChoice> {
+        let mode = MODES.get(index)?.mode;
+        self.preview = Some(index);
+        self.selected = Some(mode);
+        Some(mode)
+    }
+
+    fn navigate(&mut self) {
+        self.preview = None;
+    }
+
+    fn choice(&self) -> Option<ModeChoice> {
+        self.selected
+    }
+}
+
 const FAQ: [(&str, &str); 5] = [
     (
         "Is Cap UX free to use?",
@@ -295,7 +318,7 @@ pub struct OnboardingWindow {
     demo_task: Option<gpui::Task<()>>,
     demo_phase: usize,
     demo_cycle: usize,
-    chosen_mode: Option<usize>,
+    mode_selection: ModeSelection,
     step_revision: usize,
     transition_direction: f32,
     faq_open: [bool; FAQ.len()],
@@ -349,7 +372,7 @@ impl OnboardingWindow {
             demo_task: None,
             demo_phase: 0,
             demo_cycle: 0,
-            chosen_mode: None,
+            mode_selection: ModeSelection::default(),
             step_revision: 0,
             transition_direction: 1.,
             faq_open: [false; FAQ.len()],
@@ -515,10 +538,7 @@ impl OnboardingWindow {
             permissions::relaunch(cx);
             return;
         }
-        let walk = self
-            .chosen_mode
-            .and_then(|index| MODES.get(index))
-            .is_some_and(|mode| mode.mode == ModeChoice::UxWalk);
+        let walk = self.mode_selection.choice() == Some(ModeChoice::UxWalk);
         cx.defer(move |cx| {
             crate::app_windows::onboarding_finished(cx);
             if walk {
@@ -583,7 +603,7 @@ impl OnboardingWindow {
         self.demo_task = None;
         self.demo_phase = 0;
         self.demo_cycle = 0;
-        self.chosen_mode = None;
+        self.mode_selection.navigate();
         self.focus_root(window, cx);
         if self.permissions_visible() {
             self.refresh_permissions(window, cx);
@@ -649,7 +669,7 @@ impl OnboardingWindow {
         if self.welcome
             || !window.is_window_active()
             || self.demo_task.is_some()
-            || self.chosen_mode.is_some()
+            || self.mode_selection.preview.is_some()
         {
             return;
         }
@@ -1472,12 +1492,11 @@ impl OnboardingWindow {
     }
 
     fn choose_mode(&mut self, index: usize, cx: &mut Context<Self>) {
-        let Some(mode) = MODES.get(index) else {
+        let Some(mode) = self.mode_selection.select(index) else {
             return;
         };
-        self.chosen_mode = Some(index);
         self.demo_task = None;
-        if let Some(mode) = mode.mode.capture_mode() {
+        if let Some(mode) = mode.capture_mode() {
             cx.defer(move |cx| crate::app_windows::set_recording_mode(mode, cx));
         }
         cx.notify();
@@ -1485,7 +1504,10 @@ impl OnboardingWindow {
 
     fn render_toggle(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = self.theme;
-        let active = self.chosen_mode.unwrap_or(self.demo_phase % MODES.len());
+        let active = self
+            .mode_selection
+            .preview
+            .unwrap_or(self.demo_phase % MODES.len());
         div()
             .flex()
             .flex_col()
@@ -2861,6 +2883,38 @@ impl Render for OnboardingWindow {
 mod tests {
     use super::*;
     use crate::permissions::{MediaAuthorization, RawPermissions};
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn ux_walk_choice_survives_the_remaining_tour_navigation() {
+        let mut selection = ModeSelection::default();
+        let index = MODES
+            .iter()
+            .position(|mode| mode.mode == ModeChoice::UxWalk)
+            .unwrap();
+        assert_eq!(selection.select(index), Some(ModeChoice::UxWalk));
+        for _ in 0..3 {
+            selection.navigate();
+            assert_eq!(selection.preview, None);
+            assert_eq!(selection.choice(), Some(ModeChoice::UxWalk));
+        }
+    }
+
+    #[test]
+    fn choosing_another_mode_replaces_the_pending_onboarding_choice() {
+        let mut selection = ModeSelection::default();
+        assert_eq!(selection.choice(), None);
+        assert_eq!(
+            selection.select(0),
+            Some(ModeChoice::Capture(Mode::Instant))
+        );
+        selection.navigate();
+        let studio = ModeChoice::Capture(Mode::Studio);
+        assert_eq!(selection.select(1), Some(studio));
+        assert_eq!(selection.select(usize::MAX), None);
+        selection.navigate();
+        assert_eq!(selection.choice(), Some(studio));
+    }
 
     #[test]
     fn first_run_visits_every_platform_stage_and_back_never_opens_an_omitted_step() {

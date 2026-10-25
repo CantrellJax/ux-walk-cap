@@ -235,6 +235,7 @@ impl RecordingStatus {
 /// carrying only the fields `recordings.tsx` reads.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RecordingItem {
+    pub walk: Option<crate::ux_walk_library::WalkSummary>,
     /// The `.cap` bundle -- the `path` half of the tuple, and what every row
     /// action takes.
     pub path: PathBuf,
@@ -264,7 +265,10 @@ pub struct IncompleteRecordingItem {
 
 impl RecordingItem {
     pub fn is_active(&self) -> bool {
-        self.status == RecordingStatus::InProgress
+        self.walk
+            .as_ref()
+            .is_some_and(crate::ux_walk_library::WalkSummary::is_active)
+            || self.status == RecordingStatus::InProgress
             || self
                 .upload
                 .as_ref()
@@ -328,6 +332,7 @@ fn recording_item(path: PathBuf, meta: RecordingMeta, sort_time_millis: f64) -> 
     };
     let upload = crate::upload::queue::status(&path, &meta);
     RecordingItem {
+        walk: None,
         upload,
         mode,
         status,
@@ -358,6 +363,7 @@ pub fn list_recordings_in(dirs: &[PathBuf]) -> Vec<RecordingItem> {
 }
 
 fn recording_items_in(dirs: &[PathBuf]) -> impl Iterator<Item = RecordingItem> {
+    let walks = crate::ux_walk_library::index();
     let mut paths = Vec::new();
     for dir in dirs {
         let Ok(entries) = std::fs::read_dir(dir) else {
@@ -373,10 +379,19 @@ fn recording_items_in(dirs: &[PathBuf]) -> impl Iterator<Item = RecordingItem> {
         }
     }
     paths.sort_by(|(_, a), (_, b)| b.total_cmp(a));
-    paths.into_iter().filter_map(|(path, sort_time_millis)| {
-        let meta = RecordingMeta::load_for_project(&path).ok()?;
-        Some(recording_item(path, meta, sort_time_millis))
-    })
+    paths
+        .into_iter()
+        .filter_map(move |(path, sort_time_millis)| {
+            let meta = RecordingMeta::load_for_project(&path).ok()?;
+            let walk = path
+                .canonicalize()
+                .ok()
+                .and_then(|path| walks.get(&path))
+                .cloned();
+            let mut item = recording_item(path, meta, sort_time_millis);
+            item.walk = walk;
+            Some(item)
+        })
 }
 
 /// `list_recordings` against the real library.
