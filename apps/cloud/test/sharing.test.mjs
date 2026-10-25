@@ -15,7 +15,7 @@ before(async () => {
 			compatibilityDate: "2026-10-25",
 			r2Buckets: ["MEDIA"],
 			assets: {
-				workerName: "capux-test",				directory: fileURLToPath(new URL("../public", import.meta.url)),
+				routerConfig: { has_user_worker: true },				directory: fileURLToPath(new URL("../public", import.meta.url)),
 				binding: "ASSETS",
 				run_worker_first: true,
 			},
