@@ -79,6 +79,20 @@ impl WalkSelection {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum NotesSource {
+    Current,
+    Saved(PathBuf),
+}
+
+pub fn notes_source(current_walk_present: bool, last_journal: Option<&str>) -> NotesSource {
+    if !current_walk_present && let Some(file) = last_journal.filter(|file| !file.trim().is_empty())
+    {
+        return NotesSource::Saved(PathBuf::from(file));
+    }
+    NotesSource::Current
+}
+
 impl WalkSummary {
     pub fn report_ready(&self) -> bool {
         self.status == WalkStatus::Ready

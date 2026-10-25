@@ -19,6 +19,17 @@ pub fn prepare(cx: &mut App) -> Result<isize, String> {
     Ok(number)
 }
 pub fn open(cx: &mut App) {
+    let current_walk_present = RecordingSession::global(cx).read(cx).walk.is_some();
+    let settings = crate::store::store_section(crate::store::RECORDING_SETTINGS);
+    if let crate::ux_walk_library::NotesSource::Saved(file) = crate::ux_walk_library::notes_source(
+        current_walk_present,
+        settings
+            .get("lastNativeWalk")
+            .and_then(serde_json::Value::as_str),
+    ) {
+        open_saved(file, cx);
+        return;
+    }
     if let Err(error) = ensure(true, cx) {
         tracing::error!(%error, "opening native walk notes");
     } else {

@@ -164,6 +164,19 @@ fn choosing_another_walk_or_live_recording_rejects_stale_background_loads() {
 }
 
 #[test]
+fn notes_shortcut_keeps_the_recent_walk_when_the_current_session_has_no_journal() {
+    use ux_walk_library::{NotesSource, notes_source};
+    let last = "/saved-walk/native-walk.json";
+    assert_eq!(notes_source(true, Some(last)), NotesSource::Current);
+    assert_eq!(
+        notes_source(false, Some(last)),
+        NotesSource::Saved(last.into())
+    );
+    assert_eq!(notes_source(false, None), NotesSource::Current);
+    assert_eq!(notes_source(false, Some("  ")), NotesSource::Current);
+}
+
+#[test]
 fn remembering_walks_and_output_roots_preserves_previous_history_and_other_settings() {
     let f = Fixture::new();
     let source = f.source("source");
