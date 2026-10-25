@@ -257,3 +257,9 @@ test("viewer preserves the share path and serves the viewer without a redirect",
 	assert.equal(result.headers.get("Location"), null);
 	assert.match(await result.text(), /Opening shared recording/);
 });
+
+test("the cloud home page works with exact HTML asset routing", async () => {
+	const result = await request("/", { redirect: "manual" });
+	assert.equal(result.status, 200);
+	assert.match(await result.text(), /Show what happened/);
+});
