@@ -233,9 +233,30 @@ document.querySelector("button").onclick = () => {
 		evidence.anchor(file, resumedAt, pausedAt - startedAtMs, false);
 		await page.evaluate(() => console.warn("Resumed synthetic warning"));
 		await new Promise((resolve) => setTimeout(resolve, 40));
+		await same.bringToFront();
+		await same
+			.getByRole("button", { name: "Save window" })
+			.click({ modifiers: ["Alt", "Shift"] });
+		await same.waitForFunction(() =>
+			Number.isInteger(window.__uxwOpenNote?.()?.id),
+		);
+		await same.locator("uxw-overlay input").fill("Unsaved note before Stop");
 		const stoppedAt = Date.now();
 		journal.durationMs = stoppedAt - startedAtMs - (resumedAt - pausedAt);
 		evidence.anchor(file, stoppedAt, journal.durationMs, true);
+		for (const candidate of browser.context.pages()) {
+			await candidate
+				.evaluate(async () => {
+					const note = window.__uxwOpenNote?.();
+					if (note)
+						await window.__uxwNote?.({
+							op: "save",
+							id: note.id,
+							text: note.text,
+						});
+				})
+				.catch(() => {});
+		}
 		await windowEvents.flush();
 		evidence.finish(file);
 		const stoppedNote = await same.evaluate(() =>
@@ -317,6 +338,10 @@ document.querySelector("button").onclick = () => {
 		assert.match(
 			fs.readFileSync(path.join(directory, "actions.jsonl"), "utf8"),
 			/SAME_WINDOW_TAB_SENTINEL/,
+		);
+		assert.match(
+			fs.readFileSync(path.join(directory, "report.html"), "utf8"),
+			/Unsaved note before Stop/,
 		);
 		assert.match(nativeWalkPrompt(file), /no server-side query trace/);
 		assert.match(nativeWalkPrompt(file), /browser-preroll/);
