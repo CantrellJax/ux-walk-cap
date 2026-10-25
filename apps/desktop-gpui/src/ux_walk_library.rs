@@ -162,6 +162,72 @@ pub fn read_summary(file: &Path) -> Result<WalkSummary, String> {
     read_walk(file).map(|(summary, _)| summary)
 }
 
+pub fn view_events(
+    summary: &WalkSummary,
+    journal: &crate::ux_walk_journal::Journal,
+) -> Vec<crate::ux_walk_journal::Event> {
+    let original = journal.events.clone();
+    if !summary.report_ready() {
+        return original;
+    }
+    let derived = (|| {
+        let artifact: Value =
+            serde_json::from_slice(&fs::read(summary.directory.join("walk-notes.json")).ok()?)
+                .ok()?;
+        if artifact["schemaVersion"].as_u64() != Some(1) {
+            return None;
+        }
+        let file = Path::new(artifact["journal"].as_str()?);
+        let source = Path::new(artifact["sourceProject"].as_str()?);
+        if !file.is_absolute()
+            || !source.is_absolute()
+            || file.canonicalize().ok()? != summary.file
+            || source.canonicalize().ok()? != journal.source_project.canonicalize().ok()?
+        {
+            return None;
+        }
+        let duration = journal.duration_ms.filter(|duration| *duration > 0)?;
+        artifact["notes"]
+            .as_array()?
+            .iter()
+            .map(|note| {
+                if note
+                    .get("ev")
+                    .or_else(|| note.get("kind"))
+                    .is_some_and(|kind| kind.as_str() != Some("note"))
+                {
+                    return None;
+                }
+                let offset_ms = note["offsetMs"]
+                    .as_u64()
+                    .filter(|offset| *offset <= duration)?;
+                let text = note["text"].as_str()?.trim();
+                let text = if text.is_empty() { "Voice note" } else { text };
+                Some(crate::ux_walk_journal::Event {
+                    kind: "note".into(),
+                    text: text.into(),
+                    offset_ms,
+                })
+            })
+            .collect::<Option<Vec<_>>>()
+    })();
+    let Some(derived) = derived else {
+        return original;
+    };
+    let mut events = original;
+    let mut seen: BTreeSet<_> = events
+        .iter()
+        .map(|event| (event.kind.clone(), event.offset_ms, event.text.clone()))
+        .collect();
+    for event in derived {
+        if seen.insert((event.kind.clone(), event.offset_ms, event.text.clone())) {
+            events.push(event);
+        }
+    }
+    events.sort_by_key(|event| event.offset_ms);
+    events
+}
+
 #[derive(Debug, PartialEq, Eq)]
 enum ProcessorOwner {
     Absent,

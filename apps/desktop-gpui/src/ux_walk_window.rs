@@ -40,13 +40,18 @@ pub fn open(cx: &mut App) {
 fn reset_live(cx: &mut App) {
     if let Some(handle) = cx.global::<WalkWindows>().0 {
         handle
-            .update(cx, |view, _, cx| {
+            .update(cx, |view, window, cx| {
                 view.selection.choose(None);
                 view.saved = None;
+                view.saved_notes = None;
+                view.current_notes = None;
+                view.current_notes_loading = None;
+                view.current_notes_revision = view.current_notes_revision.wrapping_add(1);
                 view.summary = None;
                 view.error = None;
                 view.notice = None;
                 view.poll = None;
+                view.refresh_current_notes(window, cx);
                 cx.notify();
             })
             .ok();
@@ -63,6 +68,7 @@ pub fn open_saved(file: std::path::PathBuf, cx: &mut App) {
             .update(cx, |view, window, cx| {
                 view.selection.choose(Some(file.clone()));
                 view.saved = None;
+                view.saved_notes = None;
                 view.summary = None;
                 view.error = None;
                 view.notice = None;
@@ -138,12 +144,40 @@ fn ensure(show: bool, cx: &mut App) -> Result<isize, String> {
     Ok(number)
 }
 
+#[derive(Clone)]
+struct LoadedNotes {
+    file: std::path::PathBuf,
+    events: Vec<crate::ux_walk_journal::Event>,
+    evidence: String,
+}
+
+impl LoadedNotes {
+    fn for_walk(
+        summary: &crate::ux_walk_library::WalkSummary,
+        journal: &crate::ux_walk_journal::Journal,
+    ) -> Self {
+        Self {
+            file: summary.file.clone(),
+            events: crate::ux_walk_library::view_events(summary, journal),
+            evidence: if summary.report_ready() {
+                crate::ux_walk_library::evidence_notice(&summary.directory)
+            } else {
+                "The agent prompt describes the browser evidence available for this walk.".into()
+            },
+        }
+    }
+}
+
 struct WalkWindow {
     theme: Theme,
     session: Entity<RecordingSession>,
     input: Entity<ui::TextInputState>,
     selection: crate::ux_walk_library::WalkSelection,
     saved: Option<crate::ux_walk_journal::Journal>,
+    saved_notes: Option<LoadedNotes>,
+    current_notes: Option<LoadedNotes>,
+    current_notes_loading: Option<std::path::PathBuf>,
+    current_notes_revision: u64,
     summary: Option<crate::ux_walk_library::WalkSummary>,
     poll: Option<gpui::Task<()>>,
     action_revision: u64,
@@ -162,7 +196,8 @@ impl WalkWindow {
             false
         });
         let session = RecordingSession::global(cx);
-        cx.observe_in(&session, window, |_, _, window, cx| {
+        cx.observe_in(&session, window, |this, _, window, cx| {
+            this.refresh_current_notes(window, cx);
             cx.notify();
             window.refresh();
         })
@@ -184,6 +219,10 @@ impl WalkWindow {
             input,
             selection: Default::default(),
             saved: None,
+            saved_notes: None,
+            current_notes: None,
+            current_notes_loading: None,
+            current_notes_revision: 0,
             summary: None,
             poll: None,
             action_revision: 0,
@@ -191,6 +230,64 @@ impl WalkWindow {
             notice: None,
             error: None,
         }
+    }
+
+    fn refresh_current_notes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let session = self.session.read(cx);
+        let file = session
+            .walk
+            .as_ref()
+            .filter(|walk| walk.state == "complete")
+            .map(|walk| walk.file());
+        if session.walk_processing || file.is_none() {
+            self.current_notes_revision = self.current_notes_revision.wrapping_add(1);
+            self.current_notes = None;
+            self.current_notes_loading = None;
+            return;
+        }
+        let Some(file) = file else {
+            return;
+        };
+        if self
+            .current_notes
+            .as_ref()
+            .is_some_and(|notes| notes.file == file)
+            || self.current_notes_loading.as_ref() == Some(&file)
+        {
+            return;
+        }
+        self.current_notes_revision = self.current_notes_revision.wrapping_add(1);
+        let revision = self.current_notes_revision;
+        self.current_notes_loading = Some(file.clone());
+        cx.spawn_in(window, async move |this, cx| {
+            let requested = file.clone();
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    crate::ux_walk_library::read_walk(&file)
+                        .map(|(summary, journal)| LoadedNotes::for_walk(&summary, &journal))
+                })
+                .await;
+            this.update_in(cx, |this, window, cx| {
+                if this.current_notes_revision != revision
+                    || this.session.read(cx).walk_processing
+                    || this
+                        .session
+                        .read(cx)
+                        .walk
+                        .as_ref()
+                        .is_none_or(|walk| walk.file() != requested)
+                {
+                    return;
+                }
+                this.current_notes_loading = None;
+                this.current_notes = result.ok();
+                cx.notify();
+                window.refresh();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn load_saved(
@@ -205,14 +302,20 @@ impl WalkWindow {
             let requested = file.clone();
             let result = cx
                 .background_executor()
-                .spawn(async move { crate::ux_walk_library::read_walk(&file) })
+                .spawn(async move {
+                    crate::ux_walk_library::read_walk(&file).map(|(summary, journal)| {
+                        let notes = LoadedNotes::for_walk(&summary, &journal);
+                        (summary, journal, notes)
+                    })
+                })
                 .await;
             this.update_in(cx, |this, window, cx| {
                 if !this.selection.accepts(&requested, revision) {
                     return;
                 }
                 match result {
-                    Ok((summary, journal)) => {
+                    Ok((summary, journal, notes)) => {
+                        this.saved_notes = Some(notes);
                         this.summary = Some(summary);
                         this.saved = Some(journal);
                         this.error = None;
@@ -304,6 +407,18 @@ impl WalkWindow {
                 .await;
             this.update_in(cx, |this, window, cx| {
                 this.reprocessing.remove(&selected);
+                if this
+                    .session
+                    .read(cx)
+                    .walk
+                    .as_ref()
+                    .is_some_and(|walk| walk.file() == selected)
+                {
+                    this.current_notes = None;
+                    this.current_notes_loading = None;
+                    this.current_notes_revision = this.current_notes_revision.wrapping_add(1);
+                    this.refresh_current_notes(window, cx);
+                }
                 if this.selection.file.as_ref() != Some(&selected) {
                     return;
                 }
@@ -382,6 +497,24 @@ impl Render for WalkWindow {
         } else {
             session.walk.clone()
         };
+        let notes = if saved_view {
+            self.saved_notes.as_ref()
+        } else {
+            self.current_notes
+                .as_ref()
+                .filter(|notes| walk.as_ref().is_some_and(|walk| walk.file() == notes.file))
+        };
+        let events = notes.map(|notes| notes.events.clone()).unwrap_or_else(|| {
+            walk.as_ref()
+                .map(|walk| walk.events.clone())
+                .unwrap_or_default()
+        });
+        let evidence = notes
+            .map(|notes| notes.evidence.clone())
+            .unwrap_or_else(|| {
+                "Copy an agent prompt to review the browser evidence available for this walk."
+                    .into()
+            });
         let live = !saved_view
             && walk.as_ref().is_some_and(|walk| walk.state == "recording")
             && matches!(session.phase, Phase::Recording { .. });
@@ -406,43 +539,254 @@ impl Render for WalkWindow {
                 session.walk_notice.clone()
             }
         });
-        div().size_full().flex().flex_col().gap(px(14.)).p(px(24.)).bg(theme.gray_1).text_color(theme.text_primary).font_family(crate::theme::UI_FONT)
-            .child(div().text_size(px(22.)).font_weight(FontWeight::SEMIBOLD).child(walk.as_ref().map(|walk| walk.request.topic.clone()).unwrap_or_else(|| "UX Walk".into())))
-            .child(div().text_size(px(12.)).line_height(px(18.)).text_color(theme.gray_10).child(notice))
-            .when(live, |this| this.child(ui::TextInput::settings(&theme, "walk-note-input", &self.input)).child(
-                div().flex().gap(px(8.))
-                    .child(ui::Button::plain(&theme, "walk-add-note", ui::ButtonVariant::Blue, ui::ButtonSize::Sm).label("Add note").on_click(cx.listener(|this, _, _, cx| this.add("note", cx))))
-                    .child(ui::Button::plain(&theme, "walk-add-chapter", ui::ButtonVariant::Gray, ui::ButtonSize::Sm).label("New chapter").on_click(cx.listener(|this, _, _, cx| this.add("chapter", cx))))
-            ))
-            .when_some(self.error.clone(), |this, error| this.child(div().text_size(px(12.)).text_color(theme.red_9).child(error)))
-            .child(div().id("walk-events").flex().flex_col().gap(px(10.)).flex_1().min_h_0().overflow_y_scroll().children(walk.as_ref().map(|walk| &walk.events).into_iter().flatten().map(|event| {
-                div().flex().flex_col().gap(px(3.))
-                    .child(div().text_size(px(11.)).text_color(theme.gray_10).child(format!("{}:{:02} · {}", event.offset_ms / 60_000, (event.offset_ms / 1000) % 60, if event.kind == "chapter" { "Chapter" } else { "Note" })))
-                    .child(div().text_size(px(13.)).child(event.text.clone()))
-            })))
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .gap(px(14.))
+            .p(px(24.))
+            .bg(theme.gray_1)
+            .text_color(theme.text_primary)
+            .font_family(crate::theme::UI_FONT)
+            .child(
+                div()
+                    .text_size(px(22.))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(
+                        walk.as_ref()
+                            .map(|walk| walk.request.topic.clone())
+                            .unwrap_or_else(|| "UX Walk".into()),
+                    ),
+            )
+            .child(
+                div()
+                    .text_size(px(12.))
+                    .line_height(px(18.))
+                    .text_color(theme.gray_10)
+                    .child(notice),
+            )
+            .when(live, |this| {
+                this.child(ui::TextInput::settings(
+                    &theme,
+                    "walk-note-input",
+                    &self.input,
+                ))
+                .child(
+                    div()
+                        .flex()
+                        .gap(px(8.))
+                        .child(
+                            ui::Button::plain(
+                                &theme,
+                                "walk-add-note",
+                                ui::ButtonVariant::Blue,
+                                ui::ButtonSize::Sm,
+                            )
+                            .label("Add note")
+                            .on_click(cx.listener(|this, _, _, cx| this.add("note", cx))),
+                        )
+                        .child(
+                            ui::Button::plain(
+                                &theme,
+                                "walk-add-chapter",
+                                ui::ButtonVariant::Gray,
+                                ui::ButtonSize::Sm,
+                            )
+                            .label("New chapter")
+                            .on_click(cx.listener(|this, _, _, cx| this.add("chapter", cx))),
+                        ),
+                )
+            })
+            .when_some(self.error.clone(), |this, error| {
+                this.child(
+                    div()
+                        .text_size(px(12.))
+                        .text_color(theme.red_9)
+                        .child(error),
+                )
+            })
+            .child(
+                div()
+                    .id("walk-events")
+                    .flex()
+                    .flex_col()
+                    .gap(px(10.))
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .children(events.into_iter().map(|event| {
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(3.))
+                            .child(div().text_size(px(11.)).text_color(theme.gray_10).child(
+                                format!(
+                                    "{}:{:02} · {}",
+                                    event.offset_ms / 60_000,
+                                    (event.offset_ms / 1000) % 60,
+                                    if event.kind == "chapter" {
+                                        "Chapter"
+                                    } else {
+                                        "Note"
+                                    }
+                                ),
+                            ))
+                            .child(div().text_size(px(13.)).child(event.text.clone()))
+                    })),
+            )
             .when_some(walk, |this, walk| {
                 let file = walk.file();
                 let folder = walk.request.directory.clone();
                 let report = folder.join("report.html");
-                let ready = if saved_view { self.summary.as_ref().is_some_and(crate::ux_walk_library::WalkSummary::report_ready) }
-                    else { !processing && crate::ux_walk_library::processing_status(&walk.request.directory) == crate::ux_walk_library::WalkStatus::Ready };
+                let ready = if saved_view {
+                    self.summary
+                        .as_ref()
+                        .is_some_and(crate::ux_walk_library::WalkSummary::report_ready)
+                } else {
+                    !processing
+                        && crate::ux_walk_library::processing_status(&walk.request.directory)
+                            == crate::ux_walk_library::WalkStatus::Ready
+                };
                 let saved_retry = file.clone();
-                let retry_disabled = capture_active || processing || self.reprocessing.contains(&file)
-                    || self.summary.as_ref().is_some_and(|summary| matches!(summary.status, crate::ux_walk_library::WalkStatus::OwnerUnknown(_)));
+                let retry_disabled = capture_active
+                    || processing
+                    || self.reprocessing.contains(&file)
+                    || self.summary.as_ref().is_some_and(|summary| {
+                        matches!(
+                            summary.status,
+                            crate::ux_walk_library::WalkStatus::OwnerUnknown(_)
+                        )
+                    });
                 let prompt_file = file.clone();
                 let handoff_file = file.clone();
-                let cmux = crate::ux_walk::load().is_ok_and(|settings| crate::ux_walk::text(&settings, "agent") == "cmux");
-                let evidence = if processing { "The agent prompt describes the browser evidence available while processing continues.".into() } else { crate::ux_walk_library::evidence_notice(&walk.request.directory) };
-                this.child(div().text_size(px(11.)).text_color(theme.gray_10).child(evidence))
-                    .child(div().flex().flex_wrap().gap(px(8.))
-                        .child(ui::Button::plain(&theme, "walk-open-folder", ui::ButtonVariant::Gray, ui::ButtonSize::Sm).label("Show files").on_click(move |_, _, _| crate::library::reveal_in_folder(&folder)))
-                        .child(ui::Button::plain(&theme, "walk-open-report", ui::ButtonVariant::Blue, ui::ButtonSize::Sm).label("Open report").disabled(!ready).on_click(move |_, _, cx| { if let Ok(url) = reqwest::Url::from_file_path(&report) { cx.open_url(url.as_str()); } }))
-                        .child(ui::Button::plain(&theme, "walk-copy-prompt", ui::ButtonVariant::Gray, ui::ButtonSize::Sm).label("Copy agent prompt").on_click(cx.listener(move |this, _, _, cx| this.action("prompt", prompt_file.clone(), cx))))
-                        .when(cmux, |this| this.child(ui::Button::plain(&theme, "walk-open-claude", ui::ButtonVariant::Gray, ui::ButtonSize::Sm).label("Open Claude in cmux").disabled(!ready).on_click(cx.listener(move |this, _, _, cx| this.action("handoff", handoff_file.clone(), cx)))))
-                        .when(saved_view && walk.state == "complete", |this| this.child(ui::Button::plain(&theme, "walk-reprocess-saved", ui::ButtonVariant::Gray, ui::ButtonSize::Sm).label("Reprocess").disabled(retry_disabled).on_click(cx.listener(move |this, _, window, cx| this.reprocess_saved(saved_retry.clone(), window, cx)))))
-                        .when(!saved_view && walk.state == "complete" && !processing, |this| this.child(ui::Button::plain(&theme, "walk-edit-copy", ui::ButtonVariant::Gray, ui::ButtonSize::Sm).label("Edit a copy").on_click(cx.listener(|this, _, _, cx| { this.session.update(cx, |session, cx| session.edit_walk(cx)); }))))
-                        .when(!saved_view && walk.state == "complete" && !processing, |this| this.child(ui::Button::plain(&theme, "walk-retry", ui::ButtonVariant::Gray, ui::ButtonSize::Sm).label("Reprocess").disabled(capture_active).on_click(cx.listener(|this, _, _, cx| { this.session.update(cx, |session, cx| session.process_walk(cx)); }))))
-                    )
+                let cmux = crate::ux_walk::load()
+                    .is_ok_and(|settings| crate::ux_walk::text(&settings, "agent") == "cmux");
+                this.child(
+                    div()
+                        .text_size(px(11.))
+                        .text_color(theme.gray_10)
+                        .child(evidence),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .gap(px(8.))
+                        .child(
+                            ui::Button::plain(
+                                &theme,
+                                "walk-open-folder",
+                                ui::ButtonVariant::Gray,
+                                ui::ButtonSize::Sm,
+                            )
+                            .label("Show files")
+                            .on_click(move |_, _, _| crate::library::reveal_in_folder(&folder)),
+                        )
+                        .child(
+                            ui::Button::plain(
+                                &theme,
+                                "walk-open-report",
+                                ui::ButtonVariant::Blue,
+                                ui::ButtonSize::Sm,
+                            )
+                            .label("Open report")
+                            .disabled(!ready)
+                            .on_click(move |_, _, cx| {
+                                if let Ok(url) = reqwest::Url::from_file_path(&report) {
+                                    cx.open_url(url.as_str());
+                                }
+                            }),
+                        )
+                        .child(
+                            ui::Button::plain(
+                                &theme,
+                                "walk-copy-prompt",
+                                ui::ButtonVariant::Gray,
+                                ui::ButtonSize::Sm,
+                            )
+                            .label("Copy agent prompt")
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| {
+                                    this.action("prompt", prompt_file.clone(), cx)
+                                },
+                            )),
+                        )
+                        .when(cmux, |this| {
+                            this.child(
+                                ui::Button::plain(
+                                    &theme,
+                                    "walk-open-claude",
+                                    ui::ButtonVariant::Gray,
+                                    ui::ButtonSize::Sm,
+                                )
+                                .label("Open Claude in cmux")
+                                .disabled(!ready)
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| {
+                                        this.action("handoff", handoff_file.clone(), cx)
+                                    },
+                                )),
+                            )
+                        })
+                        .when(saved_view && walk.state == "complete", |this| {
+                            this.child(
+                                ui::Button::plain(
+                                    &theme,
+                                    "walk-reprocess-saved",
+                                    ui::ButtonVariant::Gray,
+                                    ui::ButtonSize::Sm,
+                                )
+                                .label("Reprocess")
+                                .disabled(retry_disabled)
+                                .on_click(cx.listener(
+                                    move |this, _, window, cx| {
+                                        this.reprocess_saved(saved_retry.clone(), window, cx)
+                                    },
+                                )),
+                            )
+                        })
+                        .when(
+                            !saved_view && walk.state == "complete" && !processing,
+                            |this| {
+                                this.child(
+                                    ui::Button::plain(
+                                        &theme,
+                                        "walk-edit-copy",
+                                        ui::ButtonVariant::Gray,
+                                        ui::ButtonSize::Sm,
+                                    )
+                                    .label("Edit a copy")
+                                    .on_click(cx.listener(
+                                        |this, _, _, cx| {
+                                            this.session
+                                                .update(cx, |session, cx| session.edit_walk(cx));
+                                        },
+                                    )),
+                                )
+                            },
+                        )
+                        .when(
+                            !saved_view && walk.state == "complete" && !processing,
+                            |this| {
+                                this.child(
+                                    ui::Button::plain(
+                                        &theme,
+                                        "walk-retry",
+                                        ui::ButtonVariant::Gray,
+                                        ui::ButtonSize::Sm,
+                                    )
+                                    .label("Reprocess")
+                                    .disabled(capture_active)
+                                    .on_click(cx.listener(
+                                        |this, _, _, cx| {
+                                            this.session
+                                                .update(cx, |session, cx| session.process_walk(cx));
+                                        },
+                                    )),
+                                )
+                            },
+                        ),
+                )
             })
     }
 }

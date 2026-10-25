@@ -282,3 +282,85 @@ fn a_live_processor_blocks_reprocessing_even_if_a_stale_report_exists() {
     assert_eq!(read_summary(&file).unwrap().status, WalkStatus::Processing);
     assert!(ux_walk_library::reprocess_allowed(&file).is_err());
 }
+
+#[test]
+fn processed_browser_notes_join_native_notes_and_chapters_without_duplicates() {
+    let f = Fixture::new();
+    let source = f.source("source");
+    let file = f.journal("walk", &source, 100);
+    let mut value: serde_json::Value = serde_json::from_slice(&fs::read(&file).unwrap()).unwrap();
+    value["events"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({"kind":"chapter","text":"Checkout","offsetMs":500}));
+    fs::write(&file, serde_json::to_vec(&value).unwrap()).unwrap();
+    let folder = file.parent().unwrap();
+    let artifact = serde_json::json!({"schemaVersion":1,"journal":file,"sourceProject":source,"notes":[
+        {"kind":"note","text":"Saved observation","offsetMs":100},
+        {"ev":"note","id":"browser-note","text":"Button does not respond","offsetMs":300}
+    ]});
+    fs::write(
+        folder.join("walk-notes.json"),
+        serde_json::to_vec(&artifact).unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        folder.join("processing.json"),
+        r#"{"state":"failed","error":"not finished"}"#,
+    )
+    .unwrap();
+    let (summary, journal) = ux_walk_library::read_walk(&file).unwrap();
+    assert_eq!(ux_walk_library::view_events(&summary, &journal).len(), 2);
+    fs::write(folder.join("report.html"), "report").unwrap();
+    fs::write(folder.join("processing.json"), r#"{"state":"ready"}"#).unwrap();
+    let (summary, journal) = ux_walk_library::read_walk(&file).unwrap();
+    let original = fs::read(&file).unwrap();
+    let events = ux_walk_library::view_events(&summary, &journal);
+    assert_eq!(events.len(), 3);
+    assert_eq!(events[0].text, "Saved observation");
+    assert_eq!(events[1].text, "Button does not respond");
+    assert_eq!(events[1].offset_ms, 300);
+    assert_eq!(events[2].kind, "chapter");
+    assert_eq!(events[2].text, "Checkout");
+    assert_eq!(fs::read(&file).unwrap(), original);
+}
+
+#[test]
+fn foreign_or_malformed_processed_notes_fall_back_to_the_selected_journal() {
+    let f = Fixture::new();
+    let source = f.source("source");
+    let foreign = f.source("foreign");
+    let file = f.journal("walk", &source, 100);
+    let other = f.journal("other", &foreign, 200);
+    let folder = file.parent().unwrap();
+    fs::write(folder.join("report.html"), "report").unwrap();
+    fs::write(folder.join("processing.json"), r#"{"state":"ready"}"#).unwrap();
+    let (summary, journal) = ux_walk_library::read_walk(&file).unwrap();
+    let valid = serde_json::json!({"schemaVersion":1,"journal":file,"sourceProject":source,"notes":[{"ev":"note","id":"browser-note","text":"Browser observation","offsetMs":300}]});
+    let mut cases = Vec::new();
+    let mut wrong_file = valid.clone();
+    wrong_file["journal"] = serde_json::json!(other);
+    cases.push(wrong_file);
+    let mut wrong_source = valid.clone();
+    wrong_source["sourceProject"] = serde_json::json!(foreign);
+    cases.push(wrong_source);
+    let mut wrong_schema = valid.clone();
+    wrong_schema["schemaVersion"] = serde_json::json!(2);
+    cases.push(wrong_schema);
+    let mut wrong_clock = valid.clone();
+    wrong_clock["notes"][0]["offsetMs"] = serde_json::json!(1001);
+    cases.push(wrong_clock);
+    let mut wrong_text = valid.clone();
+    wrong_text["notes"][0]["text"] = serde_json::json!({"not":"text"});
+    cases.push(wrong_text);
+    for artifact in cases {
+        fs::write(
+            folder.join("walk-notes.json"),
+            serde_json::to_vec(&artifact).unwrap(),
+        )
+        .unwrap();
+        let events = ux_walk_library::view_events(&summary, &journal);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].text, "Saved observation");
+    }
+}
