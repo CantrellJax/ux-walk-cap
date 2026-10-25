@@ -115,14 +115,23 @@ test("canonical path aliases preserve browser identity while foreign or missing 
 	f.metadata.journal = path.join(alias, "native-walk.json");
 	f.metadata.sourceProject = path.join(alias, "original.cap");
 	f.save([{ ev: "console", observedAt: 100500, text: "Owned error" }]);
-	assert.equal(projectBrowserEvidence(fs.realpathSync(f.file), f.journal).events.length, 1);
+	assert.equal(
+		projectBrowserEvidence(fs.realpathSync(f.file), f.journal).events.length,
+		1,
+	);
 	f.metadata.journal = path.join(alias, "missing-journal.json");
 	f.save([]);
-	assert.match(projectBrowserEvidence(f.file, f.journal).coverage.console, /unavailable/);
+	assert.match(
+		projectBrowserEvidence(f.file, f.journal).coverage.console,
+		/unavailable/,
+	);
 	f.metadata.journal = f.file;
 	f.save([]);
 	fs.rmdirSync(f.journal.sourceProject);
-	assert.match(projectBrowserEvidence(f.file, f.journal).coverage.console, /unavailable/);
+	assert.match(
+		projectBrowserEvidence(f.file, f.journal).coverage.console,
+		/unavailable/,
+	);
 });
 
 test("structured errors retain query failure meaning but omit credentials, bodies and form values", () => {

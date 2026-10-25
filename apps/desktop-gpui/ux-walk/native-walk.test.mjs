@@ -3,7 +3,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { finishNativeWalk, nativeWalkPrompt, snapshotNativeWalk } from "./native-walk.mjs";
+import {
+	finishNativeWalk,
+	nativeWalkPrompt,
+	snapshotNativeWalk,
+} from "./native-walk.mjs";
 
 function fixture(t) {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "cap-ux-native-"));

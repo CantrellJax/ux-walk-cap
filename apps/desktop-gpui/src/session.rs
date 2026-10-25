@@ -971,8 +971,21 @@ impl RecordingSession {
                         "lastNativeWalk",
                         serde_json::Value::String(journal.file().to_string_lossy().into_owned()),
                     );
-                    self.walk = Some(journal);
                     self.walk_notice = "Recording. Notes and chapters save as you add them.".into();
+                    if let Err(error) = crate::ux_walk_library::remember_journal(&journal.file()) {
+                        tracing::warn!(%error, "could not remember saved walk");
+                    }
+                    let window_id = self.last_config.as_ref().and_then(|config| match &config.target {
+                        cap_recording::sources::screen_capture::ScreenCaptureTarget::Window { id } => Some(id.to_string()),
+                        _ => None,
+                    });
+                    if let Err(error) = crate::ux_walk_browser::begin(&journal, window_id) {
+                        self.walk_notice = format!(
+                            "Recording and notes are saving. Browser evidence is unavailable: {error}"
+                        );
+                        self.error = Some("Browser evidence is unavailable. Video and notes are still recording. Open walk notes for details.".into());
+                    }
+                    self.walk = Some(journal);
                 }
                 Err(error) => {
                     self.error = Some(format!("Could not create the walk journal: {error}"));
@@ -1051,7 +1064,19 @@ impl RecordingSession {
                             .as_ref()
                             .is_some_and(|active| active.project_dir == project_dir)
                 };
-                if !this.update(cx, |this, _| is_current(this)).unwrap_or(false) {
+                if !this.update(cx, |this, cx| {
+                    if !is_current(this) { return false; }
+                    if let Some(walk) = this.walk.as_ref()
+                        && let Some(reason) = crate::ux_walk_browser::health(walk)
+                    {
+                        this.walk_notice = reason;
+                        if this.error.is_none() {
+                            this.error = Some("Browser evidence stopped. Video and notes are still recording. Open walk notes for details.".into());
+                            cx.notify();
+                        }
+                    }
+                    true
+                }).unwrap_or(false) {
                     return;
                 }
                 let path = project_dir.clone();
@@ -1266,6 +1291,9 @@ impl RecordingSession {
             self.stop_requested = false;
         }
         self.stopped_elapsed = Some(self.elapsed());
+        if let Some(walk) = self.walk.as_ref() {
+            crate::ux_walk_browser::clock(walk, self.elapsed().as_millis() as u64, true);
+        }
         self.pause_control.cancel_for_stop();
         self.phase = Phase::Stopping;
         self.preparing_studio_editor =
@@ -1474,6 +1502,18 @@ impl RecordingSession {
                     } else if !was_paused && paused {
                         this.paused_since = Some(Instant::now());
                     }
+                    if let Some(walk) = this.walk.as_ref() {
+                        crate::ux_walk_browser::clock(
+                            walk,
+                            this.elapsed().as_millis() as u64,
+                            paused,
+                        );
+                    }
+                } else if let Some(walk) = this.walk.as_ref() {
+                    crate::ux_walk_browser::interrupt(
+                        walk,
+                        "Capture pause state is unconfirmed; browser collection stopped",
+                    );
                 }
                 if this.pause_control_error.is_some() && this.error == this.pause_control_error {
                     this.error = None;
@@ -2012,11 +2052,15 @@ impl RecordingSession {
             return;
         }
         let file = walk.file();
+        let browser_journal = walk.clone();
         let generation = self.recording_generation;
         self.walk_notice = "Saving an independent copy of the Cap project…".into();
         cx.notify();
         cx.spawn(async move |this, cx| {
-            let result = cx.background_executor().spawn(async move { crate::ux_walk::run_engine("snapshot", &file) }).await;
+            let result = cx.background_executor().spawn(async move {
+                crate::ux_walk_browser::finish(&browser_journal, false);
+                crate::ux_walk::run_engine("snapshot", &file)
+            }).await;
             this.update(cx, |this, cx| {
                 if this.recording_generation != generation || this.phase != Phase::Stopping { return; }
                 this.finish(cx);
@@ -2145,6 +2189,7 @@ impl RecordingSession {
         if let Some(walk) = self.walk.as_mut()
             && walk.state == "recording"
         {
+            crate::ux_walk_browser::finish(walk, true);
             if let Err(error) = walk.abort() {
                 tracing::error!(%error, "saving interrupted walk journal");
             }
