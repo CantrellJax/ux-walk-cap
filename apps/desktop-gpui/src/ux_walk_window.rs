@@ -51,22 +51,40 @@ fn ensure(show: bool, cx: &mut App) -> Result<isize, String> {
             handle
         }
     };
-    handle
+    let (number, native) = handle
         .update(cx, |_, window, _| {
-            if let Some(native) = crate::platform::native_window(window) {
-                crate::platform::set_window_capture_hidden(&native, true);
-                if show {
-                    crate::platform::show_native(&native);
-                }
+            let native = crate::platform::native_window(window);
+            if let Some(native) = &native {
+                crate::platform::set_window_capture_hidden(native, true);
             }
-            if show {
-                window.activate_window();
-            }
-            crate::platform::window_number(window)
+            (crate::platform::window_number(window), native)
         })
-        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+    let number = number
         .filter(|number| *number > 0)
-        .ok_or_else(|| "Could not exclude the walk notes window from capture.".into())
+        .ok_or_else(|| "Could not exclude the walk notes window from capture.".to_string())?;
+    if show {
+        // Native ordering re-enters GPUI; reveal outside the window borrow, like the editor.
+        cx.spawn(async move |cx| {
+            if let Some(native) = &native {
+                crate::platform::show_native(native);
+            }
+            cx.update(|cx| {
+                cx.activate(true);
+                handle
+                    .update(cx, |_, window, cx| {
+                        window.activate_window();
+                        crate::platform::kick_display_link(window);
+                        cx.notify();
+                        window.refresh();
+                    })
+                    .ok();
+                crate::menus::schedule_dock_sync(cx);
+            });
+        })
+        .detach();
+    }
+    Ok(number)
 }
 
 struct WalkWindow {
