@@ -2112,38 +2112,6 @@ impl RecordingSession {
         .detach();
     }
 
-    pub fn handoff_walk(&mut self, cx: &mut Context<Self>) {
-        let Some(walk) = self.walk.as_ref().filter(|walk| walk.state == "complete") else {
-            return;
-        };
-        let file = walk.file();
-        cx.spawn(async move |this, cx| {
-            let completed = file.clone();
-            let result = cx
-                .background_executor()
-                .spawn(async move { crate::ux_walk::run_engine("handoff", &file) })
-                .await;
-            this.update(cx, |this, cx| {
-                if this
-                    .walk
-                    .as_ref()
-                    .is_none_or(|walk| walk.file() != completed)
-                {
-                    return;
-                }
-                this.walk_notice = match result {
-                    Ok(_) => "Opened a Claude session in cmux with this walk’s prompt.".into(),
-                    Err(error) => {
-                        format!("The prompt is on your clipboard. Could not open cmux: {error}")
-                    }
-                };
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
-    }
-
     pub fn process_walk(&mut self, cx: &mut Context<Self>) {
         let Some(walk) = self.walk.as_ref().filter(|walk| walk.state == "complete") else {
             return;
