@@ -194,3 +194,33 @@ test("reprocessing recovers a lock left by a process that no longer exists", asy
 	assert.equal(fs.existsSync(lock), false);
 	assert.equal(fs.existsSync(path.join(f.directory, "report.html")), true);
 });
+
+test("processing and reprocessing retain owned browser evidence alongside native notes", async (t) => {
+	const f = fixture(t);
+	fs.writeFileSync(path.join(f.directory, "browser-evidence.json"), JSON.stringify({
+		schemaVersion: 1, captureId: "owned-browser", journal: f.file,
+		sourceProject: f.source, windowId: "17", startedAtMs: f.journal.startedAtMs,
+		state: "complete", anchors: [
+			{ wallMs: 100000, offsetMs: 0, paused: false },
+			{ wallMs: 110000, offsetMs: 10000, paused: true },
+		],
+	}));
+	fs.writeFileSync(path.join(f.directory, "browser-evidence.jsonl"), [
+		{ ev: "click", observedAt: 100500, el: { tag: "button", text: "Save" } },
+		{ ev: "http", observedAt: 102000, method: "POST", status: 400, url: "https://example.com/rest/v1/rpc/save?token=SECRET_SENTINEL", resBody: '{"code":"23514","message":"Invalid window"}' },
+	].map(JSON.stringify).join("\n"));
+	const deps = {
+		client: { export: async (_project, output) => { fs.writeFileSync(output, "export"); return { durationS: 10 }; } },
+		clip: async (_input, output) => fs.writeFileSync(output, "clip"),
+		processChapter: async () => ({}), writeIndex: () => {}, writeReport: () => {},
+	};
+	for (let attempt = 0; attempt < 2; attempt++) {
+		await finishNativeWalk(f.file, { transcriber: "none", brief: false }, deps);
+		const actions = fs.readFileSync(path.join(f.directory, "actions.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
+		assert.deepEqual(actions.map((event) => event.ev), ["click", "note", "http"]);
+		assert.deepEqual(actions.map((event) => event.t), [100500, 101500, 102000]);
+		assert.equal(JSON.stringify(actions).includes("SECRET_SENTINEL"), false);
+		assert.match(JSON.parse(fs.readFileSync(path.join(f.directory, "session.json"))).coverage.network, /captured/);
+		assert.match(fs.readFileSync(path.join(f.directory, "report.html"), "utf8"), /Browser evidence/);
+	}
+});
