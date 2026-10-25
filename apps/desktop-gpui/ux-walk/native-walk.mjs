@@ -476,10 +476,18 @@ export async function handoffNativeWalk(file, cfg) {
 	);
 }
 
-if (
-	process.argv[1] &&
-	path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
-) {
+function isMainModule() {
+	try {
+		return (
+			fs.realpathSync(process.argv[1]) ===
+			fs.realpathSync(fileURLToPath(import.meta.url))
+		);
+	} catch {
+		return false;
+	}
+}
+
+if (isMainModule()) {
 	const [command, file] = process.argv.slice(2);
 	try {
 		if (command === "snapshot") snapshotNativeWalk(file);

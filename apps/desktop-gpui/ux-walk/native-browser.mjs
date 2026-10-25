@@ -446,10 +446,18 @@ export async function runNativeBrowser(captureId, workDir) {
 	reply({ ready: true, captureId, marker });
 }
 
-if (
-	process.argv[1] &&
-	path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
-) {
+function isMainModule() {
+	try {
+		return (
+			fs.realpathSync(process.argv[1]) ===
+			fs.realpathSync(fileURLToPath(import.meta.url))
+		);
+	} catch {
+		return false;
+	}
+}
+
+if (isMainModule()) {
 	runNativeBrowser(process.argv[2], process.argv[3]).catch((error) => {
 		process.stdout.write(
 			`${JSON.stringify({ ready: false, error: redactBrowserText(error.message, 500) })}\n`,
