@@ -1913,7 +1913,8 @@ impl EditorWindow {
                 },
             )
             .when(
-                ui.destination == ExportDestination::Link
+                !cfg!(feature = "ux-walk")
+                    && ui.destination == ExportDestination::Link
                     && self.sharing.is_none()
                     && store::auth_snapshot().organizations.len() > 1,
                 |this| {
