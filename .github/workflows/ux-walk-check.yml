@@ -44,6 +44,7 @@ jobs:
     env:
       CARGO_BUILD_JOBS: '2'
       CARGO_PROFILE_DEV_DEBUG: '0'
+      MACOSX_DEPLOYMENT_TARGET: '15.0'
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
     steps:
       - uses: actions/checkout@v4
@@ -196,7 +197,7 @@ jobs:
           assert info['CFBundleDisplayName'] == 'Cap UX', 'Dock branding must be Cap UX'
           assert not (app / 'Contents/Helpers/UX Walk.app').exists(), 'Do not ship a second menu bar app'
           assert (app / 'Contents/Resources/ux-walk/native-walk.mjs').is_file(), 'Bundle the native walk processor'
-          assert info['LSMinimumSystemVersion'] == '15.0', 'Cap UX requires macOS 15'
+          assert info['LSMinimumSystemVersion'] == '15.0', f"Cap UX requires macOS 15; bundled value was {info['LSMinimumSystemVersion']}"
           assert info['LSEnvironment'] == {
               'CAP_GPUI_APP_DATA_DIR': profile + '/data',
               'CAP_GPUI_LOG_DIR': profile + '/logs',

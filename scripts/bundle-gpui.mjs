@@ -7,7 +7,10 @@ import {
 	detectHostTriple,
 	nativeBuildEnvironment,
 } from "./build-desktop-binaries.mjs";
-import { buildMacosPackages } from "./build-macos-packages.mjs";
+import {
+	buildMacosPackages,
+	resolveMacosDeploymentTarget,
+} from "./build-macos-packages.mjs";
 
 const repoRoot = path.resolve(
 	path.dirname(fileURLToPath(import.meta.url)),
@@ -183,7 +186,20 @@ export async function bundleGpui(
 	}
 	const profile = debug ? "debug" : "release";
 	const bundleArgs = [...(debug ? ["--debug"] : []), ...requestedArgs];
-	const buildEnv = debug ? nativeBuildEnvironment(env) : env;
+	let environment = env;
+	if (platform === "darwin") {
+		const config = JSON.parse(
+			await fs.readFile(path.join(gpuiDirectory, "tauri.conf.json"), "utf8"),
+		);
+		environment = {
+			...env,
+			MACOSX_DEPLOYMENT_TARGET: resolveMacosDeploymentTarget(
+				env.MACOSX_DEPLOYMENT_TARGET,
+				config.bundle.macOS.minimumSystemVersion,
+			),
+		};
+	}
+	const buildEnv = debug ? nativeBuildEnvironment(environment) : environment;
 	if (!skipBuild) {
 		runCommand(
 			"bash",
@@ -192,7 +208,7 @@ export async function bundleGpui(
 				profile,
 				...(debug ? [] : [target]),
 			],
-			debug ? { env: buildEnv } : {},
+			{ env: buildEnv },
 		);
 	}
 	const staged = await stageBinary(target, profile);

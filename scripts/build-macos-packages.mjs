@@ -12,13 +12,15 @@ const desktopDirectory = fileURLToPath(
 const retryDelays = [15_000, 30_000];
 const outputTailLimit = 64 * 1024;
 
-export function resolveMacosDeploymentTarget(value) {
-	const minimum = JSON.parse(
+export function resolveMacosDeploymentTarget(
+	value,
+	minimum = JSON.parse(
 		readFileSync(
 			path.join(desktopDirectory, "src-tauri/tauri.conf.json"),
 			"utf8",
 		),
-	).bundle.macOS.minimumSystemVersion;
+	).bundle.macOS.minimumSystemVersion,
+) {
 	const target = value || minimum;
 	const parseVersion = (version) => {
 		if (typeof version !== "string" || !/^\d+(?:\.\d+){0,2}$/.test(version)) {
