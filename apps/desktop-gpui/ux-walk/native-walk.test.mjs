@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import {
 	finishNativeWalk,
 	nativeWalkPrompt,
@@ -43,6 +45,31 @@ function fixture(t) {
 	save();
 	return { journal, file, save, directory, source };
 }
+
+test("prompt entrypoint runs through a directory alias while non-file argv imports stay inert", (t) => {
+	const f = fixture(t);
+	const alias = path.join(path.dirname(f.directory), "adapter alias");
+	fs.symlinkSync(fileURLToPath(new URL(".", import.meta.url)), alias, "dir");
+	const result = spawnSync(
+		process.execPath,
+		[path.join(alias, "native-walk.mjs"), "prompt", f.file],
+		{ encoding: "utf8", timeout: 5000 },
+	);
+	assert.equal(result.status, 0, result.stderr);
+	assert.equal(result.stdout, `${nativeWalkPrompt(f.file)}\n`);
+	const imported = spawnSync(
+		process.execPath,
+		[
+			"--input-type=module",
+			"-e",
+			`process.argv[1] = "not-a-file"; await import(${JSON.stringify(new URL("./native-walk.mjs", import.meta.url).href)}); console.log("imported");`,
+		],
+		{ encoding: "utf8", timeout: 5000 },
+	);
+	assert.equal(imported.status, 0, imported.stderr);
+	assert.equal(imported.stdout, "imported\n");
+	assert.equal(imported.stderr, "");
+});
 
 test("refuses an active or aborted native capture before touching media", async (t) => {
 	const f = fixture(t);

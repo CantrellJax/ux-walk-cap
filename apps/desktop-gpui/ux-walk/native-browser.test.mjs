@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { projectBrowserEvidence } from "./browser-evidence.mjs";
 import {
 	flushNativeNotes,
@@ -12,6 +13,35 @@ import {
 	OwnedWindowEvents,
 } from "./native-browser.mjs";
 import { finishNativeWalk, nativeWalkPrompt } from "./native-walk.mjs";
+
+test("browser entrypoint validates owners through a directory alias while non-file argv imports stay inert", (t) => {
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "cap-ux-browser-entry-"));
+	t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+	const alias = path.join(root, "adapter alias");
+	fs.symlinkSync(fileURLToPath(new URL(".", import.meta.url)), alias, "dir");
+	const result = spawnSync(
+		process.execPath,
+		[path.join(alias, "native-browser.mjs"), "invalid", root],
+		{ encoding: "utf8", timeout: 5000 },
+	);
+	assert.equal(result.status, 1, result.stderr);
+	assert.deepEqual(JSON.parse(result.stdout), {
+		ready: false,
+		error: "Invalid browser owner",
+	});
+	const imported = spawnSync(
+		process.execPath,
+		[
+			"--input-type=module",
+			"-e",
+			`process.argv[1] = "not-a-file"; await import(${JSON.stringify(new URL("./native-browser.mjs", import.meta.url).href)}); console.log("imported");`,
+		],
+		{ encoding: "utf8", timeout: 5000 },
+	);
+	assert.equal(imported.status, 0, imported.stderr);
+	assert.equal(imported.stdout, "imported\n");
+	assert.equal(imported.stderr, "");
+});
 
 test(
 	"owned Chrome captures semantic clicks, stacks, failed API/query diagnostics and pause boundaries through handoff",
