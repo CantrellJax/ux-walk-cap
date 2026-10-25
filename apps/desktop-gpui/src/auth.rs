@@ -345,6 +345,11 @@ pub async fn authed_request_with(
     path: &str,
     body: Option<Value>,
 ) -> Result<reqwest::Response, AuthApiError> {
+    if cfg!(feature = "ux-walk") {
+        return Err(AuthApiError::Other(
+            "Choose your sharing server in Settings → Sharing.".into(),
+        ));
+    }
     let (server, token) = if let Ok(context) = UPLOAD_REQUEST.try_with(Clone::clone) {
         let token = context.credentials()?;
         (context.server_url, token)
@@ -396,6 +401,9 @@ pub fn process_auth_data(params: AuthParams) -> Result<(), String> {
 }
 
 pub async fn update_auth_plan() -> Result<(), AuthApiError> {
+    if cfg!(feature = "ux-walk") {
+        return Ok(());
+    }
     let snapshot = store::auth_snapshot();
     if !snapshot.signed_in() {
         return Err(AuthApiError::InvalidAuthentication);

@@ -13,6 +13,7 @@
 			"!apps/desktop/src/utils/tauri.ts",
 			"!apps/desktop/src/global.d.ts",
 			"!apps/web/public/gif.worker.js",
+			"!apps/cloud/worker-configuration.d.ts",
 			"!packages/ui-solid/src/auto-imports.d.ts",
 			"!capcodec/**/*.tov",
 			"!capcodec/**/*.py",

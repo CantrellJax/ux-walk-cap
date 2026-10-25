@@ -93,7 +93,7 @@ const fn cmd(
 }
 
 fn build() -> Guide {
-    Guide {
+    let mut guide = Guide {
         schema_version: GUIDE_SCHEMA_VERSION,
         binary: env!("CARGO_PKG_NAME"),
         version: env!("CARGO_PKG_VERSION"),
@@ -426,7 +426,50 @@ fn build() -> Guide {
             "Cap library reads and waits never start transcription, AI generation, or other paid processing.",
             "MCP never accepts passwords, S3 credentials, image files, or newly issued developer credentials. Use confirmed secure CLI commands for those values.",
         ],
+    };
+    if cfg!(feature = "ux-walk") {
+        guide.description = "Cap UX: local capture, editing, UX walkthroughs, and optional sharing through your own server.";
+        guide.commands.retain(|item| {
+            ![
+                "auth",
+                "caps",
+                "account",
+                "organizations",
+                "library",
+                "notifications",
+                "analytics",
+                "developers",
+                "jobs",
+                "mcp",
+            ]
+            .iter()
+            .any(|prefix| item.command.split_whitespace().next() == Some(*prefix))
+        });
+        if let Some(command) = guide
+            .commands
+            .iter_mut()
+            .find(|command| command.command == "agents install")
+        {
+            command.summary = "Install a Cap UX local CLI skill for one selected agent.";
+            command.notes =
+                Some("Use --component skill; the upstream cloud MCP adapter is not included.");
+        }
+        guide.commands.push(cmd("sharing status|configure|revoke", "Choose your sharing server, manage its credential, or revoke a share. Local recording never uploads automatically.", OutputMode::SingleJson, &[]));
+        guide.env.retain(|item| {
+            ![
+                "CAP_API_KEY",
+                "CAP_SERVER_URL",
+                "CAP_AGENT_TOKEN",
+                "CAP_DESKTOP_FORCE_INSTALL",
+            ]
+            .contains(&item.name)
+        });
+        guide.env.push(EnvVar { name: "CAP_UX_UPLOAD_TOKEN", required: false, used_by: "upload, sharing", description: "Optional headless upload credential for your configured server. Otherwise use the system credential store." });
+        guide
+            .notes
+            .retain(|text| !text.contains("paid processing") && !text.contains("MCP"));
     }
+    guide
 }
 
 pub fn run(format: OutputFormat) -> Result<(), String> {

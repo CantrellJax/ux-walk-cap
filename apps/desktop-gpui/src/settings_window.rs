@@ -89,6 +89,7 @@ pub enum Page {
     Transcription,
     Integrations,
     License,
+    Sharing,
     Experimental,
     Feedback,
     Changelog,
@@ -105,7 +106,7 @@ impl Page {
         Page::Automations,
         Page::Transcription,
         Page::Integrations,
-        Page::License,
+        Page::Sharing,
         Page::Experimental,
         Page::Feedback,
         Page::Changelog,
@@ -125,6 +126,7 @@ impl Page {
             Self::Transcription => "Transcription",
             Self::Integrations => "Integrations",
             Self::License => "Plan & license",
+            Self::Sharing => "Sharing",
             Self::Experimental => "Experimental",
             Self::Feedback => "Feedback",
             Self::Changelog => "Changelog",
@@ -144,6 +146,7 @@ impl Page {
             Self::Transcription => "transcription",
             Self::Integrations => "integrations",
             Self::License => "license",
+            Self::Sharing => "sharing",
             Self::Experimental => "experimental",
             Self::Feedback => "feedback",
             Self::Changelog => "changelog",
@@ -167,6 +170,7 @@ impl Page {
             Self::Transcription => "icons/captions.svg",
             Self::Integrations => "icons/unplug.svg",
             Self::License => "icons/gift.svg",
+            Self::Sharing => "icons/link.svg",
             Self::Feedback => "icons/message-square-plus.svg",
             Self::Changelog => "icons/bell.svg",
         }
@@ -414,6 +418,7 @@ struct Recordings {
     tick: Option<gpui::Task<()>>,
     notice: Option<String>,
     copy_selection: crate::ux_walk_library::WalkSelection,
+    sharing_busy: std::collections::HashSet<PathBuf>,
 }
 
 impl Recordings {
@@ -428,6 +433,7 @@ impl Recordings {
             tick: None,
             notice: None,
             copy_selection: crate::ux_walk_library::WalkSelection::default(),
+            sharing_busy: std::collections::HashSet::new(),
         }
     }
 
@@ -668,6 +674,7 @@ pub struct SettingsWindow {
     /// drafts and text-input entities.
     pub(crate) pages: crate::settings_pages::PagesState,
     pub(crate) ux_walk: crate::settings_ux_walk::UxWalkSettings,
+    pub(crate) sharing: crate::settings_sharing::SharingSettings,
     /// Drafts for the two text fields. Both are Save/Update-committed in the
     /// shipping page too, so the store only sees them on the button.
     project_name: String,
@@ -788,6 +795,7 @@ impl SettingsWindow {
 
         let pages = crate::settings_pages::PagesState::new(window, cx);
         let ux_walk = crate::settings_ux_walk::UxWalkSettings::new(window, cx);
+        let sharing = crate::settings_sharing::SharingSettings::new(window, cx);
         let page_scroll = ScrollHandle::new();
         let keyboard_nav = ui::keyboard_nav::install(window, cx, |this: &Self, _| {
             this.menu.is_some() || this.shortcut_listening() || this.switch_back_running()
@@ -798,6 +806,7 @@ impl SettingsWindow {
             page,
             pages,
             ux_walk,
+            sharing,
             project_name: settings
                 .default_project_name_template
                 .clone()
@@ -1736,7 +1745,19 @@ impl SettingsWindow {
                         window.start_window_move();
                     }),
             )
-            .child(self.render_profile(cx))
+            .when(cfg!(feature = "ux-walk"), |this| {
+                this.child(
+                    div()
+                        .px(px(14.))
+                        .pb(px(16.))
+                        .text_size(px(18.))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child("Cap UX"),
+                )
+            })
+            .when(!cfg!(feature = "ux-walk"), |this| {
+                this.child(self.render_profile(cx))
+            })
             .child(self.render_nav(cx))
             .child(self.render_account(cx))
     }
@@ -1974,25 +1995,27 @@ impl SettingsWindow {
             .border_t_1()
             .border_color(theme.settings_border())
             .child(update_links)
-            .child({
-                let signed_in = store::auth_snapshot().signed_in();
-                let (variant, label) = if SignIn::global(cx).read(cx).is_pending() {
-                    (ui::ButtonVariant::Gray, "Cancel Sign In")
-                } else if signed_in {
-                    (ui::ButtonVariant::Gray, "Sign Out")
-                } else {
-                    (ui::ButtonVariant::Primary, "Sign In")
-                };
-                self.button(
-                    "settings-sign-in",
-                    (variant, None),
-                    label,
-                    false,
-                    cx,
-                    |this, window, cx| this.toggle_sign_in(window, cx),
-                )
-                .full_width()
-                .height(px(34.))
+            .when(!cfg!(feature = "ux-walk"), |this| {
+                this.child({
+                    let signed_in = store::auth_snapshot().signed_in();
+                    let (variant, label) = if SignIn::global(cx).read(cx).is_pending() {
+                        (ui::ButtonVariant::Gray, "Cancel Sign In")
+                    } else if signed_in {
+                        (ui::ButtonVariant::Gray, "Sign Out")
+                    } else {
+                        (ui::ButtonVariant::Primary, "Sign In")
+                    };
+                    self.button(
+                        "settings-sign-in",
+                        (variant, None),
+                        label,
+                        false,
+                        cx,
+                        |this, window, cx| this.toggle_sign_in(window, cx),
+                    )
+                    .full_width()
+                    .height(px(34.))
+                })
             })
     }
 
@@ -2048,6 +2071,9 @@ impl SettingsWindow {
     }
 
     fn refresh_user_profile(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if cfg!(feature = "ux-walk") {
+            return;
+        }
         self.has_cap_pro = store::auth_snapshot().is_upgraded();
         self.instant_quality_notice = None;
         let Some(user_id) = signed_in_user_id() else {
@@ -2193,6 +2219,7 @@ impl SettingsWindow {
                         Page::Transcription => self.render_transcription(cx),
                         Page::Integrations => self.render_integrations(cx),
                         Page::License => self.render_license(cx),
+                        Page::Sharing => self.render_sharing(cx),
                         Page::Experimental => self.render_experimental(cx),
                         Page::Feedback => self.render_feedback(cx),
                         Page::Changelog => self.render_changelog(cx),
@@ -2698,6 +2725,10 @@ impl SettingsWindow {
         let item = &row.item;
         // `studioCompleteCheck()`: the only rows whose body is a button.
         let opens_editor = item.opens_editor();
+        let opens_local = cfg!(feature = "ux-walk")
+            && item.mode == RecordingMode::Instant
+            && !item.status.is_in_progress()
+            && item.status.error().is_none();
         let path = item.path.clone();
 
         let thumbnail = match row.thumbnail.clone() {
@@ -2761,7 +2792,7 @@ impl SettingsWindow {
                 this.border_b_1().border_color(theme.settings_border())
             })
             .map(|this| {
-                if opens_editor {
+                if opens_editor || opens_local {
                     this.cursor_pointer()
                         .hover(|style| style.bg(theme.settings_fill()))
                 } else {
@@ -2770,9 +2801,13 @@ impl SettingsWindow {
             })
             .child(left)
             .child(self.render_recording_actions(index, item, cx))
-            .when(opens_editor, |this| {
+            .when(opens_editor || opens_local, |this| {
                 this.on_click(cx.listener(move |_this, _, _window, cx| {
                     let path = path.clone();
+                    if opens_local {
+                        library::play_instant_recording(&path);
+                        return;
+                    }
                     tracing::info!(path = %path.display(), "opening a recording in the editor");
                     // Deferred: opening a window paints it synchronously, and
                     // doing that inside a click handler would double-lease the
@@ -2947,7 +2982,7 @@ impl SettingsWindow {
             ));
         }
 
-        if mode == RecordingMode::Instant {
+        if !cfg!(feature = "ux-walk") && mode == RecordingMode::Instant {
             let retry_path = path.clone();
             actions = actions.child(
                 self.row_button(
@@ -2980,7 +3015,7 @@ impl SettingsWindow {
                     },
                 ),
             );
-            if let Some(link) = sharing {
+            if let Some(link) = sharing.clone() {
                 actions = actions.child(self.row_button(
                     ("recording-instant-link", index),
                     "icons/link.svg",
@@ -2988,6 +3023,45 @@ impl SettingsWindow {
                     false,
                     cx,
                     move |_this, _window, cx| cx.open_url(&link),
+                ));
+            }
+        }
+
+        if cfg!(feature = "ux-walk") {
+            if mode == RecordingMode::Instant {
+                let play_path = path.clone();
+                actions = actions.child(self.row_button(
+                    ("recording-play", index),
+                    "icons/play.svg",
+                    "Play video",
+                    in_progress || failed,
+                    cx,
+                    move |_, _, _| library::play_instant_recording(&play_path),
+                ));
+            }
+            let share_path = path.clone();
+            actions = actions.child(self.row_button(
+                ("recording-share", index),
+                "icons/upload-arrow.svg",
+                "Share video",
+                in_progress || failed || self.recordings.sharing_busy.contains(&path),
+                cx,
+                move |this, window, cx| this.share_recording(share_path.clone(), false, window, cx),
+            ));
+            if sharing
+                .as_ref()
+                .is_some_and(|link| cap_cloud_sharing::is_owned_link(link))
+            {
+                let revoke_path = path.clone();
+                actions = actions.child(self.row_button(
+                    ("recording-revoke", index),
+                    "icons/unplug.svg",
+                    "Revoke sharing link",
+                    self.recordings.sharing_busy.contains(&path),
+                    cx,
+                    move |this, window, cx| {
+                        this.share_recording(revoke_path.clone(), true, window, cx)
+                    },
                 ));
             }
         }
@@ -3005,10 +3079,78 @@ impl SettingsWindow {
             ("recording-delete", index),
             "icons/trash.svg",
             "Delete",
-            false,
+            self.recordings.sharing_busy.contains(&path),
             cx,
             move |this, window, cx| this.delete_recording(path.clone(), window, cx),
         ))
+    }
+
+    fn share_recording(
+        &mut self,
+        path: PathBuf,
+        revoke: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !cap_cloud_sharing::load().is_ok_and(|settings| settings.enabled) {
+            self.set_page(Page::Sharing, window, cx);
+            return;
+        }
+        if !revoke
+            && cap_project::RecordingMeta::load_for_project(&path).is_ok_and(|meta| {
+                matches!(meta.inner, cap_project::RecordingMetaInner::Studio(_))
+                    && !meta.output_path().is_file()
+            })
+        {
+            self.recordings.notice = Some(
+                "Export this recording in the editor, then choose Create shareable link.".into(),
+            );
+            self.open_editor_confirmed(path, false, window, cx);
+            return;
+        }
+        if !self.recordings.sharing_busy.insert(path.clone()) {
+            return;
+        }
+        self.recordings.notice = Some(
+            if revoke {
+                "Revoking link…"
+            } else {
+                "Sharing video only. Walk notes and browser traces stay local…"
+            }
+            .into(),
+        );
+        cx.notify();
+        cx.spawn_in(window, async move |this, cx| {
+            let task_path = path.clone();
+            let Ok(task) = cx.update(|_, cx| gpui_tokio::Tokio::spawn(cx, async move {
+                if revoke {
+                    let client = cap_cloud_sharing::SharingClient::configured()?;
+                    let mut meta = cap_project::RecordingMeta::load_for_project(&task_path).map_err(|_| "Could not read this recording.")?;
+                    let sharing = meta.sharing.as_ref().ok_or("This recording has no sharing link.")?;
+                    cap_cloud_sharing::validate_configured_link(&sharing.link)?;
+                    client.revoke(&sharing.id).await?;
+                    meta.sharing = None;
+                    meta.save_for_project().map_err(|_| "Link revoked, but its local metadata could not be updated.")?;
+                    Ok(None)
+                } else {
+                    match crate::upload::upload_exported_video(task_path, None, |_| {}, Arc::new(std::sync::atomic::AtomicBool::new(false))).await? {
+                        crate::upload::UploadResult::Success(link) => Ok(Some(link)),
+                        _ => Err("Check your sharing server and upload credential in Settings → Sharing.".into()),
+                    }
+                }
+            })) else { return; };
+            let result = task.await.unwrap_or_else(|_| Err("Sharing task stopped. Your local recording is safe.".into()));
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.recordings.sharing_busy.remove(&path);
+                this.recordings.notice = Some(match result {
+                    Ok(Some(link)) => { if !this.settings.disable_auto_open_links { cx.open_url(&link); } cx.write_to_clipboard(gpui::ClipboardItem::new_string(link)); "Sharing link copied. Anyone with the full link can view it until it expires or is revoked.".into() },
+                    Ok(None) => "Sharing link revoked.".into(),
+                    Err(error) => error,
+                });
+                this.refresh_recordings(window, cx);
+                cx.notify(); window.refresh();
+            });
+        }).detach();
     }
 
     fn copy_walk_prompt(&mut self, file: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
@@ -3104,7 +3246,11 @@ impl SettingsWindow {
             self.render_project_name(window, cx).into_any_element(),
             self.render_excluded_windows(cx).into_any_element(),
             self.render_updates(cx).into_any_element(),
-            self.render_self_host(window, cx).into_any_element(),
+            if cfg!(feature = "ux-walk") {
+                self.render_sharing_shortcut(cx)
+            } else {
+                self.render_self_host(window, cx).into_any_element()
+            },
             self.render_privacy(cx).into_any_element(),
         ]
     }
@@ -3248,7 +3394,7 @@ impl SettingsWindow {
             return;
         };
         self.has_cap_pro = store::auth_snapshot().is_upgraded();
-        if self.instant_resolution_locked(resolution) {
+        if !cfg!(feature = "ux-walk") && self.instant_resolution_locked(resolution) {
             cx.open_url(crate::auth::PRICING_URL);
             cx.notify();
             return;
@@ -3305,7 +3451,7 @@ impl SettingsWindow {
     }
 
     fn effective_instant_resolution(&self) -> u32 {
-        if self.has_cap_pro {
+        if cfg!(feature = "ux-walk") || self.has_cap_pro {
             self.settings.instant_mode_max_resolution
         } else {
             FREE_INSTANT_MODE_MAX_RESOLUTION
@@ -3313,7 +3459,9 @@ impl SettingsWindow {
     }
 
     fn instant_resolution_locked(&self, resolution: u32) -> bool {
-        !self.has_cap_pro && resolution > FREE_INSTANT_MODE_MAX_RESOLUTION
+        !cfg!(feature = "ux-walk")
+            && !self.has_cap_pro
+            && resolution > FREE_INSTANT_MODE_MAX_RESOLUTION
     }
 
     fn render_instant_quality(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -3324,7 +3472,7 @@ impl SettingsWindow {
             .find(|(value, _, _)| *value == effective)
             .map(|(_, _, summary)| *summary)
             .unwrap_or_default();
-        let description = if self.has_cap_pro {
+        let description = if cfg!(feature = "ux-walk") || self.has_cap_pro {
             summary.to_string()
         } else {
             "720p on the free plan. the upstream Pro plan records up to 4K.".to_string()
@@ -3371,11 +3519,13 @@ impl SettingsWindow {
 
         self.section(
             "Instant recordings",
-            Some(
+            Some(if cfg!(feature = "ux-walk") {
+                "Saved as a ready-to-play video on your Mac. Choose the capture resolution here, then share from Recordings when you are ready."
+            } else {
                 "Uploaded while you record, so the link is ready the moment you stop. For the \
                  best quality, use Studio mode: it records at the highest quality your screen \
-                 allows, and you can export up to 4K.",
-            ),
+                 allows, and you can export up to 4K."
+            }),
             None,
             vec![self.rows(rows).into_any_element()],
         )
@@ -3631,6 +3781,13 @@ impl SettingsWindow {
                         )
                         .into_any_element(),
                     ),
+                    if cfg!(feature = "ux-walk") {
+                        self.setting_row(
+                            "Original recordings",
+                            Some("Sharing keeps the original recording on your Mac. Delete it from Recordings when you choose."),
+                            div().text_size(px(12.)).child("Kept locally").into_any_element(),
+                        )
+                    } else {
                     self.setting_row(
                         "Delete Instant recordings after upload",
                         Some("Cap UX removes the local file once it has uploaded successfully."),
@@ -3647,7 +3804,8 @@ impl SettingsWindow {
                             },
                         )
                         .into_any_element(),
-                    ),
+                    )
+                    },
                     self.setting_row(
                         "Crash-recoverable recording",
                         Some(

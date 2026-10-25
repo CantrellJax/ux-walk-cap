@@ -533,7 +533,9 @@ impl SettingsWindow {
             }
             Page::Integrations => {
                 self.pages.integrations_view = IntegrationsView::Index;
-                self.integrations_fetch_storage(false, window, cx);
+                if !cfg!(feature = "ux-walk") {
+                    self.integrations_fetch_storage(false, window, cx);
+                }
             }
             Page::Automations => {
                 self.pages.automations = store::automations();
@@ -1096,7 +1098,9 @@ fn shortcut_effect(
         store::PostStudioBehaviour::OpenEditor => ", then open the editor when you stop",
         store::PostStudioBehaviour::ShowOverlay | store::PostStudioBehaviour::DoNothing => "",
     };
-    let instant_stop = if settings.disable_auto_open_links {
+    let instant_stop = if cfg!(feature = "ux-walk") {
+        ", then save it locally when you stop"
+    } else if settings.disable_auto_open_links {
         ", then copy its share link when you stop"
     } else {
         ", then copy and open its share link when you stop"
@@ -1539,8 +1543,16 @@ impl SettingsWindow {
         recording.push(
             self.render_outcome_panel(
                 "outcome-instant",
-                "After an Instant recording",
-                "The share link is always copied",
+                if cfg!(feature = "ux-walk") {
+                    "After sharing a video"
+                } else {
+                    "After an Instant recording"
+                },
+                if cfg!(feature = "ux-walk") {
+                    "Recording saves locally. Share from Recordings when you choose."
+                } else {
+                    "The share link is always copied"
+                },
                 &INSTANT_OUTCOMES
                     .iter()
                     .map(|(disabled, option)| {
@@ -5004,6 +5016,9 @@ impl SettingsWindow {
     }
 
     pub(crate) fn render_integrations(&self, cx: &mut Context<Self>) -> Vec<gpui::AnyElement> {
+        if cfg!(feature = "ux-walk") {
+            return self.render_owned_integrations(cx);
+        }
         match self.pages.integrations_view {
             IntegrationsView::Index => self.render_integrations_index(cx),
             IntegrationsView::S3 => self.render_s3_config(cx),
@@ -8344,8 +8359,13 @@ mod tests {
         assert!(!shortcut_effect("startStudioRecording", &settings, studio).contains("editor"));
         settings.disable_auto_open_links = true;
         assert!(
-            shortcut_effect("startInstantRecording", &settings, studio)
-                .ends_with("copy its share link when you stop")
+            shortcut_effect("startInstantRecording", &settings, studio).ends_with(
+                if cfg!(feature = "ux-walk") {
+                    "save it locally when you stop"
+                } else {
+                    "copy its share link when you stop"
+                }
+            )
         );
         assert_eq!(
             shortcut_effect(

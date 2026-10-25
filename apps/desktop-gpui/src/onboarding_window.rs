@@ -195,12 +195,12 @@ const MODES: &[ModeDetail] = &[
         mode: ModeChoice::Capture(Mode::Instant),
         title: "Instant Mode",
         tagline: "Record & share in seconds",
-        description: "Your recording uploads as you capture. Stop recording and instantly get a shareable link — no waiting.",
+        description: "Record a ready-to-play video locally. Share it through your chosen server when you are ready.",
         icon: "icons/instant.svg",
         features: [
-            "Instant shareable link",
-            "Background uploading",
-            "AI transcription & summary",
+            "Ready-to-play local video",
+            "Choose when to share",
+            "Your own sharing server",
             "Browser-based playback",
         ],
     },
@@ -276,11 +276,11 @@ const FAQ: [(&str, &str); 5] = [
     ),
     (
         "How do the recording modes differ?",
-        "Instant records a shareable link through your connected cloud service. Studio records locally for editing. Screenshot captures a still image. UX Walk opens a fresh browser window and keeps its recording, notes, chapters and transcripts together.",
+        "Instant records a ready-to-play local video. Studio records locally for editing. Screenshot captures a still image. UX Walk opens a fresh browser window and keeps its recording, notes, chapters and transcripts together.",
     ),
     (
         "Where are my recordings stored?",
-        "All recordings are stored locally on your computer. In Instant mode, they're also uploaded to your connected cloud service for easy sharing. You can manage storage in Settings.",
+        "All recordings stay on your computer. Nothing uploads automatically. Choose a server in Settings → Sharing, then share individual videos or screenshots.",
     ),
     (
         "Can I change my shortcuts later?",
@@ -288,7 +288,7 @@ const FAQ: [(&str, &str); 5] = [
     ),
     (
         "How does sharing work?",
-        "In Instant mode, you get a shareable link automatically when you stop recording. In Studio mode, export your edited video and share via your connected cloud service or save locally.",
+        "Choose your server and link expiry in Settings → Sharing. Use Share on a recording or screenshot to create an expiring link. You can also export files and use any sharing service you prefer.",
     ),
 ];
 
@@ -1600,8 +1600,8 @@ impl OnboardingWindow {
             .child(self.heading("Make Cap UX yours", "Customize everything from keyboard shortcuts to storage. Cap UX adapts to your workflow."))
             .child(div().flex().flex_col().w_full().max_w(px(420.)).gap(px(8.)).children([
                 ("Keyboard Shortcuts", "Global hotkeys for recording, screenshots, and switching modes"),
-                ("Custom S3 Storage", "Connect your own S3-compatible bucket for full control over your recordings"),
-                ("Custom Domain", "Use your own domain for shareable links instead of cap.so"),
+                ("Custom S3 Storage", "Host your own sharing server with private storage, including Cloudflare R2"),
+                ("Custom Domain", "Use your own server and domain for shareable links"),
                 ("Recording Preferences", "FPS, quality, countdown timer, cursor effects, and more"),
             ].into_iter().map(|(title, description)| {
                 self.paper_card().rounded(px(16.)).px(px(18.)).py(px(13.)).flex().flex_col().gap(px(4.))
@@ -1675,7 +1675,7 @@ impl OnboardingWindow {
                                         .child(
                                             copy(*answer, 13., theme.gray_10).line_height(px(20.)),
                                         )
-                                        .when(index == 0, |el| {
+                                        .when(!cfg!(feature = "ux-walk") && index == 0, |el| {
                                             el.child(
                                                 copy("View pricing plans", 13., theme.blue_10)
                                                     .id("onboarding-faq-pricing")
@@ -1690,12 +1690,14 @@ impl OnboardingWindow {
                             })
                     })),
             )
-            .child(
-                copy("View pricing plans ↗", 13., theme.blue_10)
-                    .id("onboarding-pricing")
-                    .cursor_pointer()
-                    .on_click(|_, _, cx| cx.open_url(crate::auth::PRICING_URL)),
-            )
+            .when(!cfg!(feature = "ux-walk"), |el| {
+                el.child(
+                    copy("View pricing plans ↗", 13., theme.blue_10)
+                        .id("onboarding-pricing")
+                        .cursor_pointer()
+                        .on_click(|_, _, cx| cx.open_url(crate::auth::PRICING_URL)),
+                )
+            })
             .into_any_element()
     }
 
@@ -2143,7 +2145,7 @@ impl OnboardingWindow {
                     .rounded(px(8.))
                     .bg(theme.body_fill(3))
                     .child(
-                        copy("cap.so/s/m4k92x", 11., theme.gray_11)
+                        copy("your-server.example/s/recording", 11., theme.gray_11)
                             .flex_1()
                             .min_w_0(),
                     )

@@ -10,7 +10,11 @@ use toml_edit::{Array, DocumentMut, Item, Table, value};
 
 use crate::{OutputFormat, atomic, resolve_format, write_json};
 
-const BUNDLED_SKILL: &str = include_str!("../skill/cap/SKILL.md");
+const BUNDLED_SKILL: &str = if cfg!(feature = "ux-walk") {
+    include_str!("../skill/cap-ux/SKILL.md")
+} else {
+    include_str!("../skill/cap/SKILL.md")
+};
 
 // The cap-demo companion skill ships as a directory tree (scripts, cursor and
 // music assets) embedded into the binary alongside the main cap skill.
@@ -50,7 +54,9 @@ enum AgentTarget {
 #[derive(Clone, Copy, ValueEnum)]
 enum AgentComponent {
     Skill,
+    #[value(hide = cfg!(feature = "ux-walk"))]
     Mcp,
+    #[value(hide = cfg!(feature = "ux-walk"))]
     All,
 }
 
@@ -108,9 +114,21 @@ fn skill_path(target: AgentTarget) -> Result<PathBuf, String> {
         AgentTarget::Codex => std::env::var_os("CODEX_HOME")
             .map(PathBuf::from)
             .unwrap_or_else(|| home.join(".codex"))
-            .join("skills/cap/SKILL.md"),
-        AgentTarget::Claude => home.join(".claude/skills/cap/SKILL.md"),
-        AgentTarget::Cursor => home.join(".cursor/skills/cap/SKILL.md"),
+            .join(if cfg!(feature = "ux-walk") {
+                "skills/cap-ux/SKILL.md"
+            } else {
+                "skills/cap/SKILL.md"
+            }),
+        AgentTarget::Claude => home.join(if cfg!(feature = "ux-walk") {
+            ".claude/skills/cap-ux/SKILL.md"
+        } else {
+            ".claude/skills/cap/SKILL.md"
+        }),
+        AgentTarget::Cursor => home.join(if cfg!(feature = "ux-walk") {
+            ".cursor/skills/cap-ux/SKILL.md"
+        } else {
+            ".cursor/skills/cap/SKILL.md"
+        }),
     })
 }
 
@@ -272,6 +290,9 @@ impl InstallArgs {
     }
 
     fn plan(&self) -> Result<Vec<PlannedChange>, String> {
+        if cfg!(feature = "ux-walk") && self.includes_mcp() {
+            return Err("Cap UX uses local agent skills. Choose --component skill; the upstream cloud MCP adapter is not included.".into());
+        }
         let mut changes = Vec::new();
         if self.includes_skill() {
             let path = skill_path(self.target)?;
@@ -288,40 +309,41 @@ impl InstallArgs {
                 component: "skill",
                 path,
                 action,
-                value: json!({ "name": "cap", "content": BUNDLED_SKILL }),
+                value: json!({ "name": if cfg!(feature = "ux-walk") { "cap-ux" } else { "cap" }, "content": BUNDLED_SKILL }),
                 expected,
                 content,
             });
 
-            // Ship the cap-demo companion skill as one change per embedded file.
-            let demo_dir = cap_demo_skill_dir(self.target)?;
-            let mut demo_files = Vec::new();
-            collect_demo_files(&CAP_DEMO_SKILL, &mut demo_files);
-            demo_files.sort_by(|a, b| a.path().cmp(b.path()));
-            for file in demo_files {
-                let relative = file.path();
-                let dest = demo_dir.join(relative);
-                let expected = read_optional(&dest)?;
-                let bytes = file.contents();
-                let action = if expected.as_deref() == Some(bytes) {
-                    "unchanged"
-                } else if expected.is_some() {
-                    "replace"
-                } else {
-                    "create"
-                };
-                let content = (action != "unchanged").then(|| bytes.to_vec());
-                changes.push(PlannedChange {
-                    component: "skill",
-                    path: dest,
-                    action,
-                    value: json!({
-                        "name": "cap-demo",
-                        "file": relative.to_string_lossy(),
-                    }),
-                    expected,
-                    content,
-                });
+            if !cfg!(feature = "ux-walk") {
+                let demo_dir = cap_demo_skill_dir(self.target)?;
+                let mut demo_files = Vec::new();
+                collect_demo_files(&CAP_DEMO_SKILL, &mut demo_files);
+                demo_files.sort_by(|a, b| a.path().cmp(b.path()));
+                for file in demo_files {
+                    let relative = file.path();
+                    let dest = demo_dir.join(relative);
+                    let expected = read_optional(&dest)?;
+                    let bytes = file.contents();
+                    let action = if expected.as_deref() == Some(bytes) {
+                        "unchanged"
+                    } else if expected.is_some() {
+                        "replace"
+                    } else {
+                        "create"
+                    };
+                    let content = (action != "unchanged").then(|| bytes.to_vec());
+                    changes.push(PlannedChange {
+                        component: "skill",
+                        path: dest,
+                        action,
+                        value: json!({
+                            "name": "cap-demo",
+                            "file": relative.to_string_lossy(),
+                        }),
+                        expected,
+                        content,
+                    });
+                }
             }
         }
         if self.includes_mcp() {

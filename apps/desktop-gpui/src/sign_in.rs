@@ -81,6 +81,12 @@ impl SignIn {
     /// re-opens that attempt's page (the user may have closed the tab) and
     /// moves the attempt to the newer origin.
     pub fn start(&mut self, origin: SignInOrigin, cx: &mut Context<Self>) {
+        if cfg!(feature = "ux-walk") {
+            cx.defer(|cx| {
+                crate::app_windows::open_settings(crate::settings_window::Page::Sharing, cx)
+            });
+            return;
+        }
         if let Some(attempt) = self.attempt.as_mut() {
             attempt.origin = origin;
             cx.open_url(&attempt.url);

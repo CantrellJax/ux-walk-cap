@@ -61,6 +61,9 @@ impl ModeChoice {
 
     pub fn card_description(self) -> &'static str {
         match self {
+            Self::Capture(Mode::Instant) if cfg!(feature = "ux-walk") => {
+                "Record a ready-to-play video locally. Share when you choose."
+            }
             Self::Capture(Mode::Instant) => "Share instantly with a link. Uploads as you record.",
             Self::Capture(Mode::Studio) => "Highest quality local recording for editing later.",
             Self::Capture(Mode::Screenshot) => "Capture and annotate screenshots instantly.",
@@ -72,6 +75,9 @@ impl ModeChoice {
 
     pub fn hover_description(self) -> &'static str {
         match self {
+            Self::Capture(Mode::Instant) if cfg!(feature = "ux-walk") => {
+                "Saves a ready-to-play video on your Mac. Share it through your chosen server from Recordings."
+            }
             Self::Capture(Mode::Instant) => {
                 "No rendering required — uploads on the fly so you can share the link the moment you stop."
             }

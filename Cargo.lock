@@ -1265,6 +1265,7 @@ dependencies = [
  "cap-automation",
  "cap-camera",
  "cap-cli-install",
+ "cap-cloud-sharing",
  "cap-editor",
  "cap-export",
  "cap-media-info",
@@ -1468,6 +1469,19 @@ dependencies = [
  "specta",
  "tempfile",
  "workspace-hack",
+]
+
+[[package]]
+name = "cap-cloud-sharing"
+version = "0.1.0"
+dependencies = [
+ "dirs 6.0.0",
+ "keyring",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]

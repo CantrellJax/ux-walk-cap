@@ -1210,6 +1210,33 @@ pub async fn upload_exported_video(
     progress: impl Fn(f64),
     cancel: std::sync::Arc<AtomicBool>,
 ) -> Result<UploadResult, String> {
+    if cfg!(feature = "ux-walk") {
+        let client = cap_cloud_sharing::SharingClient::configured()?;
+        let mut meta = RecordingMeta::load_for_project(&project_path)
+            .map_err(|_| "Could not read this recording.")?;
+        let item = client
+            .upload_file(
+                &meta.output_path(),
+                &meta.pretty_name,
+                "video/mp4",
+                progress,
+                &cancel,
+            )
+            .await?;
+        meta.sharing = Some(SharingMeta {
+            id: item.id.clone(),
+            link: item.link.clone(),
+            content_hash: None,
+        });
+        meta.upload = None;
+        if meta.save_for_project().is_err() {
+            return Err(match client.revoke(&item.id).await {
+                Ok(()) => "The link could not be saved locally, so the new share was revoked. Your source recording is safe.".into(),
+                Err(_) => format!("The link could not be saved locally. Revoke share {} on your configured server; your source recording is safe.", item.id),
+            });
+        }
+        return Ok(UploadResult::Success(item.link));
+    }
     upload_exported_video_inner(project_path, organization_id, progress, cancel, false)
         .await
         .map(|(result, _)| result)
@@ -2375,6 +2402,34 @@ pub async fn upload_rendered_screenshot(
     content_type: &str,
     video_id: Option<String>,
 ) -> Result<ScreenshotShareOutcome, String> {
+    if cfg!(feature = "ux-walk") {
+        let client = cap_cloud_sharing::SharingClient::configured()?;
+        let path =
+            std::env::temp_dir().join(format!("cap-ux-share-{}", crate::store::new_uuid_v4()));
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            options.mode(0o600);
+        }
+        use std::io::Write as _;
+        options
+            .open(&path)
+            .and_then(|mut file| file.write_all(&image_bytes))
+            .map_err(|_| "Could not prepare the screenshot for sharing.")?;
+        let cancel = AtomicBool::new(false);
+        let result = client
+            .upload_file(&path, "Cap UX screenshot", content_type, |_| {}, &cancel)
+            .await;
+        let _ = std::fs::remove_file(path);
+        return result.map(|item| {
+            ScreenshotShareOutcome::Uploaded(UploadedItem {
+                id: item.id,
+                link: item.link,
+            })
+        });
+    }
     let auth = crate::store::auth_snapshot();
     if !auth.signed_in() {
         // The Tauri command resets a corrupt/absent auth store on this path.
