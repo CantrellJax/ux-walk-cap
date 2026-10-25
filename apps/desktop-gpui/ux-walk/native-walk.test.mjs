@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { finishNativeWalk, snapshotNativeWalk } from "./native-walk.mjs";
+import { finishNativeWalk, nativeWalkPrompt, snapshotNativeWalk } from "./native-walk.mjs";
 
 function fixture(t) {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "cap-ux-native-"));
@@ -197,30 +197,106 @@ test("reprocessing recovers a lock left by a process that no longer exists", asy
 
 test("processing and reprocessing retain owned browser evidence alongside native notes", async (t) => {
 	const f = fixture(t);
-	fs.writeFileSync(path.join(f.directory, "browser-evidence.json"), JSON.stringify({
-		schemaVersion: 1, captureId: "owned-browser", journal: f.file,
-		sourceProject: f.source, windowId: "17", startedAtMs: f.journal.startedAtMs,
-		state: "complete", anchors: [
-			{ wallMs: 100000, offsetMs: 0, paused: false },
-			{ wallMs: 110000, offsetMs: 10000, paused: true },
-		],
-	}));
-	fs.writeFileSync(path.join(f.directory, "browser-evidence.jsonl"), [
-		{ ev: "click", observedAt: 100500, el: { tag: "button", text: "Save" } },
-		{ ev: "http", observedAt: 102000, method: "POST", status: 400, url: "https://example.com/rest/v1/rpc/save?token=SECRET_SENTINEL", resBody: '{"code":"23514","message":"Invalid window"}' },
-	].map(JSON.stringify).join("\n"));
+	fs.writeFileSync(
+		path.join(f.directory, "browser-evidence.json"),
+		JSON.stringify({
+			schemaVersion: 1,
+			captureId: "owned-browser",
+			journal: f.file,
+			sourceProject: f.source,
+			windowId: "17",
+			startedAtMs: f.journal.startedAtMs,
+			state: "complete",
+			anchors: [
+				{ wallMs: 100000, offsetMs: 0, paused: false },
+				{ wallMs: 110000, offsetMs: 10000, paused: true },
+			],
+		}),
+	);
+	fs.writeFileSync(
+		path.join(f.directory, "browser-evidence.jsonl"),
+		[
+			{ ev: "click", observedAt: 100500, el: { tag: "button", text: "Save" } },
+			{
+				ev: "http",
+				observedAt: 102000,
+				method: "POST",
+				status: 400,
+				url: "https://example.com/rest/v1/rpc/save?token=SECRET_SENTINEL",
+				resBody: '{"code":"23514","message":"Invalid window"}',
+			},
+		]
+			.map(JSON.stringify)
+			.join("\n"),
+	);
 	const deps = {
-		client: { export: async (_project, output) => { fs.writeFileSync(output, "export"); return { durationS: 10 }; } },
+		client: {
+			export: async (_project, output) => {
+				fs.writeFileSync(output, "export");
+				return { durationS: 10 };
+			},
+		},
 		clip: async (_input, output) => fs.writeFileSync(output, "clip"),
-		processChapter: async () => ({}), writeIndex: () => {}, writeReport: () => {},
+		processChapter: async () => ({}),
+		writeIndex: () => {},
+		writeReport: () => {},
 	};
 	for (let attempt = 0; attempt < 2; attempt++) {
 		await finishNativeWalk(f.file, { transcriber: "none", brief: false }, deps);
-		const actions = fs.readFileSync(path.join(f.directory, "actions.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
-		assert.deepEqual(actions.map((event) => event.ev), ["click", "note", "http"]);
-		assert.deepEqual(actions.map((event) => event.t), [100500, 101500, 102000]);
+		const actions = fs
+			.readFileSync(path.join(f.directory, "actions.jsonl"), "utf8")
+			.trim()
+			.split("\n")
+			.map(JSON.parse);
+		assert.deepEqual(
+			actions.map((event) => event.ev),
+			["click", "note", "http"],
+		);
+		assert.deepEqual(
+			actions.map((event) => event.t),
+			[100500, 101500, 102000],
+		);
 		assert.equal(JSON.stringify(actions).includes("SECRET_SENTINEL"), false);
-		assert.match(JSON.parse(fs.readFileSync(path.join(f.directory, "session.json"))).coverage.network, /captured/);
-		assert.match(fs.readFileSync(path.join(f.directory, "report.html"), "utf8"), /Browser evidence/);
+		assert.match(
+			JSON.parse(fs.readFileSync(path.join(f.directory, "session.json")))
+				.coverage.network,
+			/captured/,
+		);
+		assert.match(
+			fs.readFileSync(path.join(f.directory, "report.html"), "utf8"),
+			/Browser evidence/,
+		);
 	}
+});
+
+test("canonical saved-journal paths accept directory aliases and reject copied journals", (t) => {
+	const f = fixture(t);
+	const alias = path.join(path.dirname(f.directory), "walk-alias");
+	fs.symlinkSync(f.directory, alias, "dir");
+	f.journal.request.directory = alias;
+	f.save();
+	assert.doesNotThrow(() => snapshotNativeWalk(fs.realpathSync(f.file)));
+	const copy = path.join(path.dirname(f.directory), "other-walk");
+	fs.mkdirSync(copy);
+	const copied = path.join(copy, "native-walk.json");
+	fs.copyFileSync(f.file, copied);
+	assert.throws(() => snapshotNativeWalk(copied), /does not match/);
+	assert.equal(fs.existsSync(path.join(copy, "media")), false);
+});
+
+test("copying an agent prompt describes recording, aborted and unprocessed walks honestly", (t) => {
+	const f = fixture(t);
+	for (const state of ["recording", "aborted"]) {
+		f.journal.state = state;
+		f.journal.durationMs = null;
+		f.save();
+		const prompt = nativeWalkPrompt(f.file);
+		assert.match(prompt, new RegExp(state));
+		assert.match(prompt, /not finalized|incomplete|in progress/i);
+		assert.equal(fs.existsSync(path.join(f.directory, "media")), false);
+	}
+	f.journal.state = "complete";
+	f.journal.durationMs = 10000;
+	f.save();
+	assert.match(nativeWalkPrompt(f.file), /not started|not prepared/);
 });
