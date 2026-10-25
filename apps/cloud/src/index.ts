@@ -349,6 +349,7 @@ async function route(request: Request, env: RuntimeEnv): Promise<Response> {
 	}
 	if (url.pathname.startsWith("/api/")) throw new HttpError(404, "Not found.");
 	if (/^\/s\/[a-f0-9-]{36}$/.test(url.pathname)) url.pathname = "/viewer.html";
+	if (url.pathname === "/") url.pathname = "/index.html";
 	return env.ASSETS.fetch(new Request(url, request));
 }
 

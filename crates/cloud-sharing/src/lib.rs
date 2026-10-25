@@ -1,10 +1,12 @@
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use reqwest::{Client, Response, Url};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt as _;
+
+static SAVE_REVISION: AtomicU64 = AtomicU64::new(0);
 
 const SERVICE: &str = "com.cantrell.cap-ux.sharing";
 const MAX_SIZE: u64 = 20 * 1024 * 1024 * 1024;
@@ -104,9 +106,13 @@ pub fn save(settings: &Settings) -> Result<(), String> {
     std::fs::create_dir_all(parent).map_err(|_| "Could not create the sharing settings folder.")?;
     let bytes =
         serde_json::to_vec_pretty(settings).map_err(|_| "Could not encode sharing settings.")?;
-    let temporary = path.with_extension("tmp");
+    let temporary = path.with_file_name(format!(
+        ".sharing-{}-{}.tmp",
+        std::process::id(),
+        SAVE_REVISION.fetch_add(1, Ordering::Relaxed)
+    ));
     let mut options = std::fs::OpenOptions::new();
-    options.create(true).write(true).truncate(true);
+    options.create_new(true).write(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt as _;
@@ -404,7 +410,21 @@ mod tests {
         let handle = thread::spawn(move || {
             let mut requests = Vec::new();
             for response in responses {
-                let (mut stream, _) = listener.accept().unwrap();
+                listener.set_nonblocking(true).unwrap();
+                let deadline = std::time::Instant::now() + Duration::from_secs(5);
+                let (mut stream, _) = loop {
+                    match listener.accept() {
+                        Ok(stream) => break stream,
+                        Err(error)
+                            if error.kind() == std::io::ErrorKind::WouldBlock
+                                && std::time::Instant::now() < deadline =>
+                        {
+                            thread::sleep(Duration::from_millis(5))
+                        }
+                        Err(error) => panic!("Expected sharing request did not arrive: {error}"),
+                    }
+                };
+                stream.set_nonblocking(false).unwrap();
                 stream
                     .set_read_timeout(Some(Duration::from_secs(5)))
                     .unwrap();

@@ -219,34 +219,34 @@ enum Commands {
     /// Update Cap Desktop and the bundled CLI
     Update(FormatArgs),
     /// Show how `cap upload` will authenticate (env key or Cap Desktop login)
-    #[command(hide = cfg!(feature = "ux-walk"))]
+    #[cfg(not(feature = "ux-walk"))]
     Auth(AuthArgs),
     /// Read and manage Caps in your personal library
-    #[command(hide = cfg!(feature = "ux-walk"))]
+    #[cfg(not(feature = "ux-walk"))]
     Caps(caps::CapsArgs),
     /// Read or update the authenticated Cap account
-    #[command(hide = cfg!(feature = "ux-walk"))]
+    #[cfg(not(feature = "ux-walk"))]
     Account(account::AccountArgs),
     /// Inspect Cap organizations, members, billing, and storage connections
-    #[command(hide = cfg!(feature = "ux-walk"))]
+    #[cfg(not(feature = "ux-walk"))]
     Organizations(organizations::OrganizationsArgs),
     /// Manage folders, spaces, and space membership
-    #[command(hide = cfg!(feature = "ux-walk"))]
+    #[cfg(not(feature = "ux-walk"))]
     Library(library::LibraryArgs),
     /// Read and manage account notifications
-    #[command(hide = cfg!(feature = "ux-walk"))]
+    #[cfg(not(feature = "ux-walk"))]
     Notifications(notifications::NotificationsArgs),
     /// Read organization, space, or Cap analytics
-    #[command(hide = cfg!(feature = "ux-walk"))]
+    #[cfg(not(feature = "ux-walk"))]
     Analytics(analytics::AnalyticsArgs),
     /// Inspect developer apps, domains, usage, and credits
-    #[command(hide = cfg!(feature = "ux-walk"))]
+    #[cfg(not(feature = "ux-walk"))]
     Developers(developers::DevelopersArgs),
     /// Inspect or wait for asynchronous Cap operations
-    #[command(hide = cfg!(feature = "ux-walk"))]
+    #[cfg(not(feature = "ux-walk"))]
     Jobs(jobs::JobsArgs),
     /// Run Cap's local Model Context Protocol server
-    #[command(hide = cfg!(feature = "ux-walk"))]
+    #[cfg(not(feature = "ux-walk"))]
     Mcp(mcp::McpArgs),
     /// Install Cap integrations for one explicitly selected agent
     Agents(agents::AgentsArgs),
@@ -618,24 +618,6 @@ async fn run(cli: Cli) -> Result<(), String> {
         return print_welcome(json);
     };
 
-    if cfg!(feature = "ux-walk")
-        && matches!(
-            &command,
-            Commands::Auth(_)
-                | Commands::Caps(_)
-                | Commands::Account(_)
-                | Commands::Organizations(_)
-                | Commands::Library(_)
-                | Commands::Notifications(_)
-                | Commands::Analytics(_)
-                | Commands::Developers(_)
-                | Commands::Jobs(_)
-                | Commands::Mcp(_)
-        )
-    {
-        return Err("This upstream cloud command is not part of Cap UX. Use cap sharing, cap upload, or cap guide for local recording commands.".into());
-    }
-
     match command {
         Commands::Export(e) => e.run(json).await,
         Commands::ExportPreview(e) => e.run().await,
@@ -675,6 +657,7 @@ async fn run(cli: Cli) -> Result<(), String> {
             let format = resolve_format(json, args.format);
             finish_json(format, update::run(format))
         }
+        #[cfg(not(feature = "ux-walk"))]
         Commands::Auth(args) => match args.command {
             AuthCommands::Status(args) => {
                 let format = resolve_format(json, args.format);
@@ -683,14 +666,23 @@ async fn run(cli: Cli) -> Result<(), String> {
             AuthCommands::Login(args) => args.run(json).await,
             AuthCommands::Logout(args) => args.run(json).await,
         },
+        #[cfg(not(feature = "ux-walk"))]
         Commands::Caps(args) => args.run(json).await,
+        #[cfg(not(feature = "ux-walk"))]
         Commands::Account(args) => args.run(json).await,
+        #[cfg(not(feature = "ux-walk"))]
         Commands::Organizations(args) => args.run(json).await,
+        #[cfg(not(feature = "ux-walk"))]
         Commands::Library(args) => args.run(json).await,
+        #[cfg(not(feature = "ux-walk"))]
         Commands::Notifications(args) => args.run(json).await,
+        #[cfg(not(feature = "ux-walk"))]
         Commands::Analytics(args) => args.run(json).await,
+        #[cfg(not(feature = "ux-walk"))]
         Commands::Developers(args) => args.run(json).await,
+        #[cfg(not(feature = "ux-walk"))]
         Commands::Jobs(args) => args.run(json).await,
+        #[cfg(not(feature = "ux-walk"))]
         Commands::Mcp(args) => args.run().await,
         Commands::Agents(args) => args.run(json),
         Commands::Targets(args) => args.run(json),

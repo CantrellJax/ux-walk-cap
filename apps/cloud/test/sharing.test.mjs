@@ -10,24 +10,25 @@ const headers = { Authorization: `Bearer ${owner}` };
 const deployment = JSON.parse(
 	readFileSync(new URL("../wrangler.jsonc", import.meta.url), "utf8"),
 );
+function runtimeOptions(uploadToken = owner) {
+	return convertV4MiniflareOptions({
+		name: "capux-test",
+		modules: true,
+		scriptPath: fileURLToPath(new URL("../dist/index.js", import.meta.url)),
+		compatibilityDate: "2026-10-25",
+		r2Buckets: ["MEDIA"],
+		assets: {
+			routerConfig: { has_user_worker: true },
+			assetConfig: { html_handling: deployment.assets.html_handling },
+			directory: fileURLToPath(new URL("../public", import.meta.url)),
+			binding: "ASSETS",
+			run_worker_first: true,
+		},
+		bindings: { UPLOAD_TOKEN: uploadToken },
+	});
+}
 before(async () => {
-	runtime = new Miniflare(
-		convertV4MiniflareOptions({
-			name: "capux-test",
-			modules: true,
-			scriptPath: fileURLToPath(new URL("../dist/index.js", import.meta.url)),
-			compatibilityDate: "2026-10-25",
-			r2Buckets: ["MEDIA"],
-			assets: {
-				routerConfig: { has_user_worker: true },
-				assetConfig: { html_handling: deployment.assets.html_handling },
-				directory: fileURLToPath(new URL("../public", import.meta.url)),
-				binding: "ASSETS",
-				run_worker_first: true,
-			},
-			bindings: { UPLOAD_TOKEN: owner },
-		}),
-	);
+	runtime = new Miniflare(runtimeOptions());
 });
 after(async () => runtime?.dispose());
 
@@ -262,4 +263,33 @@ test("the cloud home page works with exact HTML asset routing", async () => {
 	const result = await request("/", { redirect: "manual" });
 	assert.equal(result.status, 200);
 	assert.match(await result.text(), /Show what happened/);
+});
+
+test("credential rotation preserves ownership and revocation rights", async () => {
+	const share = await create(new Uint8Array([1, 2, 3]));
+	const rotated = "another-synthetic-owner-credential-long-enough";
+	await runtime.setOptions(runtimeOptions(rotated));
+	const path = `/api/v1/shares/${share.id}`;
+	assert.equal(
+		(await request(path, { method: "DELETE", headers })).status,
+		401,
+	);
+	assert.equal(
+		(
+			await request(path, {
+				method: "DELETE",
+				headers: { Authorization: `Bearer ${rotated}` },
+			})
+		).status,
+		204,
+	);
+	const capability = share.sharePath.split("#")[1];
+	assert.equal(
+		(
+			await request(`${path}/media`, {
+				headers: { Authorization: `Bearer ${capability}` },
+			})
+		).status,
+		404,
+	);
 });
