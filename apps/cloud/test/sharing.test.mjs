@@ -1,0 +1,121 @@
+import assert from "node:assert/strict";
+import { after, before, test } from "node:test";
+import { fileURLToPath } from "node:url";
+import { Miniflare } from "miniflare";
+
+let runtime;
+const owner = "synthetic-owner-token-with-at-least-32-bytes";
+const headers = { Authorization: `Bearer ${owner}` };
+before(async () => {
+	runtime = new Miniflare({
+		modules: true,
+		scriptPath: fileURLToPath(new URL("../dist/index.js", import.meta.url)),
+		compatibilityDate: "2026-10-25",
+		r2Buckets: ["MEDIA"],
+		bindings: { UPLOAD_TOKEN: owner },
+	});
+});
+after(async () => runtime?.dispose());
+
+async function request(path, init = {}) {
+	return runtime.dispatchFetch(`https://capux.test${path}`, init);
+}
+
+async function create(bytes, options = {}) {
+	const response = await request("/api/v1/shares", {
+		method: "POST",
+		headers,
+		body: JSON.stringify({
+			title: "Synthetic walk",
+			contentType: "video/mp4",
+			size: bytes.length,
+			expiresInDays: 7,
+			...options,
+		}),
+	});
+	assert.equal(response.status, 201, await response.clone().text());
+	const share = await response.json();
+	const parts = [];
+	for (let offset = 0; offset < bytes.length; offset += share.partSize) {
+		const partNumber = parts.length + 1;
+		const part = await request(`/api/v1/shares/${share.id}/parts/${partNumber}`, {
+			method: "PUT",
+			headers,
+			body: bytes.subarray(offset, offset + share.partSize),
+		});
+		assert.equal(part.status, 200, await part.clone().text());
+		parts.push(await part.json());
+	}
+	const done = await request(`/api/v1/shares/${share.id}/complete`, {
+		method: "POST",
+		headers,
+		body: JSON.stringify({ parts }),
+	});
+	assert.equal(done.status, 200, await done.clone().text());
+	return share;
+}
+
+test("owner authorization is required and arbitrary active content is rejected", async () => {
+	assert.equal((await request("/api/v1/shares", { method: "POST" })).status, 401);
+	assert.equal((await request("/api/v1/shares", { method: "POST", headers: { Authorization: "Bearer wrong" } })).status, 401);
+	for (const contentType of ["text/html", "image/svg+xml", "application/json"]) {
+		const response = await request("/api/v1/shares", {
+			method: "POST", headers,
+			body: JSON.stringify({ title: "unsafe", size: 4, contentType }),
+		});
+		assert.equal(response.status, 400);
+	}
+});
+
+test("multipart bytes survive upload, public reads require a capability, video supports ranges and HEAD", async () => {
+	const bytes = new Uint8Array(9 * 1024 * 1024 + 13).fill(7);
+	bytes[8 * 1024 * 1024] = 91;
+	const share = await create(bytes);
+	const path = `/api/v1/shares/${share.id}`;
+	assert.equal((await request(path)).status, 404);
+	assert.equal((await request(`${path}/media`)).status, 404);
+	const read = { Authorization: `Bearer ${new URL(`https://capux.test${share.sharePath}`).hash.slice(1)}` };
+	const response = await request(`${path}/media`, { headers: { ...read, Range: "bytes=8388608-8388610" } });
+	assert.equal(response.status, 206);
+	assert.equal(response.headers.get("Content-Range"), `bytes 8388608-8388610/${bytes.length}`);
+	assert.deepEqual(new Uint8Array(await response.arrayBuffer()), new Uint8Array([91, 7, 7]));
+	const head = await request(`${path}/media`, { method: "HEAD", headers: read });
+	assert.equal(head.status, 200);
+	assert.equal(head.headers.get("Content-Length"), `${bytes.length}`);
+	assert.equal((await head.arrayBuffer()).byteLength, 0);
+	assert.equal((await request(`${path}/media`, { headers: { ...read, Range: "bytes=999999999-" } })).status, 416);
+	assert.equal((await request(`${path}/media`, { headers: { ...read, Range: "bytes=0-1,3-4" } })).status, 416);
+	assert.equal(response.headers.get("Cache-Control"), "private, no-store");
+});
+
+test("viewer exchanges a fragment capability for a scoped HttpOnly cookie, revoke blocks existing cookies", async () => {
+	const share = await create(new Uint8Array([1, 2, 3]), { contentType: "image/png" });
+	const path = `/api/v1/shares/${share.id}`;
+	const token = share.sharePath.split("#")[1];
+	const access = await request(`${path}/access`, { method: "POST", headers: { Authorization: `Bearer ${token}` } });
+	assert.equal(access.status, 204);
+	const cookie = access.headers.get("Set-Cookie");
+	assert.match(cookie, /HttpOnly; Secure; SameSite=Strict/);
+	assert.match(cookie, new RegExp(`Path=${path}/`));
+	const cookieHeaders = { Cookie: cookie.split(";")[0] };
+	assert.equal((await request(`${path}/media`, { headers: cookieHeaders })).status, 200);
+	assert.equal((await request(path, { method: "DELETE", headers: cookieHeaders })).status, 401);
+	assert.equal((await request(path, { method: "DELETE", headers })).status, 204);
+	assert.equal((await request(`${path}/media`, { headers: cookieHeaders })).status, 404);
+	assert.equal((await request(`${path}/access`, { method: "POST", headers: { Authorization: `Bearer ${token}` } })).status, 404);
+});
+
+test("expired shares and incomplete or incorrectly sized uploads cannot be published", async () => {
+	const response = await request("/api/v1/shares", { method: "POST", headers, body: JSON.stringify({ title: "partial", size: 9, contentType: "video/mp4" }) });
+	const share = await response.json();
+	const path = `/api/v1/shares/${share.id}`;
+	assert.equal((await request(`${path}/parts/1`, { method: "PUT", headers, body: new Uint8Array(8) })).status, 400);
+	assert.equal((await request(`${path}/parts/2`, { method: "PUT", headers, body: new Uint8Array(9) })).status, 400);
+	assert.equal((await request(`${path}/complete`, { method: "POST", headers, body: JSON.stringify({ parts: [] }) })).status, 400);
+	const bucket = await runtime.getR2Bucket("MEDIA");
+	const object = await bucket.get(`shares/${share.id}.json`);
+	const manifest = await object.json();
+	manifest.expiresAt = Date.now() - 1;
+	await bucket.put(`shares/${share.id}.json`, JSON.stringify(manifest));
+	assert.equal((await request(`${path}/parts/1`, { method: "PUT", headers, body: new Uint8Array(9) })).status, 404);
+});
