@@ -392,7 +392,7 @@ export async function finishNativeWalk(file, cfg, dependencies = {}) {
 		writeNativeReport(directory, session, journal, browser);
 		fs.writeFileSync(
 			path.join(directory, "agent-prompt.txt"),
-			`${nativeWalkPrompt(file)}\n`,
+			`${nativeWalkPrompt(file, { prepared: true })}\n`,
 			{ mode: 0o600 },
 		);
 		progress("ready");
@@ -406,7 +406,7 @@ export async function finishNativeWalk(file, cfg, dependencies = {}) {
 	}
 }
 
-export function nativeWalkPrompt(file) {
+export function nativeWalkPrompt(file, { prepared = false } = {}) {
 	const journal = readJournal(file, { complete: false });
 	const browser =
 		journal.state === "complete"
@@ -431,6 +431,7 @@ export function nativeWalkPrompt(file) {
 		if (["processing", "ready", "failed"].includes(status))
 			preparation = status;
 	} catch {}
+	if (prepared && journal.state === "complete") preparation = "ready";
 	const findings = browserFindings(browser)
 		.slice(0, 8)
 		.map((event) => event.text.slice(0, 800));
