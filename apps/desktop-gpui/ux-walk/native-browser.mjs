@@ -236,6 +236,15 @@ export class OwnedWindowEvents {
 	}
 }
 
+export async function flushNativeNotes(browser, evidence, events, throughMs) {
+	await browser.flushPendingNotes({
+		fromMs: evidence.active.metadata.startedAtMs,
+		throughMs,
+		allowPage: (page) => events.accepts(page),
+	});
+	await events.flush();
+}
+
 export async function runNativeBrowser(captureId, workDir) {
 	if (
 		!/^[a-f\d-]{36}$/i.test(captureId) ||
@@ -316,6 +325,7 @@ export async function runNativeBrowser(captureId, workDir) {
 	const reply = (value) => process.stdout.write(`${JSON.stringify(value)}\n`);
 	const input = readline.createInterface({ input: process.stdin });
 	let commands = Promise.resolve();
+	let noteFlush = Promise.resolve();
 	input.on("line", (line) => {
 		commands = commands
 			.then(async () => {
@@ -353,29 +363,34 @@ export async function runNativeBrowser(captureId, workDir) {
 						case "start":
 							evidence.start(message.file, message.windowId);
 							break;
-						case "clock":
+						case "clock": {
+							const wasPaused = evidence
+								.owned(message.file)
+								.metadata.anchors.at(-1).paused;
 							evidence.anchor(
 								message.file,
 								message.wallMs,
 								message.offsetMs,
 								message.paused,
 							);
+							if (message.paused && !wasPaused) {
+								noteFlush = noteFlush
+									.then(() =>
+										flushNativeNotes(browser, evidence, events, message.wallMs),
+									)
+									.catch((error) => {
+										if (evidence.active) {
+											evidence.active.metadata.dropped++;
+											evidence.active.metadata.reason = `Open browser note could not be saved: ${redactBrowserText(error.message, 300)}`;
+											evidence.save();
+										}
+									});
+							}
 							break;
+						}
 						case "stop":
 							evidence.owned(message.file);
-							for (const page of browser.context.pages()) {
-								await page
-									.evaluate(async () => {
-										const note = window.__uxwOpenNote?.();
-										if (note)
-											await window.__uxwNote?.({
-												op: "save",
-												id: note.id,
-												text: note.text,
-											});
-									})
-									.catch(() => {});
-							}
+							await noteFlush;
 							await new Promise((resolve) => setTimeout(resolve, 3200));
 							await events.flush();
 							await browser.saveAuth();

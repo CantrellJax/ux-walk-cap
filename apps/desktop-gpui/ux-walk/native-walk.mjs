@@ -177,6 +177,7 @@ function writeNativeReport(directory, session, journal, browser) {
 		...journal.events.filter((event) => event.kind === "note"),
 		...[...browserNotes.values()].map((event) => ({
 			...event,
+			text: typeof event.text === "string" ? event.text : "",
 			offsetMs: event.t - journal.startedAtMs,
 		})),
 	].sort((a, b) => a.offsetMs - b.offsetMs);

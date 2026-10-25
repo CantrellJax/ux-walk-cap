@@ -6,7 +6,11 @@ import path from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
 import { projectBrowserEvidence } from "./browser-evidence.mjs";
-import { NativeBrowserEvidence, OwnedWindowEvents } from "./native-browser.mjs";
+import {
+	flushNativeNotes,
+	NativeBrowserEvidence,
+	OwnedWindowEvents,
+} from "./native-browser.mjs";
 import { finishNativeWalk, nativeWalkPrompt } from "./native-walk.mjs";
 
 test(
@@ -244,19 +248,7 @@ document.querySelector("button").onclick = () => {
 		const stoppedAt = Date.now();
 		journal.durationMs = stoppedAt - startedAtMs - (resumedAt - pausedAt);
 		evidence.anchor(file, stoppedAt, journal.durationMs, true);
-		for (const candidate of browser.context.pages()) {
-			await candidate
-				.evaluate(async () => {
-					const note = window.__uxwOpenNote?.();
-					if (note)
-						await window.__uxwNote?.({
-							op: "save",
-							id: note.id,
-							text: note.text,
-						});
-				})
-				.catch(() => {});
-		}
+		await flushNativeNotes(browser, evidence, windowEvents, stoppedAt);
 		await windowEvents.flush();
 		evidence.finish(file);
 		const stoppedNote = await same.evaluate(() =>

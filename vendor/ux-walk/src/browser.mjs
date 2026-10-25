@@ -369,6 +369,12 @@ input:focus{border-color:#4f46e5;box-shadow:0 0 0 3px rgba(79,70,229,.15)}input:
     // Keep typing in the open note (hiding can move focus).
     if (!on && card && host.shadowRoot.activeElement !== card.input) card.input.focus({ preventScroll: true }); };
   window.__uxwOpenNote = () => (card && !card.edit ? { id: card.note.id, text: card.input.value.trim() } : null);
+  window.__uxwTakeOpenNote = (ids) => {
+    if (!card || card.edit || !ids.includes(card.note.id)) return null;
+    const current = closeCard(), note = current.note;
+    note.text = current.input.value.trim(); note.saved = true;
+    return { id: note.id, text: note.text };
+  };
   const onUi = (e) => {
     const t = e.composedPath()[0], act = t?.closest?.('[data-act]')?.dataset.act;
     const inCard = card && card.node.contains(t);
@@ -865,6 +871,16 @@ export async function openBrowser({ url, metadataOnly = false, networkContext, a
   return {
     context,
     browser,
+    async flushPendingNotes({ fromMs = 0, throughMs = Infinity, allowPage = () => true } = {}) {
+      await noteChain;
+      const eligible = () => [...pending.entries()].filter(([, note]) => note.t >= fromMs && note.t <= throughMs);
+      for (const page of new Set(eligible().map(([, note]) => note.page))) {
+        if (page.isClosed() || !(await allowPage(page))) continue;
+        const entries = eligible().filter(([, note]) => note.page === page);
+        const open = await page.evaluate((ids) => window.__uxwTakeOpenNote?.(ids), entries.map(([id]) => id));
+        for (const [id] of entries) saveNote(id, open?.id === id ? open.text : '');
+      }
+    },
     async checkpoint(file, crop) {
       const p = context.pages().at(-1);
       if (!p || p.isClosed()) throw new Error('no open page for checkpoint');
