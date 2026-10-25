@@ -5112,14 +5112,19 @@ mod tests {
 
     /// The tab strip, and the ids `emptyMessage()` interpolates.
     #[test]
-    fn the_three_tabs_are_all_instant_studio() {
-        let ids: Vec<&str> = RecordingsTab::ALL.iter().map(|tab| tab.id()).collect();
-        assert_eq!(ids, ["all", "instant", "studio"]);
-        let labels: Vec<&str> = RecordingsTab::ALL.iter().map(|tab| tab.label()).collect();
-        assert_eq!(labels, ["Show all", "Instant", "Studio"]);
-        assert_eq!(RecordingsTab::All.icon(), None, "Show all has no glyph");
-        assert_eq!(RecordingsTab::Studio.icon(), Some("icons/film-cut.svg"));
-        assert_eq!(RecordingsTab::Instant.icon(), Some("icons/instant.svg"));
+    fn recording_tabs_match_supported_modes_with_labels_and_icons() {
+        let actual: Vec<_> = RecordingsTab::ALL
+            .iter()
+            .map(|tab| (tab.id(), tab.label(), tab.icon()))
+            .collect();
+        let expected = vec![
+            ("all", "Show all", None),
+            ("instant", "Instant", Some("icons/instant.svg")),
+            ("studio", "Studio", Some("icons/film-cut.svg")),
+            #[cfg(all(target_os = "macos", feature = "ux-walk"))]
+            ("ux-walk", "UX Walk", Some("icons/ux-walk.svg")),
+        ];
+        assert_eq!(actual, expected);
     }
 
     #[test]
