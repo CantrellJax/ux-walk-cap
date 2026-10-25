@@ -12,6 +12,7 @@ pub enum WalkStatus {
     Processing,
     Ready,
     Failed(String),
+    OwnerUnknown(String),
     Interrupted,
 }
 
@@ -23,6 +24,7 @@ impl WalkStatus {
             Self::Processing => "Processing",
             Self::Ready => "Ready",
             Self::Failed(_) => "Processing needs attention",
+            Self::OwnerUnknown(_) => "Processing status unknown",
             Self::Interrupted => "Interrupted · notes saved",
         }
     }
@@ -41,6 +43,7 @@ impl WalkStatus {
             Self::Failed(error) => {
                 format!("Recording and notes are saved. Processing needs attention: {error}")
             }
+            Self::OwnerUnknown(error) => format!("Recording and notes are saved. {error}"),
             Self::Interrupted => {
                 "This walk was interrupted. Its saved notes remain available.".into()
             }
@@ -82,7 +85,10 @@ impl WalkSummary {
     }
 
     pub fn is_active(&self) -> bool {
-        matches!(self.status, WalkStatus::Recording | WalkStatus::Processing)
+        matches!(
+            self.status,
+            WalkStatus::Recording | WalkStatus::Processing | WalkStatus::OwnerUnknown(_)
+        )
     }
 }
 
@@ -142,16 +148,71 @@ pub fn read_summary(file: &Path) -> Result<WalkSummary, String> {
     read_walk(file).map(|(summary, _)| summary)
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum ProcessorOwner {
+    Absent,
+    Alive,
+    Dead,
+    Unknown,
+}
+
+fn processor_owner(directory: &Path) -> ProcessorOwner {
+    let lock = directory.join(".processing-lock");
+    match fs::symlink_metadata(&lock) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return ProcessorOwner::Absent;
+        }
+        Err(_) => return ProcessorOwner::Unknown,
+        Ok(metadata) if !metadata.is_dir() => return ProcessorOwner::Unknown,
+        Ok(_) => {}
+    }
+    let owner = fs::read(lock.join("owner.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());
+    let Some(pid) = owner
+        .as_ref()
+        .and_then(|owner| owner["pid"].as_u64())
+        .filter(|pid| *pid > 0 && *pid <= i32::MAX as u64)
+    else {
+        return ProcessorOwner::Unknown;
+    };
+    #[cfg(unix)]
+    {
+        if unsafe { libc::kill(pid as i32, 0) } == 0 {
+            return ProcessorOwner::Alive;
+        }
+        if std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
+            return ProcessorOwner::Dead;
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = pid;
+    ProcessorOwner::Unknown
+}
+
 pub fn processing_status(directory: &Path) -> WalkStatus {
     let file = directory.join("processing.json");
     let state = fs::read(&file)
         .ok()
         .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());
+    let owner = processor_owner(directory);
+    if owner == ProcessorOwner::Alive {
+        return WalkStatus::Processing;
+    }
+    if owner == ProcessorOwner::Unknown {
+        return WalkStatus::OwnerUnknown("The existing processor’s ownership could not be verified. Reprocessing is paused to protect this walk.".into());
+    }
     if file.exists() && state.is_none() {
         return WalkStatus::Failed("The processing status could not be read.".into());
     }
     match state.as_ref().and_then(|state| state["state"].as_str()) {
-        Some("processing") => WalkStatus::Processing,
+        Some("processing") if owner == ProcessorOwner::Dead => WalkStatus::Failed(
+            "The previous processor stopped. Reprocess this walk to continue.".into(),
+        ),
+        Some("processing") => WalkStatus::OwnerUnknown(
+            "Processing owner information is missing. Reprocessing is paused to protect this walk."
+                .into(),
+        ),
         Some("failed") => WalkStatus::Failed(
             state
                 .as_ref()
@@ -161,9 +222,23 @@ pub fn processing_status(directory: &Path) -> WalkStatus {
         ),
         Some("ready") if directory.join("report.html").is_file() => WalkStatus::Ready,
         Some("ready") => WalkStatus::Failed("The report is missing. Reprocess this walk.".into()),
-        _ if directory.join(".processing-lock").is_dir() => WalkStatus::Processing,
+        _ if owner == ProcessorOwner::Dead => WalkStatus::Failed(
+            "The previous processor stopped. Reprocess this walk to continue.".into(),
+        ),
         _ if directory.join("report.html").is_file() && state.is_none() => WalkStatus::Ready,
         _ => WalkStatus::Saved,
+    }
+}
+
+pub fn reprocess_allowed(file: &Path) -> Result<(), String> {
+    let (summary, journal) = read_walk(file)?;
+    if journal.state != "complete" {
+        return Err("Only a completed walk can be reprocessed.".into());
+    }
+    match summary.status {
+        WalkStatus::Processing => Err("This walk is already being processed.".into()),
+        WalkStatus::OwnerUnknown(error) => Err(error),
+        _ => Ok(()),
     }
 }
 

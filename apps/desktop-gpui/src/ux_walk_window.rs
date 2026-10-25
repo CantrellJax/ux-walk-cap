@@ -136,6 +136,7 @@ struct WalkWindow {
     summary: Option<crate::ux_walk_library::WalkSummary>,
     poll: Option<gpui::Task<()>>,
     action_revision: u64,
+    reprocessing: std::collections::BTreeSet<std::path::PathBuf>,
     notice: Option<String>,
     error: Option<String>,
 }
@@ -175,6 +176,7 @@ impl WalkWindow {
             summary: None,
             poll: None,
             action_revision: 0,
+            reprocessing: Default::default(),
             notice: None,
             error: None,
         }
@@ -207,6 +209,7 @@ impl WalkWindow {
                             .summary
                             .as_ref()
                             .is_some_and(crate::ux_walk_library::WalkSummary::is_active)
+                            || this.reprocessing.contains(&requested)
                         {
                             let file = requested.clone();
                             this.poll = Some(cx.spawn_in(window, async move |this, cx| {
@@ -254,6 +257,58 @@ impl WalkWindow {
             Err(error) => self.error = Some(error),
         }
         cx.notify();
+    }
+
+    fn reprocess_saved(
+        &mut self,
+        file: std::path::PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.selection.file.as_ref() != Some(&file)
+            || self.session.read(cx).phase != Phase::Idle
+            || self.reprocessing.contains(&file)
+        {
+            return;
+        }
+        if let Err(error) = crate::ux_walk_library::reprocess_allowed(&file) {
+            self.error = Some(error);
+            cx.notify();
+            return;
+        }
+        self.reprocessing.insert(file.clone());
+        self.error = None;
+        self.notice = Some(
+            "Preparing chapters, screenshots and transcript… Your notes remain available.".into(),
+        );
+        self.load_saved(file.clone(), window, cx);
+        cx.spawn_in(window, async move |this, cx| {
+            let selected = file.clone();
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    crate::ux_walk_library::reprocess_allowed(&file)?;
+                    crate::ux_walk::run_engine("process", &file)
+                })
+                .await;
+            this.update_in(cx, |this, window, cx| {
+                this.reprocessing.remove(&selected);
+                if this.selection.file.as_ref() != Some(&selected) {
+                    return;
+                }
+                this.notice = Some(match result {
+                    Ok(_) => "Walk ready. Open the report or copy its agent prompt.".into(),
+                    Err(error) => format!(
+                        "Recording and notes are saved. Could not reprocess this walk: {error}"
+                    ),
+                });
+                this.load_saved(selected, window, cx);
+                cx.notify();
+                window.refresh();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn action(&mut self, command: &'static str, file: std::path::PathBuf, cx: &mut Context<Self>) {
@@ -319,6 +374,7 @@ impl Render for WalkWindow {
         let live = !saved_view
             && walk.as_ref().is_some_and(|walk| walk.state == "recording")
             && matches!(session.phase, Phase::Recording { .. });
+        let capture_active = session.phase != Phase::Idle;
         let processing = if saved_view {
             self.summary
                 .as_ref()
@@ -359,6 +415,9 @@ impl Render for WalkWindow {
                 let report = folder.join("report.html");
                 let ready = if saved_view { self.summary.as_ref().is_some_and(crate::ux_walk_library::WalkSummary::report_ready) }
                     else { !processing && crate::ux_walk_library::processing_status(&walk.request.directory) == crate::ux_walk_library::WalkStatus::Ready };
+                let saved_retry = file.clone();
+                let retry_disabled = capture_active || processing || self.reprocessing.contains(&file)
+                    || self.summary.as_ref().is_some_and(|summary| matches!(summary.status, crate::ux_walk_library::WalkStatus::OwnerUnknown(_)));
                 let prompt_file = file.clone();
                 let handoff_file = file.clone();
                 let cmux = crate::ux_walk::load().is_ok_and(|settings| crate::ux_walk::text(&settings, "agent") == "cmux");
@@ -368,9 +427,10 @@ impl Render for WalkWindow {
                         .child(ui::Button::plain(&theme, "walk-open-folder", ui::ButtonVariant::Gray, ui::ButtonSize::Sm).label("Show files").on_click(move |_, _, _| crate::library::reveal_in_folder(&folder)))
                         .child(ui::Button::plain(&theme, "walk-open-report", ui::ButtonVariant::Blue, ui::ButtonSize::Sm).label("Open report").disabled(!ready).on_click(move |_, _, cx| { if let Ok(url) = reqwest::Url::from_file_path(&report) { cx.open_url(url.as_str()); } }))
                         .child(ui::Button::plain(&theme, "walk-copy-prompt", ui::ButtonVariant::Gray, ui::ButtonSize::Sm).label("Copy agent prompt").on_click(cx.listener(move |this, _, _, cx| this.action("prompt", prompt_file.clone(), cx))))
-                        .when(cmux, |this| this.child(ui::Button::plain(&theme, "walk-open-claude", ui::ButtonVariant::Gray, ui::ButtonSize::Sm).label("Open Claude in cmux").disabled(walk.state != "complete" || processing).on_click(cx.listener(move |this, _, _, cx| this.action("handoff", handoff_file.clone(), cx)))))
+                        .when(cmux, |this| this.child(ui::Button::plain(&theme, "walk-open-claude", ui::ButtonVariant::Gray, ui::ButtonSize::Sm).label("Open Claude in cmux").disabled(!ready).on_click(cx.listener(move |this, _, _, cx| this.action("handoff", handoff_file.clone(), cx)))))
+                        .when(saved_view && walk.state == "complete", |this| this.child(ui::Button::plain(&theme, "walk-reprocess-saved", ui::ButtonVariant::Gray, ui::ButtonSize::Sm).label("Reprocess").disabled(retry_disabled).on_click(cx.listener(move |this, _, window, cx| this.reprocess_saved(saved_retry.clone(), window, cx)))))
                         .when(!saved_view && walk.state == "complete" && !processing, |this| this.child(ui::Button::plain(&theme, "walk-edit-copy", ui::ButtonVariant::Gray, ui::ButtonSize::Sm).label("Edit a copy").on_click(cx.listener(|this, _, _, cx| { this.session.update(cx, |session, cx| session.edit_walk(cx)); }))))
-                        .when(!saved_view && walk.state == "complete" && !processing, |this| this.child(ui::Button::plain(&theme, "walk-retry", ui::ButtonVariant::Gray, ui::ButtonSize::Sm).label("Reprocess").on_click(cx.listener(|this, _, _, cx| { this.session.update(cx, |session, cx| session.process_walk(cx)); }))))
+                        .when(!saved_view && walk.state == "complete" && !processing, |this| this.child(ui::Button::plain(&theme, "walk-retry", ui::ButtonVariant::Gray, ui::ButtonSize::Sm).label("Reprocess").disabled(capture_active).on_click(cx.listener(|this, _, _, cx| { this.session.update(cx, |session, cx| session.process_walk(cx)); }))))
                     )
             })
     }

@@ -113,6 +113,7 @@ fn copied_or_malformed_journals_cannot_borrow_another_walks_identity() {
     assert!(index_in(&[f.0.clone()], &[]).is_empty());
 }
 
+#[cfg(unix)]
 #[test]
 fn stale_reports_do_not_hide_processing_or_failure_and_notes_remain_readable() {
     let f = Fixture::new();
@@ -121,10 +122,17 @@ fn stale_reports_do_not_hide_processing_or_failure_and_notes_remain_readable() {
     let folder = file.parent().unwrap();
     fs::write(folder.join("report.html"), "old report").unwrap();
     fs::write(folder.join("processing.json"), r#"{"state":"processing"}"#).unwrap();
+    fs::create_dir(folder.join(".processing-lock")).unwrap();
+    fs::write(
+        folder.join(".processing-lock/owner.json"),
+        serde_json::to_vec(&serde_json::json!({"pid":std::process::id()})).unwrap(),
+    )
+    .unwrap();
     let summary = read_summary(&file).unwrap();
     assert_eq!(summary.status, WalkStatus::Processing);
     assert!(!summary.report_ready());
     assert!(summary.is_active());
+    fs::remove_dir_all(folder.join(".processing-lock")).unwrap();
     fs::write(
         folder.join("processing.json"),
         r#"{"state":"failed","error":"Provider unavailable"}"#,
@@ -197,4 +205,67 @@ fn saved_evidence_description_uses_the_selected_walks_recorded_coverage() {
     assert!(captured.contains("Requests: partial: browser closed"));
     assert!(captured.contains("Clicks and page details: captured"));
     assert!(!ux_walk_library::evidence_notice(b.parent().unwrap()).contains("owned browser"));
+}
+
+#[cfg(unix)]
+#[test]
+fn dead_processor_is_retryable_without_removing_the_engines_lock() {
+    let f = Fixture::new();
+    let source = f.source("source");
+    let file = f.journal("walk", &source, 100);
+    let folder = file.parent().unwrap();
+    fs::create_dir(folder.join(".processing-lock")).unwrap();
+    let owner = serde_json::json!({"pid":i32::MAX});
+    fs::write(
+        folder.join(".processing-lock/owner.json"),
+        serde_json::to_vec(&owner).unwrap(),
+    )
+    .unwrap();
+    fs::write(folder.join("processing.json"), r#"{"state":"processing"}"#).unwrap();
+    let summary = read_summary(&file).unwrap();
+    assert!(matches!(summary.status, WalkStatus::Failed(_)));
+    assert!(!summary.is_active());
+    assert!(ux_walk_library::reprocess_allowed(&file).is_ok());
+    assert!(folder.join(".processing-lock/owner.json").is_file());
+}
+
+#[test]
+fn missing_or_invalid_processor_owner_never_allows_another_run() {
+    let f = Fixture::new();
+    let source = f.source("source");
+    let file = f.journal("walk", &source, 100);
+    let folder = file.parent().unwrap();
+    fs::write(folder.join("processing.json"), r#"{"state":"processing"}"#).unwrap();
+    assert!(matches!(
+        read_summary(&file).unwrap().status,
+        WalkStatus::OwnerUnknown(_)
+    ));
+    assert!(ux_walk_library::reprocess_allowed(&file).is_err());
+    fs::create_dir(folder.join(".processing-lock")).unwrap();
+    assert!(matches!(
+        read_summary(&file).unwrap().status,
+        WalkStatus::OwnerUnknown(_)
+    ));
+    assert!(ux_walk_library::reprocess_allowed(&file).is_err());
+    fs::write(folder.join(".processing-lock/owner.json"), r#"{"pid":0}"#).unwrap();
+    assert!(ux_walk_library::reprocess_allowed(&file).is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_live_processor_blocks_reprocessing_even_if_a_stale_report_exists() {
+    let f = Fixture::new();
+    let source = f.source("source");
+    let file = f.journal("walk", &source, 100);
+    let folder = file.parent().unwrap();
+    fs::write(folder.join("report.html"), "old report").unwrap();
+    fs::write(folder.join("processing.json"), r#"{"state":"ready"}"#).unwrap();
+    fs::create_dir(folder.join(".processing-lock")).unwrap();
+    fs::write(
+        folder.join(".processing-lock/owner.json"),
+        serde_json::to_vec(&serde_json::json!({"pid":std::process::id()})).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(read_summary(&file).unwrap().status, WalkStatus::Processing);
+    assert!(ux_walk_library::reprocess_allowed(&file).is_err());
 }
