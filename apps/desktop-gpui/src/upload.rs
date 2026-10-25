@@ -1229,8 +1229,12 @@ pub async fn upload_exported_video(
             content_hash: None,
         });
         meta.upload = None;
-        meta.save_for_project()
-            .map_err(|_| "The upload finished, but its link could not be saved locally.")?;
+        if meta.save_for_project().is_err() {
+            return Err(match client.revoke(&item.id).await {
+                Ok(()) => "The link could not be saved locally, so the new share was revoked. Your source recording is safe.".into(),
+                Err(_) => format!("The link could not be saved locally. Revoke share {} on your configured server; your source recording is safe.", item.id),
+            });
+        }
         return Ok(UploadResult::Success(item.link));
     }
     upload_exported_video_inner(project_path, organization_id, progress, cancel, false)

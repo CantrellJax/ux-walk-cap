@@ -3060,7 +3060,7 @@ impl SettingsWindow {
             ("recording-delete", index),
             "icons/trash.svg",
             "Delete",
-            false,
+            self.recordings.sharing_busy.contains(&path),
             cx,
             move |this, window, cx| this.delete_recording(path.clone(), window, cx),
         ))

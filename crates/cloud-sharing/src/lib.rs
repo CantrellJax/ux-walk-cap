@@ -350,6 +350,7 @@ impl SharingClient {
         if id.len() != 36 || !id.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
             return Err("Invalid share id.".into());
         }
+        let id = id.to_ascii_lowercase();
         let response = self
             .http
             .delete(self.url(&format!("api/v1/shares/{id}")))
