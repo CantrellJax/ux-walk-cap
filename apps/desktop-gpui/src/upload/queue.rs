@@ -1022,6 +1022,9 @@ struct QueueRuntime {
 impl gpui::Global for QueueRuntime {}
 
 pub(crate) fn init(cx: &mut gpui::App) {
+    if cfg!(feature = "ux-walk") {
+        return;
+    }
     let queue = manager().clone();
     let worker = gpui_tokio::Tokio::spawn(cx, queue.run());
     let refresh = cx.spawn(async move |cx| {
@@ -1060,6 +1063,9 @@ pub(crate) fn init(cx: &mut gpui::App) {
 }
 
 pub(crate) fn status(project: &Path, meta: &RecordingMeta) -> Option<UploadState> {
+    if cfg!(feature = "ux-walk") {
+        return None;
+    }
     if !matches!(meta.inner, RecordingMetaInner::Instant(_)) {
         return None;
     }

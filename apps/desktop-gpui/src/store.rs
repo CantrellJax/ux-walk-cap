@@ -989,7 +989,11 @@ pub fn excluded_windows_to_json(windows: &[WindowExclusion]) -> Value {
 
 /// `https://cap.so` -- `default_server_url()` in `general_settings.rs`, which
 /// is also what `clientEnv.VITE_SERVER_URL` resolves to in a release build.
-pub const DEFAULT_SERVER_URL: &str = "https://cap.so";
+pub const DEFAULT_SERVER_URL: &str = if cfg!(feature = "ux-walk") {
+    ""
+} else {
+    "https://cap.so"
+};
 
 /// `DEFAULT_FILENAME_TEMPLATE` in `src-tauri/src/recording.rs`, spelled the
 /// same way `general.tsx` spells it.

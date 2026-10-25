@@ -23,6 +23,7 @@ mod recordings;
 mod screenshot;
 mod selftest;
 mod session;
+mod sharing;
 mod targets;
 mod update;
 mod upload;
@@ -115,7 +116,7 @@ const WELCOME_LINES: &[&[(&str, &str)]] = &[
 
 /// Long-form help epilogue. Agents read `cap --help` before doing anything, so the conventions they
 /// need to drive the CLI correctly (JSON on stdout, env vars, the canonical workflow) live here.
-const AGENT_HELP: &str = "\
+const UPSTREAM_AGENT_HELP: &str = "\
 OUTPUT
   Pass --json (global) for machine-readable JSON on stdout; stderr stays human-readable.
   stdout is the authoritative result. On failure the process exits non-zero and, in --json
@@ -144,6 +145,16 @@ TYPICAL AGENT WORKFLOW
   cap project validate <path.cap> --json     # confirm the recording is complete
   cap export <path.cap> --output out.mp4 --json
   cap upload out.mp4 --json                   # get a shareable link (needs CAP_API_KEY)";
+
+const AGENT_HELP: &str = if cfg!(feature = "ux-walk") {
+    "Cap UX records locally without an account.
+Use cap sharing configure --server https://your-server.example --enable to choose a sharing server.
+Supply an upload credential with --token-stdin, or CAP_UX_UPLOAD_TOKEN for a headless session.
+Use cap upload FILE --json to share explicitly, and cap sharing revoke ID to revoke a link.
+Use cap guide --json for local capture, export and library commands."
+} else {
+    UPSTREAM_AGENT_HELP
+};
 
 #[derive(Parser)]
 #[command(
@@ -203,27 +214,39 @@ enum Commands {
     Recordings(RecordingsArgs),
     /// Upload a recording or video file and get a shareable link
     Upload(upload::UploadArgs),
+    /// Configure your Cap UX sharing server or revoke a link
+    Sharing(sharing::SharingArgs),
     /// Update Cap Desktop and the bundled CLI
     Update(FormatArgs),
     /// Show how `cap upload` will authenticate (env key or Cap Desktop login)
+    #[command(hide = cfg!(feature = "ux-walk"))]
     Auth(AuthArgs),
     /// Read and manage Caps in your personal library
+    #[command(hide = cfg!(feature = "ux-walk"))]
     Caps(caps::CapsArgs),
     /// Read or update the authenticated Cap account
+    #[command(hide = cfg!(feature = "ux-walk"))]
     Account(account::AccountArgs),
     /// Inspect Cap organizations, members, billing, and storage connections
+    #[command(hide = cfg!(feature = "ux-walk"))]
     Organizations(organizations::OrganizationsArgs),
     /// Manage folders, spaces, and space membership
+    #[command(hide = cfg!(feature = "ux-walk"))]
     Library(library::LibraryArgs),
     /// Read and manage account notifications
+    #[command(hide = cfg!(feature = "ux-walk"))]
     Notifications(notifications::NotificationsArgs),
     /// Read organization, space, or Cap analytics
+    #[command(hide = cfg!(feature = "ux-walk"))]
     Analytics(analytics::AnalyticsArgs),
     /// Inspect developer apps, domains, usage, and credits
+    #[command(hide = cfg!(feature = "ux-walk"))]
     Developers(developers::DevelopersArgs),
     /// Inspect or wait for asynchronous Cap operations
+    #[command(hide = cfg!(feature = "ux-walk"))]
     Jobs(jobs::JobsArgs),
     /// Run Cap's local Model Context Protocol server
+    #[command(hide = cfg!(feature = "ux-walk"))]
     Mcp(mcp::McpArgs),
     /// Install Cap integrations for one explicitly selected agent
     Agents(agents::AgentsArgs),
@@ -595,6 +618,24 @@ async fn run(cli: Cli) -> Result<(), String> {
         return print_welcome(json);
     };
 
+    if cfg!(feature = "ux-walk")
+        && matches!(
+            &command,
+            Commands::Auth(_)
+                | Commands::Caps(_)
+                | Commands::Account(_)
+                | Commands::Organizations(_)
+                | Commands::Library(_)
+                | Commands::Notifications(_)
+                | Commands::Analytics(_)
+                | Commands::Developers(_)
+                | Commands::Jobs(_)
+                | Commands::Mcp(_)
+        )
+    {
+        return Err("This upstream cloud command is not part of Cap UX. Use cap sharing, cap upload, or cap guide for local recording commands.".into());
+    }
+
     match command {
         Commands::Export(e) => e.run(json).await,
         Commands::ExportPreview(e) => e.run().await,
@@ -629,6 +670,7 @@ async fn run(cli: Cli) -> Result<(), String> {
         Commands::Screenshot(s) => s.run(json).await,
         Commands::Recordings(args) => args.run(json),
         Commands::Upload(args) => args.run(json).await,
+        Commands::Sharing(args) => args.run().await,
         Commands::Update(args) => {
             let format = resolve_format(json, args.format);
             finish_json(format, update::run(format))

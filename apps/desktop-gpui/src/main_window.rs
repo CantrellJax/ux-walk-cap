@@ -159,8 +159,7 @@ impl Mode {
     pub(crate) fn panel_description(self) -> &'static str {
         match self {
             Self::Instant => {
-                "Share instantly with a link. Your recording uploads as you record, so you \
-                 can share it immediately when you're done."
+                "Record a ready-to-play video locally. Share it through your chosen server when you are ready."
             }
             Self::Studio => {
                 "Record locally in the highest quality for editing later. Perfect for \
@@ -2374,7 +2373,10 @@ impl MainWindow {
                 None => return,
             }
         };
-        if mode == recording::RecordingMode::Instant && !crate::store::auth_snapshot().signed_in() {
+        if !cfg!(feature = "ux-walk")
+            && mode == recording::RecordingMode::Instant
+            && !crate::store::auth_snapshot().signed_in()
+        {
             let kind = match &target {
                 ScreenCaptureTarget::Display { .. } => TargetType::Display,
                 ScreenCaptureTarget::Window { .. } => TargetType::Window,
@@ -6336,7 +6338,9 @@ impl MainWindow {
                     .gap(px(4.))
                     .when(!recording_clip, |this| {
                         this.child(self.render_logo())
-                            .child(self.render_plan_badge())
+                            .when(!cfg!(feature = "ux-walk"), |this| {
+                                this.child(self.render_plan_badge())
+                            })
                     })
                     .when(recording_clip, |this| {
                         this.child(

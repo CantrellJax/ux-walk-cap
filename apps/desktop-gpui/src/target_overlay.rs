@@ -890,7 +890,8 @@ impl OverlayWindow {
     /// (`target-select-overlay.tsx`'s "Sign In To Use"). The editor's record
     /// flow always records Studio whatever the pill says.
     fn needs_sign_in(&self, mode: Mode, cx: &App) -> bool {
-        mode == Mode::Instant
+        !cfg!(feature = "ux-walk")
+            && mode == Mode::Instant
             && !self.signed_in
             && crate::session::RecordingSession::global(cx)
                 .read(cx)

@@ -533,7 +533,9 @@ impl SettingsWindow {
             }
             Page::Integrations => {
                 self.pages.integrations_view = IntegrationsView::Index;
-                self.integrations_fetch_storage(false, window, cx);
+                if !cfg!(feature = "ux-walk") {
+                    self.integrations_fetch_storage(false, window, cx);
+                }
             }
             Page::Automations => {
                 self.pages.automations = store::automations();
@@ -5004,6 +5006,9 @@ impl SettingsWindow {
     }
 
     pub(crate) fn render_integrations(&self, cx: &mut Context<Self>) -> Vec<gpui::AnyElement> {
+        if cfg!(feature = "ux-walk") {
+            return self.render_owned_integrations(cx);
+        }
         match self.pages.integrations_view {
             IntegrationsView::Index => self.render_integrations_index(cx),
             IntegrationsView::S3 => self.render_s3_config(cx),

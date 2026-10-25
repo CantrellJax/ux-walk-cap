@@ -96,8 +96,15 @@ pub fn run_engine(command: &str, file: &std::path::Path) -> Result<String, Strin
     }
 }
 
-#[cfg(target_os = "macos")]
 pub fn prompt_key(label: &str) -> Option<String> {
+    prompt_secret(
+        &format!("{label} API key"),
+        "Saved in your login Keychain for UX Walk. Your audio is sent to this provider when transcription runs.",
+    )
+}
+
+#[cfg(target_os = "macos")]
+pub fn prompt_secret(title: &str, detail: &str) -> Option<String> {
     use objc2::{
         class, msg_send, msg_send_id,
         rc::{Allocated, Id},
@@ -128,6 +135,6 @@ pub fn prompt_key(label: &str) -> Option<String> {
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn prompt_key(_label: &str) -> Option<String> {
+pub fn prompt_secret(_title: &str, _detail: &str) -> Option<String> {
     None
 }

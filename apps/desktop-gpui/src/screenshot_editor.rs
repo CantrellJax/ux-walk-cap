@@ -2121,6 +2121,14 @@ impl ScreenshotEditorWindow {
     /// which also heals a sharing id deleted server-side by minting a fresh
     /// record.
     fn share_screenshot(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if cfg!(feature = "ux-walk")
+            && !cap_cloud_sharing::load().is_ok_and(|settings| settings.enabled)
+        {
+            cx.defer(|cx| {
+                crate::app_windows::open_settings(crate::settings_window::Page::Sharing, cx)
+            });
+            return;
+        }
         if self.exporting {
             return;
         }
@@ -2173,7 +2181,8 @@ impl ScreenshotEditorWindow {
 
             // 2. An unchanged config short-circuits to the stored link --
             //    `screenshot_share_link_for_hash`.
-            if let Some(sharing) = meta.sharing.as_ref()
+            if !cfg!(feature = "ux-walk")
+                && let Some(sharing) = meta.sharing.as_ref()
                 && sharing.content_hash.as_deref() == Some(content_hash.as_str())
             {
                 let link = sharing.link.clone();

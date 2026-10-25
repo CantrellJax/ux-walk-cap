@@ -789,14 +789,23 @@ impl EditorWindow {
             return;
         }
         if ui.destination == ExportDestination::Link {
-            let sign_in = SignIn::global(cx);
-            if sign_in.read(cx).is_pending() {
-                sign_in.update(cx, |sign_in, cx| sign_in.cancel(cx));
-                return;
-            }
-            if ui.auth_rejected || !store::auth_snapshot().signed_in() {
-                sign_in.update(cx, |sign_in, cx| sign_in.start(SignInOrigin::Editor, cx));
-                return;
+            if cfg!(feature = "ux-walk") {
+                if !cap_cloud_sharing::load().is_ok_and(|settings| settings.enabled) {
+                    cx.defer(|cx| {
+                        crate::app_windows::open_settings(crate::settings_window::Page::Sharing, cx)
+                    });
+                    return;
+                }
+            } else {
+                let sign_in = SignIn::global(cx);
+                if sign_in.read(cx).is_pending() {
+                    sign_in.update(cx, |sign_in, cx| sign_in.cancel(cx));
+                    return;
+                }
+                if ui.auth_rejected || !store::auth_snapshot().signed_in() {
+                    sign_in.update(cx, |sign_in, cx| sign_in.start(SignInOrigin::Editor, cx));
+                    return;
+                }
             }
             self.start_link_export(window, cx);
             return;
@@ -1081,7 +1090,7 @@ impl EditorWindow {
         }
 
         let upgraded = store::auth_snapshot().is_upgraded();
-        if !upgraded && duration >= 300.0 {
+        if !cfg!(feature = "ux-walk") && !upgraded && duration >= 300.0 {
             cx.open_url(crate::auth::PRICING_URL);
             return;
         }
@@ -1116,7 +1125,7 @@ impl EditorWindow {
         ui.cancel = Arc::new(AtomicBool::new(false));
         let cancel = ui.cancel.clone();
         ui.phase = ExportPhase::Starting;
-        ui.reuploading = self.sharing.is_some();
+        ui.reuploading = !cfg!(feature = "ux-walk") && self.sharing.is_some();
         ui.error = None;
         ui.share_link = None;
         ui.upload_progress = 0.0;
@@ -1706,17 +1715,27 @@ impl EditorWindow {
     fn export_cta(&self, ui: &ExportUi, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = self.theme;
         let editor = theme.editor;
-        let signed_in = !ui.auth_rejected && store::auth_snapshot().signed_in();
+        let signed_in = if cfg!(feature = "ux-walk") {
+            cap_cloud_sharing::load().is_ok_and(|settings| settings.enabled)
+        } else {
+            !ui.auth_rejected && store::auth_snapshot().signed_in()
+        };
         let sign_in_pending = SignIn::global(cx).read(cx).is_pending();
         let (label, icon, primary) = match ui.destination {
             ExportDestination::File => ("Export to File", Some("icons/folder.svg"), true),
             ExportDestination::Clipboard => ("Export to Clipboard", Some("icons/copy.svg"), true),
             ExportDestination::Link if sign_in_pending => ("Cancel Sign In", None, false),
-            ExportDestination::Link if !signed_in => {
-                ("Sign in to share", Some("icons/link.svg"), true)
-            }
+            ExportDestination::Link if !signed_in => (
+                if cfg!(feature = "ux-walk") {
+                    "Configure sharing"
+                } else {
+                    "Sign in to share"
+                },
+                Some("icons/link.svg"),
+                true,
+            ),
             ExportDestination::Link => (
-                if self.sharing.is_some() {
+                if !cfg!(feature = "ux-walk") && self.sharing.is_some() {
                     "Reupload to same link"
                 } else {
                     "Create shareable link"
@@ -1847,7 +1866,7 @@ impl EditorWindow {
                 )
             })
             .when(
-                ui.destination == ExportDestination::Link && self.sharing.is_some(),
+                !cfg!(feature = "ux-walk") && ui.destination == ExportDestination::Link && self.sharing.is_some(),
                 |field| {
                     let link = self.sharing.as_ref()
                         .map(|sharing| sharing.link.clone())

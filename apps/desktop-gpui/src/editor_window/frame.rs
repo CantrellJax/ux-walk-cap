@@ -288,7 +288,7 @@ impl EditorWindow {
                 let input = cx.new(|cx| {
                     let mut input = ui::TextInputState::single_line(window, cx);
                     input.set_placeholder(match field {
-                        FrameField::Url => "cap.so",
+                        FrameField::Url => "your-site.example",
                         FrameField::Title => "Window title",
                     });
                     input

@@ -114,6 +114,34 @@ impl UploadArgs {
     }
 
     async fn run_inner(self, format: OutputFormat) -> Result<(), String> {
+        if cfg!(feature = "ux-walk") {
+            if self.video_id.is_some() {
+                return Err("Cap UX creates a new expiring link for each share. Use cap sharing revoke to revoke a previous link.".into());
+            }
+            let client = cap_cloud_sharing::SharingClient::configured()?;
+            let file_path = self.resolve_upload_file().await?;
+            let title = self
+                .name
+                .as_deref()
+                .or_else(|| file_path.file_stem()?.to_str())
+                .unwrap_or("Cap UX recording");
+            let item = client
+                .upload_file(
+                    &file_path,
+                    title,
+                    "video/mp4",
+                    |_| {},
+                    &std::sync::atomic::AtomicBool::new(false),
+                )
+                .await?;
+            return match format {
+                OutputFormat::Json => write_json(&item),
+                OutputFormat::Text => {
+                    println!("{}", item.link);
+                    Ok(())
+                }
+            };
+        }
         let file_path = self.resolve_upload_file().await?;
         let meta = probe_video_meta(&file_path)?;
         let use_agent = prefer_agent_upload();

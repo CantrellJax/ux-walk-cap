@@ -1,0 +1,19 @@
+[package]
+name = "cap-cloud-sharing"
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-only"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tokio = { version = "1", features = ["fs", "io-util"] }
+dirs = "6"
+keyring = "=4.1.5"
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

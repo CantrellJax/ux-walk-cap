@@ -72,6 +72,7 @@ mod screenshot_export;
 mod script_text;
 mod session;
 mod settings_pages;
+mod settings_sharing;
 mod settings_ux_walk;
 mod settings_window;
 mod sign_in;

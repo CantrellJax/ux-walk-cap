@@ -11,6 +11,8 @@ on:
     paths:
       - apps/desktop-gpui/**
       - apps/cli/**
+      - apps/cloud/**
+      - crates/cloud-sharing/**
       - crates/recording/**
       - scripts/bundle-gpui*
       - scripts/build-desktop-binaries*
@@ -24,6 +26,8 @@ on:
     paths:
       - apps/desktop-gpui/**
       - apps/cli/**
+      - apps/cloud/**
+      - crates/cloud-sharing/**
       - crates/recording/**
       - scripts/bundle-gpui*
       - scripts/build-desktop-binaries*
@@ -37,6 +41,17 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  cloud:
+    if: github.repository == 'CantrellJax/ux-walk-cap'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --ignore-scripts --prefix apps/cloud
+      - run: npm run check --prefix apps/cloud
   native:
     if: github.repository == 'CantrellJax/ux-walk-cap'
     runs-on: macos-15
@@ -65,7 +80,7 @@ jobs:
             apps/desktop-gpui -> target
       - name: Format changed Rust surfaces
         run: |
-          rustfmt +1.95.0 --edition 2024 --config skip_children=true apps/desktop-gpui/src/main.rs apps/desktop-gpui/src/assets.rs apps/desktop-gpui/src/platform.rs apps/desktop-gpui/src/permission_guide.rs apps/desktop-gpui/src/camera_window.rs apps/desktop-gpui/src/target_overlay.rs apps/desktop-gpui/src/ux_walk_browser.rs apps/desktop-gpui/src/ux_walk_browser_target.rs apps/desktop-gpui/tests/ux_walk_browser_contract.rs apps/desktop-gpui/src/tray.rs apps/desktop-gpui/src/updates.rs apps/desktop-gpui/src/installer.rs apps/desktop-gpui/src/ux_walk.rs apps/desktop-gpui/src/ux_walk_journal.rs apps/desktop-gpui/src/ux_walk_library.rs apps/desktop-gpui/src/library.rs apps/desktop-gpui/tests/ux_walk_library_contract.rs apps/desktop-gpui/src/ux_walk_window.rs apps/desktop-gpui/src/session.rs apps/desktop-gpui/src/controls_window.rs apps/desktop-gpui/src/recording.rs apps/desktop-gpui/src/deeplink.rs apps/desktop-gpui/src/menus.rs apps/desktop-gpui/src/hotkeys.rs apps/desktop-gpui/tests/ux_walk_journal_contract.rs apps/desktop-gpui/src/ux_walk_preferences.rs apps/desktop-gpui/src/settings_ux_walk.rs apps/desktop-gpui/src/settings_window.rs apps/desktop-gpui/src/settings_pages.rs apps/desktop-gpui/src/store.rs apps/desktop-gpui/src/diagnostics.rs apps/desktop-gpui/src/transcription.rs apps/desktop-gpui/src/mode_choice.rs apps/desktop-gpui/src/mode_select_window.rs apps/desktop-gpui/src/main_window.rs apps/desktop-gpui/src/onboarding_window.rs apps/desktop-gpui/src/onboarding_doodles.rs apps/desktop-gpui/src/app_windows.rs apps/cli/src/credentials.rs apps/cli/src/automation.rs apps/cli/src/recordings.rs apps/cli/src/update.rs
+          rustfmt +1.95.0 --edition 2024 --config skip_children=true apps/desktop-gpui/src/main.rs apps/desktop-gpui/src/assets.rs apps/desktop-gpui/src/platform.rs apps/desktop-gpui/src/permission_guide.rs apps/desktop-gpui/src/camera_window.rs apps/desktop-gpui/src/target_overlay.rs apps/desktop-gpui/src/ux_walk_browser.rs apps/desktop-gpui/src/ux_walk_browser_target.rs apps/desktop-gpui/tests/ux_walk_browser_contract.rs apps/desktop-gpui/src/tray.rs apps/desktop-gpui/src/updates.rs apps/desktop-gpui/src/installer.rs apps/desktop-gpui/src/ux_walk.rs apps/desktop-gpui/src/ux_walk_journal.rs apps/desktop-gpui/src/ux_walk_library.rs apps/desktop-gpui/src/library.rs apps/desktop-gpui/tests/ux_walk_library_contract.rs apps/desktop-gpui/src/ux_walk_window.rs apps/desktop-gpui/src/session.rs apps/desktop-gpui/src/controls_window.rs apps/desktop-gpui/src/recording.rs apps/desktop-gpui/src/deeplink.rs apps/desktop-gpui/src/menus.rs apps/desktop-gpui/src/hotkeys.rs apps/desktop-gpui/tests/ux_walk_journal_contract.rs apps/desktop-gpui/src/ux_walk_preferences.rs apps/desktop-gpui/src/settings_ux_walk.rs apps/desktop-gpui/src/settings_window.rs apps/desktop-gpui/src/settings_pages.rs apps/desktop-gpui/src/store.rs apps/desktop-gpui/src/diagnostics.rs apps/desktop-gpui/src/transcription.rs apps/desktop-gpui/src/mode_choice.rs apps/desktop-gpui/src/mode_select_window.rs apps/desktop-gpui/src/main_window.rs apps/desktop-gpui/src/onboarding_window.rs apps/desktop-gpui/src/onboarding_doodles.rs apps/desktop-gpui/src/app_windows.rs apps/cli/src/credentials.rs apps/cli/src/automation.rs apps/cli/src/recordings.rs apps/cli/src/update.rs apps/cli/src/upload.rs apps/cli/src/sharing.rs apps/cli/src/main.rs apps/cli/src/guide.rs apps/desktop-gpui/src/settings_sharing.rs apps/desktop-gpui/src/auth.rs apps/desktop-gpui/src/sign_in.rs apps/desktop-gpui/src/upload.rs apps/desktop-gpui/src/upload/queue.rs apps/desktop-gpui/src/editor_export.rs apps/desktop-gpui/src/editor_window/frame.rs apps/desktop-gpui/src/screenshot_editor.rs crates/cloud-sharing/src/lib.rs
           rustfmt +1.95.0 --edition 2024 --config skip_children=true crates/recording/src/sources/screen_capture/mod.rs crates/recording/src/sources/screen_capture/macos.rs crates/recording/src/sources/screen_capture/window_target.rs crates/recording/src/studio_recording.rs crates/recording/src/instant_recording.rs crates/recording/tests/macos_window_target_contract.rs
           rustfmt +1.95.0 --edition 2024 --config skip_children=true apps/desktop-gpui/src/onboarding_window/stage.rs apps/desktop-gpui/src/permissions.rs
           git diff > "$RUNNER_TEMP/rustfmt.patch"
@@ -83,6 +98,9 @@ jobs:
         run: |
           cargo +1.95.0 check --manifest-path apps/desktop-gpui/Cargo.toml --locked -p cap-desktop-gpui
           cargo +1.95.0 check --locked -p cap
+          cargo +1.95.0 test --locked -p cap-cloud-sharing
+      - name: Exercise local Instant recording metadata
+        run: cargo +1.95.0 test --manifest-path apps/desktop-gpui/Cargo.toml --locked --bin cap-gpui owned_sharing_tests
       - name: Exercise the native walk processor
         run: node --test apps/desktop-gpui/ux-walk/browser-evidence.test.mjs apps/desktop-gpui/ux-walk/native-walk.test.mjs
       - name: Exercise isolated window selection
@@ -150,6 +168,7 @@ jobs:
               'CAP_GPUI_LOG_DIR': profile + '/logs',
               'CAP_GPUI_RECORDINGS_DIR': profile + '/recordings',
               'CAP_UX_WALK_CONFIG_DIR': profile + '/ux-walk',
+              'CAP_UX_SHARING_CONFIG': profile + '/sharing.json',
           }
           plist = out / 'Preview.plist'
           plist.write_bytes(plistlib.dumps(info))

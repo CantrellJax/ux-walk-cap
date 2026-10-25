@@ -14,7 +14,11 @@ use serde_json::Value;
 use crate::atomic;
 use crate::{OutputFormat, write_json};
 
-pub const DEFAULT_SERVER: &str = "https://cap.so";
+pub const DEFAULT_SERVER: &str = if cfg!(feature = "ux-walk") {
+    ""
+} else {
+    "https://cap.so"
+};
 const AGENT_KEYRING_SERVICE: &str = if cfg!(feature = "ux-walk") {
     "com.cantrell.cap-ux.cli"
 } else {

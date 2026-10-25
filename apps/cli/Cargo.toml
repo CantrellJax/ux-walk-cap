@@ -8,6 +8,7 @@ default = ["ux-walk"]
 ux-walk = []
 
 [dependencies]
+cap-cloud-sharing = { path = "../../crates/cloud-sharing" }
 clap = { version = "4.5.23", features = ["derive"] }
 clap_complete = "4.5.38"
 cap-project = { path = "../../crates/project" }
