@@ -934,9 +934,13 @@ impl SettingsWindow {
 
 const SCREENSHOT_SHORTCUTS: [&str; 3] = ["screenshotArea", "screenshotWindow", "screenshotDisplay"];
 
-const RECORDING_SHORTCUTS: [&str; 7] = [
+const RECORDING_SHORTCUTS: &[&str] = &[
     "startStudioRecording",
     "startInstantRecording",
+    #[cfg(all(target_os = "macos", feature = "ux-walk"))]
+    "openUxWalk",
+    #[cfg(all(target_os = "macos", feature = "ux-walk"))]
+    "openUxWalkNotes",
     "openRecordingPickerArea",
     "openRecordingPickerWindow",
     "openRecordingPickerDisplay",
@@ -1045,6 +1049,8 @@ fn shortcut_label(action: &str) -> &'static str {
         "screenshotDisplay" => "Screenshot the display",
         "startStudioRecording" => "Start Studio recording",
         "startInstantRecording" => "Start Instant recording",
+        "openUxWalk" => "Open UX Walk",
+        "openUxWalkNotes" => "Open walk notes",
         "openRecordingPickerArea" => "Record an area",
         "openRecordingPickerWindow" => "Record a window",
         "openRecordingPickerDisplay" => "Record a display",
@@ -1105,6 +1111,8 @@ fn shortcut_effect(
         "startInstantRecording" => {
             format!("record your selected screen or window in Instant mode{instant_stop}")
         }
+        "openUxWalk" => "open UX Walk setup with the recorder’s capture and audio controls".into(),
+        "openUxWalkNotes" => "open notes for your current or most recent UX Walk".into(),
         "openRecordingPickerArea" => format!("select an area, then {}", picker_outcome(mode)),
         "openRecordingPickerWindow" => format!("choose a window, then {}", picker_outcome(mode)),
         "openRecordingPickerDisplay" => format!("choose a display, then {}", picker_outcome(mode)),
@@ -1504,7 +1512,7 @@ impl SettingsWindow {
             ),
         );
 
-        let mut recording = rows_for(&RECORDING_SHORTCUTS, cx);
+        let mut recording = rows_for(RECORDING_SHORTCUTS, cx);
         recording.push(
             self.render_outcome_panel(
                 "outcome-studio",
@@ -8224,7 +8232,14 @@ mod tests {
             .chain(WHILE_RECORDING_SHORTCUTS.iter())
             .copied()
             .collect();
-        assert_eq!(shown.len(), 13);
+        assert_eq!(
+            shown.len(),
+            if cfg!(all(target_os = "macos", feature = "ux-walk")) {
+                15
+            } else {
+                13
+            }
+        );
         let settings = store::GeneralSettings::default();
         for action in &shown {
             assert_eq!(shown.iter().filter(|other| *other == action).count(), 1);

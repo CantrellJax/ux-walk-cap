@@ -324,14 +324,26 @@ enum RecordingsTab {
     All,
     Instant,
     Studio,
+    #[cfg(all(target_os = "macos", feature = "ux-walk"))]
+    UxWalk,
 }
 
 impl RecordingsTab {
-    const ALL: &'static [RecordingsTab] = &[Self::All, Self::Instant, Self::Studio];
+    const ALL: &'static [RecordingsTab] = &[
+        Self::All,
+        Self::Instant,
+        Self::Studio,
+        #[cfg(all(target_os = "macos", feature = "ux-walk"))]
+        Self::UxWalk,
+    ];
 
     /// The tab's `id`, which for the two mode tabs is the mode's own
     /// serialized name -- `emptyMessage()` interpolates it directly.
     fn id(self) -> &'static str {
+        #[cfg(all(target_os = "macos", feature = "ux-walk"))]
+        if self == Self::UxWalk {
+            return "ux-walk";
+        }
         match self.mode() {
             Some(mode) => mode.slug(),
             None => "all",
@@ -343,11 +355,17 @@ impl RecordingsTab {
             Self::All => "Show all",
             Self::Instant => "Instant",
             Self::Studio => "Studio",
+            #[cfg(all(target_os = "macos", feature = "ux-walk"))]
+            Self::UxWalk => "UX Walk",
         }
     }
 
     /// `Show all` has no glyph; the other two carry the mode's own.
     fn icon(self) -> Option<&'static str> {
+        #[cfg(all(target_os = "macos", feature = "ux-walk"))]
+        if self == Self::UxWalk {
+            return Some("icons/ux-walk.svg");
+        }
         self.mode().map(RecordingMode::icon)
     }
 
@@ -358,6 +376,8 @@ impl RecordingsTab {
             Self::All => None,
             Self::Instant => Some(RecordingMode::Instant),
             Self::Studio => Some(RecordingMode::Studio),
+            #[cfg(all(target_os = "macos", feature = "ux-walk"))]
+            Self::UxWalk => Some(RecordingMode::Studio),
         }
     }
 }
@@ -392,6 +412,8 @@ struct Recordings {
     /// The 2s poll, armed only while something in the list is still being
     /// written (`refetchInterval`).
     tick: Option<gpui::Task<()>>,
+    notice: Option<String>,
+    copy_selection: crate::ux_walk_library::WalkSelection,
 }
 
 impl Recordings {
@@ -404,6 +426,8 @@ impl Recordings {
             visible_count: RECORDINGS_PAGE_SIZE,
             scan: None,
             tick: None,
+            notice: None,
+            copy_selection: crate::ux_walk_library::WalkSelection::default(),
         }
     }
 
@@ -425,12 +449,20 @@ impl Recordings {
 
 /// One row against the tab and the already-lowercased, already-trimmed query.
 fn matches_recording_filters(item: &RecordingItem, tab: RecordingsTab, query: &str) -> bool {
-    if let Some(mode) = tab.mode()
-        && item.mode != mode
-    {
-        return false;
-    }
-    query.is_empty() || item.pretty_name.to_lowercase().contains(query)
+    let matches_tab = match tab {
+        RecordingsTab::All => true,
+        RecordingsTab::Instant => item.mode == RecordingMode::Instant && item.walk.is_none(),
+        RecordingsTab::Studio => item.mode == RecordingMode::Studio && item.walk.is_none(),
+        #[cfg(all(target_os = "macos", feature = "ux-walk"))]
+        RecordingsTab::UxWalk => item.walk.is_some(),
+    };
+    matches_tab
+        && (query.is_empty()
+            || item.pretty_name.to_lowercase().contains(query)
+            || item
+                .walk
+                .as_ref()
+                .is_some_and(|walk| walk.topic.to_lowercase().contains(query)))
 }
 
 struct ScreenshotRow {
@@ -494,6 +526,8 @@ fn load_more_count(visible_count: usize, total: usize) -> usize {
 fn recordings_empty_message(tab: RecordingsTab, trimmed_search: &str) -> String {
     let tab_label = match tab {
         RecordingsTab::All => "recordings".to_string(),
+        #[cfg(all(target_os = "macos", feature = "ux-walk"))]
+        RecordingsTab::UxWalk => "UX Walk recordings".to_string(),
         tab => format!("{} recordings", tab.id()),
     };
     let prefix = if trimmed_search.is_empty() {
@@ -2503,6 +2537,8 @@ impl SettingsWindow {
                 let selected = tab == active;
                 div()
                     .id(SharedString::from(tab.id()))
+                    .role(gpui::Role::Tab)
+                    .aria_label(tab.label())
                     // `flex gap-1.5 items-center p-2 px-3 border rounded-full`
                     .flex()
                     .flex_row()
@@ -2573,6 +2609,14 @@ impl SettingsWindow {
             .border_color(theme.settings_border())
             .child(tabs)
             .child(search)
+            .when_some(self.recordings.notice.clone(), |this, notice| {
+                this.child(
+                    div()
+                        .text_size(px(12.))
+                        .text_color(theme.settings_muted())
+                        .child(notice),
+                )
+            })
     }
 
     /// The list: `flex relative flex-col flex-1 rounded-xl border bg-gray-2
@@ -2695,11 +2739,12 @@ impl SettingsWindow {
                     .gap(px(8.))
                     .min_w_0()
                     .child(
-                        div()
-                            .w_full()
-                            .truncate()
-                            .text_size(px(14.))
-                            .child(item.pretty_name.clone()),
+                        div().w_full().truncate().text_size(px(14.)).child(
+                            item.walk
+                                .as_ref()
+                                .map(|walk| walk.topic.clone())
+                                .unwrap_or_else(|| item.pretty_name.clone()),
+                        ),
                     )
                     .child(self.render_recording_badges(item)),
             );
@@ -2777,9 +2822,20 @@ impl SettingsWindow {
                     RecordingMode::Instant => Hsla::from(theme.blue_100),
                     RecordingMode::Studio => theme.settings_fill(),
                 })
-                .child(glyph(item.mode.icon()))
-                .child(item.mode.label()),
+                .child(glyph(if item.walk.is_some() {
+                    "icons/ux-walk.svg"
+                } else {
+                    item.mode.icon()
+                }))
+                .child(if item.walk.is_some() {
+                    "UX Walk"
+                } else {
+                    item.mode.label()
+                }),
             )
+            .when_some(item.walk.as_ref(), |this, walk| {
+                this.child(pill(theme.settings_fill()).child(walk.status.label()))
+            })
             .when_some(item.upload.clone(), |this, upload| {
                 let label = upload.label();
                 let message = upload
@@ -2841,6 +2897,30 @@ impl SettingsWindow {
         let in_progress = item.status.is_in_progress();
 
         let mut actions = div().flex().flex_row().items_center().gap(px(8.));
+
+        if let Some(walk) = &item.walk {
+            let notes = walk.file.clone();
+            actions = actions.child(self.row_button(
+                ("recording-walk-notes", index),
+                "icons/ux-walk.svg",
+                "View walk notes",
+                false,
+                cx,
+                move |_, _, cx| {
+                    let file = notes.clone();
+                    cx.defer(move |cx| crate::ux_walk_window::open_saved(file, cx));
+                },
+            ));
+            let prompt = walk.file.clone();
+            actions = actions.child(self.row_button(
+                ("recording-walk-copy", index),
+                "icons/copy.svg",
+                "Copy agent prompt",
+                false,
+                cx,
+                move |this, window, cx| this.copy_walk_prompt(prompt.clone(), window, cx),
+            ));
+        }
 
         if mode == RecordingMode::Studio {
             if let Some(link) = sharing.clone() {
@@ -2931,6 +3011,35 @@ impl SettingsWindow {
         ))
     }
 
+    fn copy_walk_prompt(&mut self, file: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        let revision = self.recordings.copy_selection.choose(Some(file.clone()));
+        self.recordings.notice = Some("Preparing agent prompt…".into());
+        cx.notify();
+        cx.spawn_in(window, async move |this, cx| {
+            let selected = file.clone();
+            let result = cx
+                .background_executor()
+                .spawn(async move { crate::ux_walk::run_engine("prompt", &file) })
+                .await;
+            this.update_in(cx, |this, window, cx| {
+                if !this.recordings.copy_selection.accepts(&selected, revision) {
+                    return;
+                }
+                this.recordings.notice = Some(match result {
+                    Ok(prompt) => {
+                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(prompt));
+                        "Agent prompt copied".into()
+                    }
+                    Err(error) => format!("Could not copy the agent prompt: {error}"),
+                });
+                cx.notify();
+                window.refresh();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     /// `TooltipIconButton`: `p-2.5 opacity-70 hover:opacity-100 rounded-full
     /// hover:bg-gray-3 dark:hover:bg-gray-5 disabled:pointer-events-none
     /// disabled:opacity-45`, around a `size-4` glyph -- 36px of hit area.
@@ -2955,6 +3064,8 @@ impl SettingsWindow {
 
         div()
             .id(id.into())
+            .role(gpui::Role::Button)
+            .aria_label(tooltip)
             .flex()
             .items_center()
             .justify_center()
@@ -4859,6 +4970,7 @@ mod tests {
     fn recording(name: &str, mode: RecordingMode) -> RecordingItem {
         RecordingItem {
             thumbnail_version: None,
+            walk: None,
             path: std::path::PathBuf::from(format!("/tmp/{name}.cap")),
             mode,
             status: crate::library::RecordingStatus::Complete,
@@ -4912,6 +5024,42 @@ mod tests {
             ["STANDUP notes"]
         );
         assert!(matching(RecordingsTab::Studio, "repro").is_empty());
+    }
+
+    #[cfg(all(target_os = "macos", feature = "ux-walk"))]
+    #[test]
+    fn ux_walk_rows_have_a_peer_filter_and_search_their_topics() {
+        let mut walk = recording("Cap recording", RecordingMode::Studio);
+        walk.walk = Some(crate::ux_walk_library::WalkSummary {
+            file: "/walk/native-walk.json".into(),
+            directory: "/walk".into(),
+            source_project: walk.path.clone(),
+            topic: "Checkout findings".into(),
+            started_at_ms: 1,
+            status: crate::ux_walk_library::WalkStatus::Saved,
+        });
+        assert!(matches_recording_filters(
+            &walk,
+            RecordingsTab::UxWalk,
+            "checkout"
+        ));
+        assert!(matches_recording_filters(
+            &walk,
+            RecordingsTab::All,
+            "cap recording"
+        ));
+        assert!(!matches_recording_filters(&walk, RecordingsTab::Studio, ""));
+        assert!(!matches_recording_filters(
+            &walk,
+            RecordingsTab::Instant,
+            ""
+        ));
+        assert!(!matches_recording_filters(
+            &recording("Studio", RecordingMode::Studio),
+            RecordingsTab::UxWalk,
+            ""
+        ));
+        assert_eq!(RecordingsTab::UxWalk.icon(), Some("icons/ux-walk.svg"));
     }
 
     /// `visibleRecordings()` / `hasMoreRecordings()` / the Load more step.

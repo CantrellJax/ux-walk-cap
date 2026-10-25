@@ -106,6 +106,14 @@ impl SettingsWindow {
     }
 
     fn ux_walk_write(&mut self, key: &str, value: Value, cx: &mut Context<Self>) {
+        if key == "outDir"
+            && let Err(error) =
+                crate::ux_walk_library::remember_root(ux_walk::text(&self.ux_walk.values, "outDir"))
+        {
+            self.ux_walk.notice = Some(error);
+            cx.notify();
+            return;
+        }
         match ux_walk::save(key, value) {
             Ok(values) => {
                 self.ux_walk.values = values;
@@ -270,7 +278,7 @@ impl SettingsWindow {
                         cx,
                     ),
                     self.ux_walk_field(6, cx),
-                    self.setting_row("Browser evidence", Some("Native walks save video, screenshots and notes. DOM, network and console traces are not collected."), div().into_any_element()),
+                    self.setting_row("Browser evidence", Some("Walks in the browser opened by Cap UX include clicks, page errors and failed requests alongside your video and notes. Other capture sources keep video and notes; each walk’s report shows the evidence available."), div().into_any_element()),
                 ])
                 .into_any_element(),
                 self.ux_walk_notice(),

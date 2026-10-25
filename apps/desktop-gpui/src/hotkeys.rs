@@ -38,6 +38,10 @@ use crate::{
 pub enum HotkeyAction {
     StartStudioRecording,
     StartInstantRecording,
+    #[cfg(all(target_os = "macos", feature = "ux-walk"))]
+    OpenUxWalk,
+    #[cfg(all(target_os = "macos", feature = "ux-walk"))]
+    OpenUxWalkNotes,
     StopRecording,
     RestartRecording,
     TogglePauseRecording,
@@ -51,9 +55,13 @@ pub enum HotkeyAction {
     ScreenshotArea,
 }
 
-const ACTION_KEYS: [(&str, HotkeyAction); 13] = [
+const ACTION_KEYS: &[(&str, HotkeyAction)] = &[
     ("startStudioRecording", HotkeyAction::StartStudioRecording),
     ("startInstantRecording", HotkeyAction::StartInstantRecording),
+    #[cfg(all(target_os = "macos", feature = "ux-walk"))]
+    ("openUxWalk", HotkeyAction::OpenUxWalk),
+    #[cfg(all(target_os = "macos", feature = "ux-walk"))]
+    ("openUxWalkNotes", HotkeyAction::OpenUxWalkNotes),
     ("stopRecording", HotkeyAction::StopRecording),
     ("restartRecording", HotkeyAction::RestartRecording),
     ("togglePauseRecording", HotkeyAction::TogglePauseRecording),
@@ -744,6 +752,10 @@ fn dispatch(action: HotkeyAction, cx: &mut App) {
     match action {
         HotkeyAction::StartStudioRecording => start_from_hotkey(Mode::Studio, cx),
         HotkeyAction::StartInstantRecording => start_from_hotkey(Mode::Instant, cx),
+        #[cfg(all(target_os = "macos", feature = "ux-walk"))]
+        HotkeyAction::OpenUxWalk => crate::ux_walk::start(cx),
+        #[cfg(all(target_os = "macos", feature = "ux-walk"))]
+        HotkeyAction::OpenUxWalkNotes => crate::ux_walk_window::open(cx),
         HotkeyAction::StopRecording => {
             RecordingSession::global(cx).update(cx, |session, cx| session.stop(cx));
         }
@@ -1085,8 +1097,18 @@ mod tests {
             );
         }
         assert_eq!(HotkeyAction::from_store_key("someFutureAction"), None);
-        for (key, action) in ACTION_KEYS {
+        for (key, action) in ACTION_KEYS.iter().copied() {
             assert_eq!(action.store_key(), key);
+        }
+    }
+
+    #[test]
+    fn ux_walk_shortcuts_only_register_on_supported_builds() {
+        for key in ["openUxWalk", "openUxWalkNotes"] {
+            assert_eq!(
+                HotkeyAction::from_store_key(key).is_some(),
+                cfg!(all(target_os = "macos", feature = "ux-walk"))
+            );
         }
     }
 
