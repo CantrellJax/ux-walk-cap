@@ -2262,6 +2262,7 @@ impl OverlayWindow {
         } else {
             match mode {
                 Mode::Instant if needs_sign_in => "Instant Mode — Sign in to record instantly",
+                Mode::Instant if cfg!(feature = "ux-walk") => "Instant Mode — Record local video",
                 Mode::Instant => "Instant Mode — Record shareable link",
                 Mode::Studio => "Studio Mode — Record and edit locally",
                 Mode::Screenshot => "Screenshot Mode",
