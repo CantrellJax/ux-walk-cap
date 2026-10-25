@@ -3124,7 +3124,7 @@ impl SettingsWindow {
             let _ = this.update_in(cx, |this, window, cx| {
                 this.recordings.sharing_busy.remove(&path);
                 this.recordings.notice = Some(match result {
-                    Ok(Some(link)) => { cx.write_to_clipboard(gpui::ClipboardItem::new_string(link)); "Sharing link copied. Anyone with the full link can view it until it expires or is revoked.".into() },
+                    Ok(Some(link)) => { if !this.settings.disable_auto_open_links { cx.open_url(&link); } cx.write_to_clipboard(gpui::ClipboardItem::new_string(link)); "Sharing link copied. Anyone with the full link can view it until it expires or is revoked.".into() },
                     Ok(None) => "Sharing link revoked.".into(),
                     Err(error) => error,
                 });

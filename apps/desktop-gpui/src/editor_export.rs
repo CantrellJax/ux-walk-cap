@@ -1265,6 +1265,12 @@ impl EditorWindow {
                                 }
                                 if let Some(ui) = this.export.as_mut() {
                                     ui.complete_share_export(link, |link| {
+                                        if cfg!(feature = "ux-walk")
+                                            && !store::GeneralSettings::load()
+                                                .disable_auto_open_links
+                                        {
+                                            cx.open_url(&link);
+                                        }
                                         cx.write_to_clipboard(gpui::ClipboardItem::new_string(
                                             link,
                                         ));
