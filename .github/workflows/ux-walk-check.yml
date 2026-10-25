@@ -230,6 +230,7 @@ jobs:
               'CAP_GPUI_LOG_DIR': profile + '/logs',
               'CAP_GPUI_RECORDINGS_DIR': profile + '/recordings',
               'CAP_UX_WALK_CONFIG_DIR': profile + '/ux-walk',
+              'CAP_UX_SHARING_CONFIG': profile + '/sharing.json',
           }, 'Preview profile isolation was not retained by the bundler'
           print('Bundled preview associations and isolated profile verified')
           PY
