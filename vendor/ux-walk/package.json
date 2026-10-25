@@ -1,0 +1,11 @@
+{
+  "name": "ux-walk",
+  "version": "0.3.1",
+  "private": true,
+  "description": "Record a narrated web-app walkthrough in chapters; get a timeline per chapter an agent can read.",
+  "type": "module",
+  "bin": { "ux-walk": "bin/ux-walk" },
+  "engines": { "node": ">=20" },
+  "os": ["darwin"],
+  "dependencies": { "playwright-core": "1.58.2" }
+}

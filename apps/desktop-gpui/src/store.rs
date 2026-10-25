@@ -153,6 +153,12 @@ pub struct ExportPrefs {
 /// Same identifier the Tauri app uses (`so.cap.desktop`), resolved the way
 /// each OS's app-data convention spells it so a recording made on Windows or
 /// Linux lands in the folder both apps already agree on.
+pub const APP_IDENTIFIER: &str = if cfg!(feature = "ux-walk") {
+    "com.cantrell.cap-ux"
+} else {
+    "so.cap.desktop"
+};
+
 pub fn app_data_dir() -> PathBuf {
     if let Ok(dir) = std::env::var("CAP_GPUI_APP_DATA_DIR")
         && !dir.trim().is_empty()
@@ -163,14 +169,15 @@ pub fn app_data_dir() -> PathBuf {
     #[cfg(target_os = "macos")]
     {
         PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into()))
-            .join("Library/Application Support/so.cap.desktop")
+            .join("Library/Application Support")
+            .join(APP_IDENTIFIER)
     }
     #[cfg(target_os = "windows")]
     {
         std::env::var_os("APPDATA")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("."))
-            .join("so.cap.desktop")
+            .join(APP_IDENTIFIER)
     }
     #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
     {
@@ -180,7 +187,7 @@ pub fn app_data_dir() -> PathBuf {
                 PathBuf::from(std::env::var_os("HOME").unwrap_or_else(|| ".".into()))
                     .join(".local/share")
             });
-        base.join("so.cap.desktop")
+        base.join(APP_IDENTIFIER)
     }
 }
 
@@ -954,15 +961,15 @@ impl WindowExclusion {
 /// `DEFAULT_EXCLUDED_WINDOW_TITLES` in `general_settings.rs`, which is what
 /// the page's Reset button asks the backend for.
 pub const DEFAULT_EXCLUDED_WINDOW_TITLES: &[&str] = &[
-    "Cap",
-    "Cap Settings",
-    "Cap Recording Controls",
-    "Cap Camera",
-    "Cap Window Capture Occluder",
-    "Cap Capture Area",
-    "Cap Mode Selection",
-    "Cap Recordings Overlay",
-    "Cap Teleprompter",
+    "Cap UX",
+    "Cap UX Settings",
+    "Cap UX Recording Controls",
+    "Cap UX Camera",
+    "Cap UX Window Capture Occluder",
+    "Cap UX Capture Area",
+    "Cap UX Mode Selection",
+    "Cap UX Recordings Overlay",
+    "Cap UX Teleprompter",
 ];
 
 pub fn default_excluded_windows() -> Vec<WindowExclusion> {
@@ -1315,11 +1322,23 @@ impl GeneralSettings {
         let store = cached_store(&tauri_store_path()).unwrap_or_default();
         let empty = Map::new();
         let section = |name: &str| store.get(name).and_then(Value::as_object).unwrap_or(&empty);
-        Self::from_sections(
+        let mut settings = Self::from_sections(
             section(GENERAL_SETTINGS),
             section(RECORDING_START_SAFETY),
             section(AUDIO_ENHANCEMENT),
-        )
+        );
+        for rule in &mut settings.excluded_windows {
+            if rule.bundle_identifier.is_none()
+                && rule.owner_name.is_none()
+                && let Some(title) = &mut rule.window_title
+                && let Some(current) = DEFAULT_EXCLUDED_WINDOW_TITLES
+                    .iter()
+                    .find(|current| current.replace("Cap UX", "Cap") == *title)
+            {
+                *title = (*current).into();
+            }
+        }
+        settings
     }
 
     fn from_sections(
@@ -3158,5 +3177,19 @@ mod tests {
         general.insert("excludedWindows".to_string(), Value::Array(Vec::new()));
         let cleared = GeneralSettings::from_sections(&general, &Map::new(), &Map::new());
         assert!(cleared.excluded_windows.is_empty());
+    }
+}
+
+pub fn ux_walk_selected() -> bool {
+    cfg!(all(target_os = "macos", feature = "ux-walk"))
+        && store_section(RECORDING_SETTINGS)
+            .get("uxWalkEnabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+}
+
+pub fn set_ux_walk_selected(selected: bool) {
+    if !set_store_setting(RECORDING_SETTINGS, "uxWalkEnabled", Value::Bool(selected)) {
+        tracing::warn!("Could not save UX Walk mode");
     }
 }

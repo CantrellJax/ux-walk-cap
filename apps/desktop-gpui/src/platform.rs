@@ -1679,7 +1679,7 @@ mod mac {
             let mut image: Option<Id<AnyObject>> = None;
 
             let cap_app = NSString::from_str("/Applications/Cap.app");
-            let exists: bool = {
+            let exists: bool = !cfg!(feature = "ux-walk") && {
                 let manager: *mut AnyObject = msg_send![class!(NSFileManager), defaultManager];
                 !manager.is_null() && msg_send![manager, fileExistsAtPath: &*cap_app]
             };

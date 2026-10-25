@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>CFBundleDisplayName</key>
+	<string>Cap UX</string>
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>
@@ -12,7 +14,7 @@
 			<key>CFBundleTypeIconFile</key>
 			<string>icon.icns</string>
 			<key>CFBundleTypeName</key>
-			<string>Cap Recording</string>
+			<string>Cap UX Recording</string>
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
 			<key>LSHandlerRank</key>
@@ -22,11 +24,11 @@
 		</dict>
 	</array>
 	<key>NSCameraUsageDescription</key>
-	<string>Cap uses your camera to record you in your Caps</string>
+	<string>Cap UX uses your camera when you include it in a recording.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Cap uses your microphone to record you in your Caps</string>
+	<string>Cap UX uses your microphone to record your narration.</string>
 	<key>NSScreenCaptureUsageDescription</key>
-	<string>Cap captures your screen as part of recording your Caps</string>
+	<string>Cap UX captures the display, window or area you select.</string>
 	<key>NSCameraUseContinuityCameraDeviceType</key>
 	<true/>
 </dict>

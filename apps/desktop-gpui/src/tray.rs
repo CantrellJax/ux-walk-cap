@@ -39,11 +39,29 @@ const THUMBNAIL_SIZE: u32 = 32;
 /// `get_mode_icon(mode)`. Template images (`icon_as_template(true)`), so macOS
 /// tints them for the current menu-bar appearance.
 #[cfg(target_os = "macos")]
+const UX_WALK_ICON: &[u8] = include_bytes!("../assets/tray/tray-default-icon-ux-walk.png");
+
+#[cfg(target_os = "macos")]
 fn mode_icon(mode: Mode) -> &'static [u8] {
     match mode {
         Mode::Studio => include_bytes!("../assets/tray/tray-default-icon-studio.png"),
         Mode::Instant => include_bytes!("../assets/tray/tray-default-icon-instant.png"),
         Mode::Screenshot => include_bytes!("../assets/tray/tray-default-icon-screenshot.png"),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn current_mode_icon(mode: Mode, cx: &gpui::App) -> &'static [u8] {
+    if crate::session::RecordingSession::global(cx)
+        .read(cx)
+        .editor_recording_target()
+        .is_some()
+    {
+        mode_icon(Mode::Studio)
+    } else if crate::store::ux_walk_selected() {
+        UX_WALK_ICON
+    } else {
+        mode_icon(mode)
     }
 }
 
@@ -74,6 +92,8 @@ pub enum TrayItem {
     ModeStudio,
     ModeInstant,
     ModeScreenshot,
+    #[cfg(target_os = "macos")]
+    StartWalkthrough,
 }
 
 /// One row of the menu.
@@ -268,9 +288,13 @@ fn previous_submenu(previous: &[PreviousItem]) -> Entry {
 /// `create_mode_submenu`: a `✓ ` prefix on the current mode and three spaces on
 /// the others, so the labels stay aligned without a real check mark.
 fn mode_submenu(mode: Mode) -> Entry {
+    mode_submenu_choice(mode, false)
+}
+
+fn mode_submenu_choice(mode: Mode, ux_walk: bool) -> Entry {
     let label = |target: Mode, text: &str| {
         Entry::item(
-            if mode == target {
+            if mode == target && !ux_walk {
                 format!("\u{2713} {text}")
             } else {
                 format!("   {text}")
@@ -282,14 +306,24 @@ fn mode_submenu(mode: Mode) -> Entry {
             },
         )
     };
+    let items = vec![
+        label(Mode::Studio, "Studio"),
+        label(Mode::Instant, "Instant"),
+        label(Mode::Screenshot, "Screenshot"),
+    ];
+    #[cfg(target_os = "macos")]
+    let items = {
+        let mut items = items;
+        items.extend([Entry::item(
+            if ux_walk { "✓ UX Walk" } else { "   UX Walk" },
+            TrayItem::StartWalkthrough,
+        )]);
+        items
+    };
     Entry::Submenu {
         title: "Select Mode".into(),
         enabled: true,
-        items: vec![
-            label(Mode::Studio, "Studio"),
-            label(Mode::Instant, "Instant"),
-            label(Mode::Screenshot, "Screenshot"),
-        ],
+        items,
     }
 }
 
@@ -329,8 +363,8 @@ pub fn build_menu(mode: Mode, previous: &[PreviousItem], version: &str) -> Vec<E
     // `logging::upload_log_file` needs the auth token and the HTTP client,
     // neither of which this app has.
     entries.push(Entry::disabled("Upload Logs"));
-    entries.push(Entry::disabled(format!("Cap v{version}")));
-    entries.push(Entry::item("Quit Cap", TrayItem::Quit));
+    entries.push(Entry::disabled(format!("Cap UX v{version}")));
+    entries.push(Entry::item("Quit Cap UX", TrayItem::Quit));
 
     entries
 }
@@ -339,8 +373,8 @@ pub fn build_onboarding_menu(version: &str) -> Vec<Entry> {
     vec![
         Entry::item("Request Permissions", TrayItem::RequestPermissions),
         Entry::Separator,
-        Entry::disabled(format!("Cap v{version}")),
-        Entry::item("Quit Cap", TrayItem::Quit),
+        Entry::disabled(format!("Cap UX v{version}")),
+        Entry::item("Quit Cap UX", TrayItem::Quit),
     ]
 }
 
@@ -348,7 +382,19 @@ fn current_menu_entries(cx: &App, mode: Mode, previous: &[PreviousItem]) -> Vec<
     if crate::app_windows::onboarding_is_open(cx) && !crate::permissions::necessary_granted() {
         return build_onboarding_menu(crate::menus::app_version());
     }
-    build_menu(mode, previous, crate::menus::app_version())
+    let editor = crate::session::RecordingSession::global(cx)
+        .read(cx)
+        .editor_recording_target()
+        .is_some();
+    let mode = if editor { Mode::Studio } else { mode };
+    let walk = crate::store::ux_walk_selected() && !editor;
+    let mut entries = build_menu(mode, previous, crate::menus::app_version());
+    for entry in &mut entries {
+        if matches!(entry, Entry::Submenu { title, .. } if title == "Select Mode") {
+            *entry = mode_submenu_choice(mode, walk);
+        }
+    }
+    entries
 }
 
 // ---------------------------------------------------------------------------
@@ -406,6 +452,8 @@ pub fn handle_item(item: TrayItem, cx: &mut App) {
         TrayItem::ModeStudio => set_mode(Mode::Studio, cx),
         TrayItem::ModeInstant => set_mode(Mode::Instant, cx),
         TrayItem::ModeScreenshot => set_mode(Mode::Screenshot, cx),
+        #[cfg(target_os = "macos")]
+        TrayItem::StartWalkthrough => crate::ux_walk::start(cx),
     }
 }
 
@@ -599,6 +647,8 @@ fn harness_item(spec: &str, cx: &App) -> Option<TrayItem> {
         "mode_studio" => TrayItem::ModeStudio,
         "mode_instant" => TrayItem::ModeInstant,
         "mode_screenshot" => TrayItem::ModeScreenshot,
+        #[cfg(target_os = "macos")]
+        "walkthrough" => TrayItem::StartWalkthrough,
         _ => return None,
     })
 }
@@ -621,8 +671,8 @@ mod mac {
     use objc2_foundation::NSString;
 
     use super::{
-        Entry, PreviousItem, STOP_ICON, TrayItem, current_menu_entries, handle_item, mode_icon,
-        scan_previous, stop_recording,
+        Entry, PreviousItem, STOP_ICON, TrayItem, UX_WALK_ICON, current_menu_entries,
+        current_mode_icon, handle_item, mode_icon, scan_previous, stop_recording,
     };
     use crate::main_window::Mode;
 
@@ -702,7 +752,7 @@ mod mac {
     /// Install the status item. Called once from `main`, after the window
     /// registry exists -- every handler reaches into it.
     pub fn init(cx: &mut App) {
-        let Some(tray) = create_status_item() else {
+        let Some(tray) = create_status_item(cx) else {
             tracing::error!("no NSStatusItem; the tray is not available");
             return;
         };
@@ -748,7 +798,7 @@ mod mac {
         .detach();
     }
 
-    fn create_status_item() -> Option<Tray> {
+    fn create_status_item(cx: &App) -> Option<Tray> {
         unsafe {
             let status_bar: *mut AnyObject = msg_send![class!(NSStatusBar), systemStatusBar];
             if status_bar.is_null() {
@@ -774,7 +824,7 @@ mod mac {
                 previous_generation: 0,
                 recording: false,
             };
-            set_button_image(&tray, mode_icon(mode));
+            set_button_image(&tray, current_mode_icon(mode, cx));
             let button: *mut AnyObject = msg_send![&*tray.status_item, button];
             let visible: bool = msg_send![&*tray.status_item, isVisible];
             let frame: objc2_foundation::NSRect = if button.is_null() {
@@ -824,11 +874,14 @@ mod mac {
     }
 
     fn icon_name(png: &[u8]) -> &'static str {
-        if std::ptr::eq(png.as_ptr(), STOP_ICON.as_ptr()) {
+        if png == STOP_ICON {
             return "stop";
         }
+        if png == UX_WALK_ICON {
+            return "ux-walk";
+        }
         for mode in [Mode::Studio, Mode::Instant, Mode::Screenshot] {
-            if std::ptr::eq(png.as_ptr(), mode_icon(mode).as_ptr()) {
+            if png == mode_icon(mode) {
                 return match mode {
                     Mode::Studio => "studio",
                     Mode::Instant => "instant",
@@ -878,6 +931,9 @@ mod mac {
             (tray.mode, tray.previous.clone())
         };
         let entries = current_menu_entries(cx, mode, &previous);
+        if !cx.global::<Tray>().recording {
+            set_button_image(cx.global::<Tray>(), current_mode_icon(mode, cx));
+        }
 
         let mut actions = Vec::new();
         let menu = {
@@ -1011,7 +1067,7 @@ mod mac {
                 if let Some(menu) = &tray.menu {
                     let _: () = msg_send![&*tray.status_item, setMenu: &**menu];
                 }
-                let icon = mode_icon(tray.mode);
+                let icon = current_mode_icon(tray.mode, cx);
                 set_button_image(tray, icon);
             }
         }
@@ -1028,13 +1084,10 @@ mod mac {
         if !cx.has_global::<Tray>() {
             return;
         }
-        if cx.global::<Tray>().mode == mode {
-            return;
-        }
         cx.global_mut::<Tray>().mode = mode;
         if !cx.global::<Tray>().recording {
             let tray = cx.global::<Tray>();
-            set_button_image(tray, mode_icon(mode));
+            set_button_image(tray, current_mode_icon(mode, cx));
         }
         rebuild(cx);
     }
@@ -1335,7 +1388,7 @@ mod tests {
         let menu = build_onboarding_menu("0.1.0");
         assert_eq!(
             titles(&menu),
-            vec!["Request Permissions", "-", "Cap v0.1.0", "Quit Cap",]
+            vec!["Request Permissions", "-", "Cap UX v0.1.0", "Quit Cap UX",]
         );
     }
 
@@ -1360,8 +1413,8 @@ mod tests {
                 "Settings",
                 "-",
                 "Upload Logs",
-                "Cap v0.1.0",
-                "Quit Cap",
+                "Cap UX v0.1.0",
+                "Quit Cap UX",
             ]
         );
     }
@@ -1405,7 +1458,21 @@ mod tests {
             let Entry::Submenu { items, .. } = mode_submenu(mode) else {
                 panic!("Select Mode is a submenu");
             };
-            assert_eq!(titles(&items), expected.to_vec());
+            assert_eq!(titles(&items[..3]), expected.to_vec());
+            #[cfg(target_os = "macos")]
+            {
+                assert_eq!(titles(&items[3..]), vec!["   UX Walk"]);
+                assert!(matches!(
+                    items[3],
+                    Entry::Item {
+                        item: Some(TrayItem::StartWalkthrough),
+                        enabled: true,
+                        ..
+                    }
+                ));
+            }
+            #[cfg(not(target_os = "macos"))]
+            assert_eq!(items.len(), 3);
         }
     }
 
@@ -1472,6 +1539,6 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(disabled, vec!["Upload Logs", "Cap v0.1.0"]);
+        assert_eq!(disabled, vec!["Upload Logs", "Cap UX v0.1.0"]);
     }
 }

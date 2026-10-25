@@ -600,6 +600,7 @@ pub fn init(main: WindowHandle<MainWindow>, session: Entity<RecordingSession>, c
             .ok();
             let editor_target =
                 session.update(cx, |session, _| session.take_editor_recording_target());
+            crate::tray::refresh_menu(cx);
             if let Some(editor_path) = editor_target {
                 editor_recording_finished(editor_path, finished_studio, cx);
             } else if let Some(preparing) =
@@ -1209,7 +1210,7 @@ pub fn open_settings(page: Page, cx: &mut App) {
             // repositions them. (The main window returns `None` there and
             // hand-draws its own.)
             titlebar: Some(gpui::TitlebarOptions {
-                title: Some("Cap Settings".into()),
+                title: Some("Cap UX Settings".into()),
                 appears_transparent: true,
                 traffic_light_position: Some(settings_window::TRAFFIC_LIGHTS),
             }),
@@ -1393,7 +1394,7 @@ pub fn open_onboarding(cx: &mut App) {
             ..Default::default()
         },
         |window, cx| {
-            window.set_window_title("Welcome to Cap");
+            window.set_window_title("Welcome to Cap UX");
             cx.new(|cx| OnboardingWindow::new(window, cx))
         },
     );
@@ -1538,7 +1539,7 @@ pub fn open_mode_select(cx: &mut App) -> bool {
             // puts them and only the title is hidden (`hidden_title(true)` +
             // `TitleBarStyle::Overlay`).
             titlebar: Some(gpui::TitlebarOptions {
-                title: Some("Cap Mode Selection".into()),
+                title: Some("Cap UX Mode Selection".into()),
                 appears_transparent: true,
                 traffic_light_position: mode_select_window::TRAFFIC_LIGHTS,
             }),
@@ -1590,6 +1591,16 @@ pub fn open_mode_select(cx: &mut App) -> bool {
 pub fn mode_select_closed(cx: &mut App) {
     cx.global_mut::<AppWindows>().mode_select.take();
     restore_after_settings(cx);
+}
+
+pub fn start_ux_walk_from_mode_select(cx: &mut App) {
+    if let Some(handle) = cx.global_mut::<AppWindows>().mode_select.take() {
+        handle
+            .update(cx, |_, window, _| window.remove_window())
+            .ok();
+    }
+    restore_after_settings(cx);
+    crate::ux_walk::start(cx);
 }
 
 /// Click a mode card in the open mode select window (harness path for
@@ -1657,7 +1668,7 @@ pub fn open_teleprompter(cx: &mut App) {
             // true`, `trafficLightPosition: (14, 14)` -- the real AppKit
             // buttons, moved, as on the settings window.
             titlebar: Some(gpui::TitlebarOptions {
-                title: Some("Cap Teleprompter".into()),
+                title: Some("Cap UX Teleprompter".into()),
                 appears_transparent: true,
                 traffic_light_position: Some(teleprompter_window::TRAFFIC_LIGHTS),
             }),
@@ -1926,6 +1937,7 @@ pub fn open_target_overlays(request: OverlayRequest, cx: &mut App) {
 /// Must be reached through `cx.defer` from anything inside an entity update,
 /// same as [`open_target_overlays`].
 pub fn open_editor_target_overlays(editor_path: PathBuf, request: OverlayRequest, cx: &mut App) {
+    crate::tray::refresh_menu(cx);
     #[cfg(target_os = "linux")]
     if defer_window_until_capture_safe(cx) {
         return;
@@ -1951,6 +1963,7 @@ pub fn open_editor_target_overlays(editor_path: PathBuf, request: OverlayRequest
 }
 
 pub fn open_editor_recording_main(editor_path: PathBuf, cx: &mut App) {
+    crate::tray::refresh_menu(cx);
     let session = RecordingSession::global(cx);
     if session.read(cx).phase != Phase::Idle
         || session.read(cx).editor_recording_target().as_ref() != Some(&editor_path)
@@ -2623,16 +2636,16 @@ impl OwnWindow {
 
     pub fn title(self) -> &'static str {
         match self {
-            Self::Main => "Cap",
-            Self::Settings => "Cap Settings",
-            Self::Controls => "Cap Recording Controls",
-            Self::Camera => "Cap Camera",
-            Self::ModeSelect => "Cap Mode Selection",
-            Self::Teleprompter => "Cap Teleprompter",
-            Self::TargetSelect => "Cap Target Select",
-            Self::Editor => "Cap Editor",
-            Self::ScreenshotEditor => "Cap Screenshot Editor",
-            Self::Onboarding => "Welcome to Cap",
+            Self::Main => "Cap UX",
+            Self::Settings => "Cap UX Settings",
+            Self::Controls => "Cap UX Recording Controls",
+            Self::Camera => "Cap UX Camera",
+            Self::ModeSelect => "Cap UX Mode Selection",
+            Self::Teleprompter => "Cap UX Teleprompter",
+            Self::TargetSelect => "Cap UX Target Select",
+            Self::Editor => "Cap UX Editor",
+            Self::ScreenshotEditor => "Cap UX Screenshot Editor",
+            Self::Onboarding => "Welcome to Cap UX",
         }
     }
 }
@@ -2648,6 +2661,16 @@ fn own_window_exclusion_rules(
     mode: RecordingMode,
 ) -> Vec<crate::store::WindowExclusion> {
     let mut rules = configured;
+    for rule in &mut rules {
+        if let Some(title) = &mut rule.window_title {
+            for kind in OwnWindow::ALL {
+                if *title == kind.title().replace("Cap UX", "Cap") {
+                    *title = kind.title().into();
+                    break;
+                }
+            }
+        }
+    }
     if mode == RecordingMode::Instant {
         rules.retain(|rule| rule.window_title.as_deref() != Some(OwnWindow::Camera.title()));
     }
@@ -3825,6 +3848,25 @@ fn begin_recording_after_preflight(config: StartConfig, cx: &mut App) {
     // the frame on any start that never got a bar.
     hide_main_window(cx);
 
+    if config.ux_walk.is_some() {
+        match crate::ux_walk_window::prepare(cx) {
+            Ok(number) => {
+                if let Ok(id) = number.to_string().parse() {
+                    excluded.push(id);
+                }
+            }
+            Err(error) => {
+                session.update(cx, |session, cx| {
+                    session.error = Some(error);
+                    cx.notify();
+                });
+                close_controls(&session, cx);
+                close_target_overlays(cx);
+                show_main_window(cx);
+                return;
+            }
+        }
+    }
     let config = StartConfig {
         excluded_windows: excluded,
         ..config
@@ -3885,11 +3927,11 @@ pub fn open_camera_window(cx: &mut App) {
             titlebar: None,
             #[cfg(target_os = "linux")]
             titlebar: Some(gpui::TitlebarOptions {
-                title: Some("Cap Camera".into()),
+                title: Some("Cap UX Camera".into()),
                 ..Default::default()
             }),
             #[cfg(target_os = "linux")]
-            app_id: Some("Cap".into()),
+            app_id: Some("Cap UX".into()),
             #[cfg(target_os = "linux")]
             window_decorations: Some(gpui::WindowDecorations::Client),
             // Non-activating panel, same as the bar: the bubble is clickable
@@ -4755,7 +4797,7 @@ fn open_editor_window(
             // `Some(Some(LogicalPosition::new(20.0, 32.0)))`, and the header's
             // left group reserves an `h-full w-16` spacer for them.
             titlebar: Some(gpui::TitlebarOptions {
-                title: Some("Cap Editor".into()),
+                title: Some("Cap UX Editor".into()),
                 appears_transparent: true,
                 traffic_light_position: editor_window::TRAFFIC_LIGHTS,
             }),
@@ -6106,7 +6148,7 @@ pub(crate) fn request_editor_deletion(
             platform::alert_dialog("Recording retained", &error);
             return;
         }
-        if !platform::confirm_dialog("Cap", "Are you sure you want to delete this recording?", "Yes", "No", false) {
+        if !platform::confirm_dialog("Cap UX", "Are you sure you want to delete this recording?", "Yes", "No", false) {
             return;
         }
         let prepared = cx.update(|cx| {
@@ -6405,6 +6447,7 @@ pub fn abort_editor_recording_flow(cx: &mut App) {
     }) else {
         return;
     };
+    crate::tray::refresh_menu(cx);
     close_target_overlays(cx);
     cx.global_mut::<AppWindows>().editor_hidden_for_picker = None;
     cx.global_mut::<AppWindows>().main_hidden_for_picker = false;
@@ -6704,7 +6747,7 @@ pub fn open_screenshot_editor(path: PathBuf, cx: &mut App) {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             display_id,
             titlebar: Some(gpui::TitlebarOptions {
-                title: Some("Cap Screenshot Editor".into()),
+                title: Some("Cap UX Screenshot Editor".into()),
                 appears_transparent: true,
                 traffic_light_position: None,
             }),
@@ -7127,6 +7170,7 @@ mod tests {
                 mic_meter: None,
                 linux_instant_camera: None,
                 start_gate: None,
+                ux_walk: None,
             }),
             gate: CleanCaptureGate::default(),
             camera: None,
@@ -7842,16 +7886,16 @@ mod tests {
     #[test]
     fn own_window_titles_match_cap_window_id() {
         let expected = [
-            (OwnWindow::Main, "Cap"),
-            (OwnWindow::Settings, "Cap Settings"),
-            (OwnWindow::Controls, "Cap Recording Controls"),
-            (OwnWindow::Camera, "Cap Camera"),
-            (OwnWindow::ModeSelect, "Cap Mode Selection"),
-            (OwnWindow::Teleprompter, "Cap Teleprompter"),
-            (OwnWindow::TargetSelect, "Cap Target Select"),
-            (OwnWindow::Editor, "Cap Editor"),
-            (OwnWindow::ScreenshotEditor, "Cap Screenshot Editor"),
-            (OwnWindow::Onboarding, "Welcome to Cap"),
+            (OwnWindow::Main, "Cap UX"),
+            (OwnWindow::Settings, "Cap UX Settings"),
+            (OwnWindow::Controls, "Cap UX Recording Controls"),
+            (OwnWindow::Camera, "Cap UX Camera"),
+            (OwnWindow::ModeSelect, "Cap UX Mode Selection"),
+            (OwnWindow::Teleprompter, "Cap UX Teleprompter"),
+            (OwnWindow::TargetSelect, "Cap UX Target Select"),
+            (OwnWindow::Editor, "Cap UX Editor"),
+            (OwnWindow::ScreenshotEditor, "Cap UX Screenshot Editor"),
+            (OwnWindow::Onboarding, "Welcome to Cap UX"),
         ];
         assert_eq!(OwnWindow::ALL.len(), expected.len());
         for (kind, title) in expected {
@@ -7863,7 +7907,7 @@ mod tests {
     /// How the table lines up with `DEFAULT_EXCLUDED_WINDOW_TITLES`
     /// (`general_settings.rs:104-114`): the defaults name three windows this
     /// app does not have, and four of ours are deliberately not in the defaults
-    /// -- "Cap Target Select" carries a comment over there explaining why it
+    /// -- "Cap UX Target Select" carries a comment over there explaining why it
     /// must not be added (a Windows ghost-overlay bug), and the editors and
     /// onboarding are simply not excluded by default.
     #[test]
@@ -7877,12 +7921,12 @@ mod tests {
         assert_eq!(
             shared,
             vec![
-                &"Cap",
-                &"Cap Settings",
-                &"Cap Recording Controls",
-                &"Cap Camera",
-                &"Cap Mode Selection",
-                &"Cap Teleprompter",
+                &"Cap UX",
+                &"Cap UX Settings",
+                &"Cap UX Recording Controls",
+                &"Cap UX Camera",
+                &"Cap UX Mode Selection",
+                &"Cap UX Teleprompter",
             ]
         );
 
@@ -7893,9 +7937,9 @@ mod tests {
         assert_eq!(
             defaults_without_a_window,
             vec![
-                &"Cap Window Capture Occluder",
-                &"Cap Capture Area",
-                &"Cap Recordings Overlay",
+                &"Cap UX Window Capture Occluder",
+                &"Cap UX Capture Area",
+                &"Cap UX Recordings Overlay",
             ]
         );
 
@@ -7953,15 +7997,17 @@ mod tests {
     #[test]
     fn the_teleprompter_rule_is_always_present_and_never_duplicated() {
         let from_nothing = own_window_exclusion_rules(Vec::new(), RecordingMode::Instant);
-        assert_eq!(from_nothing, vec![title_rule("Cap Teleprompter")]);
+        assert_eq!(from_nothing, vec![title_rule("Cap UX Teleprompter")]);
         assert_eq!(
             excluded_own_windows(&from_nothing),
             vec![OwnWindow::Teleprompter]
         );
 
-        let already_configured =
-            own_window_exclusion_rules(vec![title_rule("Cap Teleprompter")], RecordingMode::Studio);
-        assert_eq!(already_configured, vec![title_rule("Cap Teleprompter")]);
+        let already_configured = own_window_exclusion_rules(
+            vec![title_rule("Cap UX Teleprompter")],
+            RecordingMode::Studio,
+        );
+        assert_eq!(already_configured, vec![title_rule("Cap UX Teleprompter")]);
     }
 
     /// Our own windows are matched on title *alone*
@@ -7976,12 +8022,12 @@ mod tests {
                 ..Default::default()
             },
             WindowExclusion {
-                owner_name: Some("Cap".to_string()),
+                owner_name: Some("Cap UX".to_string()),
                 ..Default::default()
             },
             WindowExclusion {
-                owner_name: Some("Cap".to_string()),
-                window_title: Some("Cap".to_string()),
+                owner_name: Some("Cap UX".to_string()),
+                window_title: Some("Cap UX".to_string()),
                 ..Default::default()
             },
         ];

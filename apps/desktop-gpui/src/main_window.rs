@@ -20,6 +20,7 @@ use crate::{
     feeds::{self, Feeds},
     library::{self, RecordingItem, ScreenshotItem},
     media_access::MediaAccess,
+    mode_choice::ModeChoice,
     permissions::OSPermission,
     recording,
     session::{Phase, RecordingSession},
@@ -137,7 +138,7 @@ impl Mode {
     }
 
     /// `size-4` for instant, `size-[0.9rem]` for the other two.
-    fn icon_size(self) -> f32 {
+    pub(crate) fn icon_size(self) -> f32 {
         match self {
             Self::Instant => 16.,
             Self::Studio | Self::Screenshot => 14.4,
@@ -155,7 +156,7 @@ impl Mode {
         }
     }
 
-    fn panel_description(self) -> &'static str {
+    pub(crate) fn panel_description(self) -> &'static str {
         match self {
             Self::Instant => {
                 "Share instantly with a link. Your recording uploads as you record, so you \
@@ -267,17 +268,17 @@ fn capture_press_fill(theme: Theme, selected: bool) -> Hsla {
 
 #[derive(Default)]
 struct ModeHoverState {
-    trigger: Option<Mode>,
-    card: Option<Mode>,
-    visible: Option<Mode>,
+    trigger: Option<ModeChoice>,
+    card: Option<ModeChoice>,
+    visible: Option<ModeChoice>,
 }
 
 impl ModeHoverState {
-    fn target(&self) -> Option<Mode> {
+    fn target(&self) -> Option<ModeChoice> {
         self.trigger.or(self.card)
     }
 
-    fn update(&mut self, mode: Mode, card: bool, hovered: bool) {
+    fn update(&mut self, mode: ModeChoice, card: bool, hovered: bool) {
         if !card && hovered && self.card != Some(mode) {
             self.card = None;
         }
@@ -296,7 +297,7 @@ impl ModeHoverState {
 
 #[derive(IntoElement)]
 struct ModeHoverCard {
-    mode: Mode,
+    mode: ModeChoice,
     theme: Theme,
 }
 
@@ -304,15 +305,7 @@ impl gpui::RenderOnce for ModeHoverCard {
     fn render(self, _window: &mut Window, _cx: &mut gpui::App) -> impl IntoElement {
         let theme = self.theme;
         let mode = self.mode;
-        let description = match mode {
-            Mode::Instant => {
-                "No rendering required — uploads on the fly so you can share the link the moment you stop."
-            }
-            Mode::Studio => {
-                "Saves to your computer and opens the editor when you stop. Choose recording quality in settings."
-            }
-            Mode::Screenshot => "Capture and annotate stills.",
-        };
+        let description = mode.hover_description();
         div()
             .flex()
             .flex_col()
@@ -329,7 +322,7 @@ impl gpui::RenderOnce for ModeHoverCard {
             .child(
                 div()
                     .text_size(px(12.))
-                    .child(format!("{} mode", mode.panel_title())),
+                    .child(format!("{} mode", mode.title())),
             )
             .child(
                 div()
@@ -338,7 +331,7 @@ impl gpui::RenderOnce for ModeHoverCard {
                     .text_color(theme.gray_4)
                     .child(description),
             )
-            .when(mode != Mode::Screenshot, |this| {
+            .when(mode != ModeChoice::Capture(Mode::Screenshot), |this| {
                 this.child(
                     div()
                         .id("mode-quality-settings")
@@ -363,10 +356,14 @@ impl gpui::RenderOnce for ModeHoverCard {
                                     style.text_color(theme.gray_1)
                                 }),
                         )
-                        .child("Quality settings")
+                        .child(if mode == ModeChoice::UxWalk {
+                            "UX Walk settings"
+                        } else {
+                            "Quality settings"
+                        })
                         .on_click(move |_, _, cx| {
                             cx.stop_propagation();
-                            cx.defer(move |cx| app_windows::open_quality_settings(mode, cx));
+                            cx.defer(move |cx| mode.open_settings(cx));
                         }),
                 )
             })
@@ -783,9 +780,17 @@ struct MicrophoneWarning {
 pub struct MainWindow {
     theme: Theme,
     mode: Mode,
+    ux_walk_selected: bool,
+    walk_browser_opening: bool,
+    walk_browser_generation: u64,
+    walk_browser_notice: Option<String>,
+    walk_topic: Entity<ui::TextInputState>,
+    walk_speakers: Entity<ui::TextInputState>,
+    _walk_topic_events: gpui::Subscription,
+    _walk_speaker_events: gpui::Subscription,
     mode_hover: ModeHoverState,
     mode_hover_task: Option<Task<()>>,
-    mode_hover_bounds: [Rc<Cell<Option<gpui::Bounds<gpui::Pixels>>>>; 3],
+    mode_hover_bounds: [Rc<Cell<Option<gpui::Bounds<gpui::Pixels>>>>; ModeChoice::ALL.len()],
     target: Option<TargetType>,
     devices: DeviceSnapshot,
     camera: Option<CameraOption>,
@@ -1014,6 +1019,65 @@ impl MainWindow {
         // blur listener inside `TextInputState` needs a `&mut Window` anyway.
         let search_input = cx.new(|cx| ui::TextInputState::single_line(window, cx));
         let search_events = cx.subscribe(&search_input, Self::on_search_event);
+        let walk_topic = cx.new(|cx| {
+            let mut input = ui::TextInputState::single_line(window, cx);
+            input.set_placeholder("What are you walking through?");
+            input.set_text(
+                crate::store::store_section(crate::store::RECORDING_SETTINGS)
+                    .get("uxWalkTopic")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
+                cx,
+            );
+            input
+        });
+        let walk_topic_events = cx.subscribe(&walk_topic, |_: &mut Self, input, event, cx| {
+            if matches!(
+                event,
+                ui::TextInputEvent::Confirmed | ui::TextInputEvent::Blurred
+            ) {
+                crate::store::set_store_setting(
+                    crate::store::RECORDING_SETTINGS,
+                    "uxWalkTopic",
+                    serde_json::Value::String(input.read(cx).text().to_string()),
+                );
+            }
+            cx.notify();
+        });
+
+        let walk_speakers = cx.new(|cx| {
+            let mut input = ui::TextInputState::single_line(window, cx);
+            input.set_placeholder("Speaker names, separated by commas");
+            if let Ok(settings) = crate::ux_walk::load() {
+                let speakers = crate::ux_walk::text(&settings, "speakers");
+                input.set_text(
+                    if speakers.is_empty() {
+                        crate::ux_walk::text(&settings, "me")
+                    } else {
+                        speakers
+                    }
+                    .to_string(),
+                    cx,
+                );
+            }
+            input
+        });
+
+        let walk_speaker_events = cx.subscribe(&walk_speakers, |_: &mut Self, input, event, cx| {
+            if matches!(
+                event,
+                ui::TextInputEvent::Confirmed | ui::TextInputEvent::Blurred
+            ) {
+                if let Err(error) = crate::ux_walk::save(
+                    "speakers",
+                    serde_json::Value::String(input.read(cx).text().to_string()),
+                ) {
+                    tracing::warn!(%error, "saving speaker names");
+                }
+            }
+            cx.notify();
+        });
 
         let media = MediaAccess::global(cx);
         let mut media_allowed = (
@@ -1080,6 +1144,14 @@ impl MainWindow {
             // window has to start where the store left it rather than at a
             // hardcoded Instant.
             mode: Mode::from_store(),
+            ux_walk_selected: crate::store::ux_walk_selected(),
+            walk_browser_opening: false,
+            walk_browser_generation: 0,
+            walk_browser_notice: None,
+            walk_topic,
+            walk_speakers,
+            _walk_topic_events: walk_topic_events,
+            _walk_speaker_events: walk_speaker_events,
             mode_hover: ModeHoverState::default(),
             mode_hover_task: None,
             mode_hover_bounds: std::array::from_fn(|_| Rc::new(Cell::new(None))),
@@ -1701,7 +1773,7 @@ impl MainWindow {
         };
         if !recover
             && !crate::platform::confirm_dialog(
-                "Cap",
+                "Cap UX",
                 "Are you sure you want to delete this recording?",
                 "Yes",
                 "No",
@@ -1842,6 +1914,86 @@ impl MainWindow {
         self.mode
     }
 
+    pub(crate) fn mode_choice(&self, cx: &gpui::App) -> ModeChoice {
+        if self.ux_walk_selected && self.session.read(cx).editor_recording_target().is_none() {
+            ModeChoice::UxWalk
+        } else {
+            ModeChoice::Capture(self.effective_mode(cx))
+        }
+    }
+
+    pub(crate) fn set_ux_walk(&mut self, cx: &mut Context<Self>) {
+        if self.session.read(cx).phase != Phase::Idle
+            || self.is_preparing_recording()
+            || self.session.read(cx).editor_recording_target().is_some()
+        {
+            return;
+        }
+        self.set_mode(Mode::Studio, cx);
+        self.ux_walk_selected = true;
+        crate::store::set_ux_walk_selected(true);
+        self.walk_browser_generation = self.walk_browser_generation.wrapping_add(1);
+        let generation = self.walk_browser_generation;
+        self.walk_browser_opening = true;
+        self.walk_browser_notice = Some("Opening a new Chrome window…".into());
+        self.target = Some(TargetType::Window);
+        self.selected_window = None;
+        cx.defer(crate::app_windows::dismiss_target_overlays);
+        cx.defer(|cx| crate::tray::mode_changed(Mode::Studio, cx));
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move { crate::ux_walk_browser::open() })
+                .await;
+            this.update(cx, |this, cx| {
+                if this.walk_browser_generation != generation || !this.ux_walk_selected {
+                    return;
+                }
+                if this.session.read(cx).phase != Phase::Idle {
+                    this.walk_browser_opening = false;
+                    this.walk_browser_notice = None;
+                    cx.notify();
+                    return;
+                }
+                let main = cx.global::<app_windows::AppWindows>().main;
+                cx.defer(move |cx| {
+                    let current = main
+                        .update(cx, |view, _, cx| {
+                            view.walk_browser_generation == generation
+                                && view.ux_walk_selected
+                                && view.session.read(cx).phase == Phase::Idle
+                        })
+                        .unwrap_or(false);
+                    if !current {
+                        return;
+                    }
+                    // Restoring the recorder clears its old target; apply the new window afterwards.
+                    app_windows::show_main_window(cx);
+                    main.update(cx, |view, _, cx| {
+                        view.walk_browser_opening = false;
+                        match result {
+                            Ok(window) => {
+                                view.devices.windows.retain(|known| known.id != window.id);
+                                view.devices.windows.push(window.clone());
+                                view.selected_window = Some(window);
+                                view.target = Some(TargetType::Window);
+                                view.panel = None;
+                                view.walk_browser_notice = None;
+                            }
+                            Err(error) => view.walk_browser_notice = Some(error),
+                        }
+                        cx.notify();
+                    })
+                    .ok();
+                });
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     pub(crate) fn effective_mode(&self, cx: &gpui::App) -> Mode {
         effective_recording_mode(
             self.mode(),
@@ -1856,12 +2008,15 @@ impl MainWindow {
     pub fn set_mode(&mut self, mode: Mode, cx: &mut Context<Self>) {
         self.clear_mode_hover();
         cx.notify();
-        if self.mode == mode
-            || self.is_preparing_recording()
+        if self.is_preparing_recording()
             || self.session.read(cx).editor_recording_target().is_some()
         {
             return;
         }
+        self.ux_walk_selected = false;
+        self.walk_browser_generation = self.walk_browser_generation.wrapping_add(1);
+        self.walk_browser_notice = None;
+        crate::store::set_ux_walk_selected(false);
         self.mode = mode;
         // Open overlays label their start button with the mode.
         let select = crate::target_overlay::TargetSelect::global(cx);
@@ -2169,9 +2324,8 @@ impl MainWindow {
         .detach();
     }
 
-    /// Start with the target the UI state describes. The overlays own the real
-    /// start affordance now; this is the harness path
-    /// (`CAP_GPUI_AUTO_RECORD` without `CAP_GPUI_AUTO_OVERLAY`).
+    /// Start with the target shown in the recorder, including the preselected
+    /// UX Walk browser and the auto-record harness.
     pub fn start_recording(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(target) = self.armed_target() else {
             return;
@@ -2200,7 +2354,10 @@ impl MainWindow {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.session.read(cx).phase != Phase::Idle || self.checking_storage {
+        if self.session.read(cx).phase != Phase::Idle
+            || self.checking_storage
+            || self.walk_browser_opening
+        {
             return;
         }
         // An armed editor recording target forces Studio before this window's
@@ -2253,7 +2410,36 @@ impl MainWindow {
                 feeds.requested_device_settings(),
             )
         };
+        let ux_walk = if self.mode_choice(cx) == ModeChoice::UxWalk && !editor_flow {
+            match crate::ux_walk::request(self.walk_topic.read(cx).text()) {
+                Ok(mut request) => {
+                    let settings = crate::ux_walk::load().unwrap_or_default();
+                    if crate::ux_walk::enabled(&settings, "askSpeakers") {
+                        request.speakers = self
+                            .walk_speakers
+                            .read(cx)
+                            .text()
+                            .split(',')
+                            .map(str::trim)
+                            .filter(|name| !name.is_empty())
+                            .map(str::to_string)
+                            .collect();
+                    }
+                    Some(request)
+                }
+                Err(error) => {
+                    self.session.update(cx, |session, cx| {
+                        session.error = Some(error);
+                        cx.notify();
+                    });
+                    return;
+                }
+            }
+        } else {
+            None
+        };
         let config = recording::StartConfig {
+            ux_walk,
             mode,
             target,
             device_settings,
@@ -2350,6 +2536,7 @@ impl MainWindow {
 
     pub(crate) fn is_preparing_recording(&self) -> bool {
         self.checking_storage
+            || self.walk_browser_opening
             || self.deep_link_start.is_some()
             || self.device_format_pending.is_some()
     }
@@ -3766,20 +3953,118 @@ impl MainWindow {
         // the full body, exactly as `!activeMenu() && ...` does in index.tsx.
         match self.panel {
             Some(panel) => root.child(self.render_panel(panel, cx)),
-            None => root.child(self.render_logo_row(cx)).child(
-                div()
-                    .id("home-scroll")
-                    .flex()
-                    .flex_col()
-                    .flex_1()
-                    .min_h_0()
-                    .w_full()
-                    .pb(px(4.))
-                    .gap(px(8.))
-                    .overflow_y_scroll()
-                    .child(self.render_targets(cx))
-                    .child(self.render_base_controls(cx)),
-            ),
+            None => root
+                .child(self.render_logo_row(cx))
+                .child(
+                    div()
+                        .id("home-scroll")
+                        .flex()
+                        .flex_col()
+                        .flex_1()
+                        .min_h_0()
+                        .w_full()
+                        .pb(px(4.))
+                        .gap(px(8.))
+                        .overflow_y_scroll()
+                        .when(self.mode_choice(cx) == ModeChoice::UxWalk, |this| {
+                            this.child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .gap(px(4.))
+                                    .child(
+                                        div()
+                                            .text_size(px(11.))
+                                            .text_color(self.theme.gray_10)
+                                            .child("Walk topic"),
+                                    )
+                                    .child(ui::TextInput::settings(
+                                        &self.theme,
+                                        "ux-walk-topic",
+                                        &self.walk_topic,
+                                    ))
+                                    .when(
+                                        crate::ux_walk::load().is_ok_and(|settings| {
+                                            crate::ux_walk::enabled(&settings, "askSpeakers")
+                                        }),
+                                        |this| {
+                                            this.child(
+                                                div()
+                                                    .text_size(px(11.))
+                                                    .text_color(self.theme.gray_10)
+                                                    .child("Who is speaking?"),
+                                            )
+                                            .child(
+                                                ui::TextInput::settings(
+                                                    &self.theme,
+                                                    "ux-walk-speakers",
+                                                    &self.walk_speakers,
+                                                ),
+                                            )
+                                        },
+                                    )
+                                    .child(
+                                        ui::Button::body(
+                                            &self.theme,
+                                            "ux-walk-open-start",
+                                            ui::ButtonVariant::Gray,
+                                            ui::ButtonSize::Sm,
+                                        )
+                                        .label("New walk window ↗")
+                                        .on_click(
+                                            cx.listener(|this, _, _, cx| this.set_ux_walk(cx)),
+                                        ),
+                                    ),
+                            )
+                        })
+                        .when(
+                            self.mode_choice(cx) == ModeChoice::UxWalk
+                                && self.session.read(cx).walk.is_some(),
+                            |this| {
+                                this.child(
+                                    ui::Button::body(
+                                        &self.theme,
+                                        "ux-walk-recent",
+                                        ui::ButtonVariant::Gray,
+                                        ui::ButtonSize::Sm,
+                                    )
+                                    .label("Open recent walk")
+                                    .on_click(|_, _, cx| cx.defer(crate::ux_walk_window::open)),
+                                )
+                            },
+                        )
+                        .when_some(self.walk_browser_notice.clone(), |this, notice| {
+                            this.child(
+                                div()
+                                    .text_size(px(11.))
+                                    .text_color(self.theme.gray_10)
+                                    .child(notice),
+                            )
+                        })
+                        .child(self.render_targets(cx))
+                        .child(self.render_base_controls(cx)),
+                )
+                .when(self.mode_choice(cx) == ModeChoice::UxWalk, |this| {
+                    this.child(
+                        ui::Button::plain(
+                            &self.theme,
+                            "ux-walk-start-recording",
+                            ui::ButtonVariant::Blue,
+                            ui::ButtonSize::Lg,
+                        )
+                        .icon("icons/ux-walk.svg")
+                        .label(if self.walk_browser_opening {
+                            "Opening walk window…"
+                        } else {
+                            "Start Recording"
+                        })
+                        .full_width()
+                        .disabled(self.is_preparing_recording() || self.armed_target().is_none())
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.start_recording(window, cx)),
+                        ),
+                    )
+                }),
         }
     }
 
@@ -3847,7 +4132,7 @@ impl MainWindow {
                         .flex_col()
                         .gap(px(8.))
                         .text_size(px(12.))
-                        .child("Recording paused. Cap will hide before resuming.")
+                        .child("Recording paused. Cap UX will hide before resuming.")
                         .child(
                             div()
                                 .id("resume-clean-recording")
@@ -4950,7 +5235,7 @@ impl MainWindow {
     ) {
         cx.spawn_in(window, async move |this, cx| {
             if !crate::platform::confirm_dialog(
-                "Cap",
+                "Cap UX",
                 "Are you sure you want to delete this recording?",
                 "Yes",
                 "No",
@@ -4984,7 +5269,7 @@ impl MainWindow {
     ) {
         cx.spawn_in(window, async move |this, cx| {
             if !crate::platform::confirm_dialog(
-                "Cap",
+                "Cap UX",
                 "Are you sure you want to delete this screenshot?",
                 "Yes",
                 "No",
@@ -5757,20 +6042,40 @@ impl MainWindow {
             .on_click(on_click)
     }
 
+    fn choose_mode_choice(&mut self, choice: ModeChoice, cx: &mut Context<Self>) {
+        if self.is_preparing_recording()
+            || self.session.read(cx).editor_recording_target().is_some()
+        {
+            return;
+        }
+        if let Some(mode) = choice.capture_mode() {
+            self.set_mode(mode, cx);
+            cx.defer(app_windows::refresh_target_overlays);
+        } else {
+            self.clear_mode_hover();
+            cx.notify();
+            self.set_ux_walk(cx);
+        }
+    }
+
     /// `ModeInfoPanel`. Its copy is deliberately not the copy in `MODE_BUTTONS`
     /// -- the hover cards and this panel describe the modes differently, so
     /// both sets of strings are carried.
     fn render_mode_info(&self, cx: &mut Context<Self>) -> gpui::Div {
         let theme = self.theme;
-        let effective_mode = self.effective_mode(cx);
+        let effective_mode = self.mode_choice(cx);
         let locked = self.session.read(cx).editor_recording_target().is_some();
 
-        div().flex().flex_col().gap(px(8.)).w_full().children(
-            [Mode::Instant, Mode::Studio, Mode::Screenshot].map(|mode| {
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(8.))
+            .w_full()
+            .children(ModeChoice::ALL.iter().copied().map(|mode| {
                 let selected = mode == effective_mode;
 
                 div()
-                    .id(SharedString::from(mode.panel_title()))
+                    .id(SharedString::from(mode.title()))
                     .when(locked && !selected, |this| this.opacity(0.5))
                     .flex()
                     .flex_row()
@@ -5825,7 +6130,7 @@ impl MainWindow {
                                     } else {
                                         theme.gray_12
                                     })
-                                    .child(mode.panel_title()),
+                                    .child(mode.title()),
                             )
                             .child(
                                 div()
@@ -5836,11 +6141,10 @@ impl MainWindow {
                     )
                     .hover(|style| style.bg(theme.body_hover_fill(4)))
                     .on_click(cx.listener(move |this, _, _window, cx| {
-                        this.set_mode(mode, cx);
+                        this.choose_mode_choice(mode, cx);
                         this.close_panel(cx);
                     }))
-            }),
-        )
+            }))
     }
 
     fn render_access_banner(
@@ -5862,11 +6166,11 @@ impl MainWindow {
             DeviceMenu::Microphone => "microphone",
         };
         let message = if denied {
-            format!("Cap can't use your {noun}. Turn it on in System Settings.")
+            format!("Cap UX can't use your {noun}. Turn it on in System Settings.")
         } else if requesting {
             "Choose Allow in the macOS prompt.".to_string()
         } else {
-            format!("Cap needs your OK to use your {noun}.")
+            format!("Cap UX needs your OK to use your {noun}.")
         };
         let label = if denied {
             "Open System Settings"
@@ -6062,7 +6366,7 @@ impl MainWindow {
                             .text_size(px(9.))
                             .line_height(px(11.))
                             .text_color(self.theme.gray_11)
-                            .child(format!("{} Mode", self.effective_mode(cx).panel_title())),
+                            .child(format!("{} Mode", self.mode_choice(cx).title())),
                     ),
             )
     }
@@ -6107,25 +6411,19 @@ impl MainWindow {
         }
     }
 
-    /// This goes through `img()`, not `svg()`. The two take different paths in
-    /// gpui: `svg()` keeps only the alpha and tints it with one colour, which
-    /// would flatten the badge, the three blue rings and the wordmark into a
-    /// single silhouette, whereas `img()` rasterises through resvg and keeps
-    /// the colour. `img()` also renders at `SMOOTH_SVG_SCALE_FACTOR` (2x), so
-    /// the 103px-wide source becomes a 206px raster -- more than the 168 device
-    /// pixels an 84px lockup needs on a 2x display.
-    ///
-    /// The app ships two files rather than recolouring one, so this picks the
-    /// same way it does.
     fn render_logo(&self) -> impl IntoElement {
-        img(if self.theme.is_dark() {
-            "icons/logo-full-dark.svg"
-        } else {
-            "icons/logo-full.svg"
-        })
-        .w(px(84.))
-        .h(px(84. * 40. / 103.))
-        .flex_shrink_0()
+        div()
+            .flex()
+            .items_center()
+            .gap(px(7.))
+            .flex_shrink_0()
+            .child(img("branding/cap-ux.png").size(px(26.)))
+            .child(
+                div()
+                    .text_size(px(22.))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child("Cap UX"),
+            )
     }
 
     fn clear_mode_hover(&mut self) {
@@ -6133,7 +6431,13 @@ impl MainWindow {
         self.mode_hover = ModeHoverState::default();
     }
 
-    fn update_mode_hover(&mut self, mode: Mode, card: bool, hovered: bool, cx: &mut Context<Self>) {
+    fn update_mode_hover(
+        &mut self,
+        mode: ModeChoice,
+        card: bool,
+        hovered: bool,
+        cx: &mut Context<Self>,
+    ) {
         let previous = self.mode_hover.target();
         self.mode_hover.update(mode, card, hovered);
         let target = self.mode_hover.target();
@@ -6165,11 +6469,7 @@ impl MainWindow {
         if self.panel.is_some() || self.session.read(cx).phase != Phase::Idle {
             return None;
         }
-        let index = match mode {
-            Mode::Instant => 0,
-            Mode::Studio => 1,
-            Mode::Screenshot => 2,
-        };
+        let index = mode.index();
         let bounds = self.mode_hover_bounds[index].get()?;
         Some(
             gpui::anchored()
@@ -6195,23 +6495,20 @@ impl MainWindow {
         )
     }
 
-    /// `Mode.tsx`: `p-1.5 gap-2 rounded-full border border-gray-5 bg-gray-3`,
-    /// 28px round buttons (`size-7`). Selected gets `bg-gray-7` plus a 2px
-    /// `blue-500` ring offset 1px against `gray-1`.
     fn render_mode_pill(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = self.theme;
-        let selected_mode = self.effective_mode(cx);
+        let selected_mode = self.mode_choice(cx);
         let locked = self.session.read(cx).editor_recording_target().is_some();
 
-        let button = |mode: Mode, id: &'static str, index: usize| {
+        let button = |mode: ModeChoice, index: usize| {
             let selected = mode == selected_mode;
             let bounds = self.mode_hover_bounds[index].clone();
             div()
-                .id(SharedString::from(id))
+                .id(("mode-choice", index))
                 .tab_index(0)
                 .when(self.keyboard_nav, ui::keyboard_nav::ring)
                 .role(gpui::Role::Button)
-                .aria_label(mode.panel_title())
+                .aria_label(mode.title())
                 .aria_selected(selected)
                 .relative()
                 .on_hover(cx.listener(move |this, hovered, _, cx| {
@@ -6256,8 +6553,7 @@ impl MainWindow {
                     if this.session.read(cx).editor_recording_target().is_some() {
                         return;
                     }
-                    this.set_mode(mode, cx);
-                    cx.defer(app_windows::refresh_target_overlays);
+                    this.choose_mode_choice(mode, cx);
                 }))
         };
 
@@ -6266,15 +6562,19 @@ impl MainWindow {
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(8.))
-            .p(px(6.))
+            .gap(px(5.))
+            .p(px(5.))
             .rounded_full()
             .border_1()
             .border_color(theme.body_border(5))
             .bg(theme.body_fill(3))
-            .child(button(Mode::Instant, "mode-instant", 0))
-            .child(button(Mode::Studio, "mode-studio", 1))
-            .child(button(Mode::Screenshot, "mode-screenshot", 2))
+            .children(
+                ModeChoice::ALL
+                    .iter()
+                    .copied()
+                    .enumerate()
+                    .map(|(index, mode)| button(mode, index)),
+            )
             // `absolute -left-1.5 -top-2 p-1 rounded-full bg-gray-5`, hanging
             // off the pill's top-left corner.
             .child(
@@ -7131,48 +7431,53 @@ mod recording_start_permit_tests {
 
 #[cfg(test)]
 mod mode_hover_tests {
-    use super::{Mode, ModeHoverState};
+    use super::{Mode, ModeChoice, ModeHoverState};
+
+    const INSTANT: ModeChoice = ModeChoice::Capture(Mode::Instant);
+    const STUDIO: ModeChoice = ModeChoice::Capture(Mode::Studio);
 
     #[test]
     fn moving_between_trigger_and_card_keeps_the_card_open_in_either_event_order() {
-        for enter_first in [false, true] {
-            let mut hover = ModeHoverState::default();
-            hover.update(Mode::Studio, false, true);
-            hover.visible = Some(Mode::Studio);
-            if enter_first {
-                hover.update(Mode::Studio, true, true);
-                hover.update(Mode::Studio, false, false);
-            } else {
-                hover.update(Mode::Studio, false, false);
-                hover.update(Mode::Studio, true, true);
+        for choice in ModeChoice::ALL.iter().copied() {
+            for enter_first in [false, true] {
+                let mut hover = ModeHoverState::default();
+                hover.update(choice, false, true);
+                hover.visible = Some(choice);
+                if enter_first {
+                    hover.update(choice, true, true);
+                    hover.update(choice, false, false);
+                } else {
+                    hover.update(choice, false, false);
+                    hover.update(choice, true, true);
+                }
+                assert_eq!(hover.target(), Some(choice));
+                hover.update(choice, true, false);
+                assert_eq!(hover.target(), None);
             }
-            assert_eq!(hover.target(), Some(Mode::Studio));
-            hover.update(Mode::Studio, true, false);
-            assert_eq!(hover.target(), None);
         }
     }
 
     #[test]
     fn late_leave_from_previous_trigger_does_not_dismiss_the_new_mode() {
         let mut hover = ModeHoverState::default();
-        hover.update(Mode::Instant, false, true);
-        hover.update(Mode::Studio, false, true);
-        hover.update(Mode::Instant, false, false);
-        assert_eq!(hover.target(), Some(Mode::Studio));
-        hover.update(Mode::Studio, false, false);
+        hover.update(INSTANT, false, true);
+        hover.update(STUDIO, false, true);
+        hover.update(INSTANT, false, false);
+        assert_eq!(hover.target(), Some(STUDIO));
+        hover.update(STUDIO, false, false);
         assert_eq!(hover.target(), None);
     }
 
     #[test]
     fn switching_from_a_card_to_another_mode_does_not_restore_the_removed_card() {
         let mut hover = ModeHoverState::default();
-        hover.update(Mode::Instant, true, true);
-        hover.visible = Some(Mode::Instant);
-        hover.update(Mode::Studio, false, true);
-        assert_eq!(hover.target(), Some(Mode::Studio));
-        hover.update(Mode::Studio, false, false);
+        hover.update(INSTANT, true, true);
+        hover.visible = Some(INSTANT);
+        hover.update(STUDIO, false, true);
+        assert_eq!(hover.target(), Some(STUDIO));
+        hover.update(STUDIO, false, false);
         assert_eq!(hover.target(), None);
-        hover.update(Mode::Instant, true, false);
+        hover.update(INSTANT, true, false);
         assert_eq!(hover.target(), None);
     }
 }

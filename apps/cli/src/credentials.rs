@@ -15,11 +15,31 @@ use crate::atomic;
 use crate::{OutputFormat, write_json};
 
 pub const DEFAULT_SERVER: &str = "https://cap.so";
-const AGENT_KEYRING_SERVICE: &str = "so.cap.cli";
+const AGENT_KEYRING_SERVICE: &str = if cfg!(feature = "ux-walk") {
+    "com.cantrell.cap-ux.cli"
+} else {
+    "so.cap.cli"
+};
 const AGENT_KEYRING_USER: &str = "agent-api";
 const AGENT_GRANTS_KEYRING_USER: &str = "agent-access-grants";
 // Prod first, then the dev bundle, so a released install wins on a machine that has both.
-const DESKTOP_BUNDLE_IDS: [&str; 2] = ["so.cap.desktop", "so.cap.desktop.dev"];
+const DESKTOP_BUNDLE_IDS: [&str; 2] = if cfg!(feature = "ux-walk") {
+    ["com.cantrell.cap-ux", "com.cantrell.cap-ux.dev"]
+} else {
+    ["so.cap.desktop", "so.cap.desktop.dev"]
+};
+
+pub(crate) fn desktop_store_paths() -> Vec<std::path::PathBuf> {
+    if let Some(directory) = std::env::var_os("CAP_GPUI_APP_DATA_DIR") {
+        return vec![std::path::PathBuf::from(directory).join("store")];
+    }
+    dirs::data_dir().map_or_else(Vec::new, |directory| {
+        DESKTOP_BUNDLE_IDS
+            .iter()
+            .map(|id| directory.join(id).join("store"))
+            .collect()
+    })
+}
 
 #[derive(Serialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -38,9 +58,8 @@ pub struct Credentials {
 }
 
 fn load_desktop_store() -> Option<Value> {
-    let data_dir = dirs::data_dir()?;
-    DESKTOP_BUNDLE_IDS.into_iter().find_map(|id| {
-        let bytes = std::fs::read(data_dir.join(id).join("store")).ok()?;
+    desktop_store_paths().into_iter().find_map(|path| {
+        let bytes = std::fs::read(path).ok()?;
         let store: Value = serde_json::from_slice(&bytes).ok()?;
         // Only accept a store that actually carries an auth secret.
         store

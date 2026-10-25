@@ -755,12 +755,20 @@ fn dispatch(action: HotkeyAction, cx: &mut App) {
         }
         HotkeyAction::CycleRecordingMode => {
             // `Studio -> Instant -> Screenshot -> Studio` (`hotkeys.rs:262`).
-            let next = match Mode::from_store() {
-                Mode::Studio => Mode::Instant,
-                Mode::Instant => Mode::Screenshot,
-                Mode::Screenshot => Mode::Studio,
-            };
-            app_windows::set_recording_mode(next, cx);
+            if crate::store::ux_walk_selected() {
+                app_windows::set_recording_mode(Mode::Studio, cx);
+            } else if cfg!(all(target_os = "macos", feature = "ux-walk"))
+                && Mode::from_store() == Mode::Screenshot
+            {
+                crate::ux_walk::start(cx);
+            } else {
+                let next = match Mode::from_store() {
+                    Mode::Studio => Mode::Instant,
+                    Mode::Instant => Mode::Screenshot,
+                    Mode::Screenshot => Mode::Studio,
+                };
+                app_windows::set_recording_mode(next, cx);
+            }
         }
         HotkeyAction::OpenRecordingPicker => {
             app_windows::show_main_window(cx);

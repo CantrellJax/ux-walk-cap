@@ -48,6 +48,7 @@ mod library;
 mod main_window;
 mod media_access;
 mod menus;
+mod mode_choice;
 mod mode_select_window;
 mod onboarding_audio;
 mod onboarding_doodles;
@@ -71,6 +72,7 @@ mod screenshot_export;
 mod script_text;
 mod session;
 mod settings_pages;
+mod settings_ux_walk;
 mod settings_window;
 mod sign_in;
 mod single_instance;
@@ -86,6 +88,12 @@ mod tray;
 mod ui;
 mod updates;
 mod upload;
+mod ux_walk;
+mod ux_walk_browser;
+mod ux_walk_browser_target;
+mod ux_walk_journal;
+mod ux_walk_preferences;
+mod ux_walk_window;
 
 use gpui::{App, AppContext as _, Bounds, WindowBounds, WindowOptions, px, size};
 
@@ -365,13 +373,13 @@ fn main() {
                     titlebar: None,
                     #[cfg(target_os = "windows")]
                     titlebar: Some(gpui::TitlebarOptions {
-                        title: Some("Cap".into()),
+                        title: Some("Cap UX".into()),
                         appears_transparent: true,
                         ..Default::default()
                     }),
                     #[cfg(target_os = "linux")]
                     titlebar: Some(gpui::TitlebarOptions {
-                        title: Some("Cap".into()),
+                        title: Some("Cap UX".into()),
                         ..Default::default()
                     }),
                     #[cfg(target_os = "linux")]

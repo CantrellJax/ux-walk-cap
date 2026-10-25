@@ -1,0 +1,376 @@
+use gpui::{AppContext as _, Context, Entity, IntoElement, ParentElement, Styled, Window, div, px};
+use serde_json::{Map, Value};
+
+use crate::{
+    settings_window::{MenuKind, SettingsWindow},
+    ui, ux_walk,
+};
+
+const FIELDS: &[(&str, &str)] = &[
+    ("me", "Your name"),
+    ("url", "Start page"),
+    ("outDir", "Walk recordings folder"),
+    ("language", "Language code"),
+    ("glossary", "Glossaries"),
+    ("speakers", "Speaker names"),
+    ("sourceRoot", "Product source folder"),
+];
+
+pub(crate) struct UxWalkSettings {
+    values: Map<String, Value>,
+    inputs: Vec<Entity<ui::TextInputState>>,
+    notice: Option<String>,
+    key_status: &'static str,
+    key_busy: bool,
+    _subscriptions: Vec<gpui::Subscription>,
+}
+
+impl UxWalkSettings {
+    pub(crate) fn new(window: &mut Window, cx: &mut Context<SettingsWindow>) -> Self {
+        let loaded = ux_walk::load();
+        let notice = loaded.as_ref().err().cloned();
+        let values = loaded.unwrap_or_default();
+        let mut subscriptions = Vec::new();
+        let inputs = FIELDS
+            .iter()
+            .enumerate()
+            .map(|(index, (key, label))| {
+                let input = cx.new(|cx| {
+                    let mut input = ui::TextInputState::single_line(window, cx);
+                    input.set_placeholder(*label);
+                    input.set_text(ux_walk::text(&values, key).to_string(), cx);
+                    input
+                });
+                subscriptions.push(cx.subscribe(&input, move |this, _, event, cx| match event {
+                    ui::TextInputEvent::Changed => cx.notify(),
+                    ui::TextInputEvent::Confirmed | ui::TextInputEvent::Blurred => {
+                        this.ux_walk_save_field(index, cx);
+                    }
+                    _ => {}
+                }));
+                input
+            })
+            .collect();
+        Self {
+            values,
+            inputs,
+            notice,
+            key_status: "Checking Keychain…",
+            key_busy: false,
+            _subscriptions: subscriptions,
+        }
+    }
+}
+
+impl SettingsWindow {
+    pub(crate) fn ux_walk_refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        match ux_walk::load() {
+            Ok(values) => {
+                self.ux_walk.values = values;
+                self.ux_walk.notice = None;
+                for (index, (key, _)) in FIELDS.iter().enumerate() {
+                    let text = ux_walk::text(&self.ux_walk.values, key).to_string();
+                    self.ux_walk.inputs[index].update(cx, |input, cx| input.set_text(text, cx));
+                }
+            }
+            Err(error) => self.ux_walk.notice = Some(error),
+        }
+        self.ux_walk_refresh_key(window, cx);
+    }
+
+    fn ux_walk_refresh_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let values = self.ux_walk.values.clone();
+        let provider = ux_walk::provider(&values);
+        self.ux_walk.key_status = "Checking Keychain…";
+        cx.spawn_in(window, async move |this, cx| {
+            let status = cx
+                .background_executor()
+                .spawn(async move {
+                    provider.map_or("Choose a supported provider", |provider| {
+                        ux_walk::key_status(&values, provider)
+                    })
+                })
+                .await;
+            this.update_in(cx, |this, window, cx| {
+                if ux_walk::provider(&this.ux_walk.values).map(|provider| provider.id)
+                    == provider.map(|provider| provider.id)
+                {
+                    this.ux_walk.key_status = status;
+                    cx.notify();
+                    window.refresh();
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn ux_walk_write(&mut self, key: &str, value: Value, cx: &mut Context<Self>) {
+        match ux_walk::save(key, value) {
+            Ok(values) => {
+                self.ux_walk.values = values;
+                self.ux_walk.notice = Some("Saved".into());
+            }
+            Err(error) => self.ux_walk.notice = Some(error),
+        }
+        cx.notify();
+    }
+
+    fn ux_walk_save_field(&mut self, index: usize, cx: &mut Context<Self>) {
+        let key = FIELDS[index].0;
+        let value = self.ux_walk.inputs[index]
+            .read(cx)
+            .text()
+            .trim()
+            .to_string();
+        if value != ux_walk::text(&self.ux_walk.values, key) {
+            self.ux_walk_write(key, Value::String(value), cx);
+        }
+    }
+
+    pub(crate) fn ux_walk_menu_items(&self, kind: MenuKind) -> Vec<ui::MenuItem> {
+        let values = &self.ux_walk.values;
+        match kind {
+            MenuKind::UxWalkProvider => ux_walk::PROVIDERS
+                .iter()
+                .map(|provider| {
+                    ui::MenuItem::new(
+                        provider.label,
+                        provider.id == ux_walk::text(values, "transcriber"),
+                    )
+                })
+                .collect(),
+            MenuKind::UxWalkHandoff => ux_walk::HANDOFFS
+                .iter()
+                .map(|(value, label)| {
+                    ui::MenuItem::new(*label, *value == ux_walk::text(values, "agent"))
+                })
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    pub(crate) fn ux_walk_choose(
+        &mut self,
+        kind: MenuKind,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match kind {
+            MenuKind::UxWalkProvider => {
+                if let Some(provider) = ux_walk::PROVIDERS.get(index) {
+                    self.ux_walk_write("transcriber", Value::String(provider.id.into()), cx);
+                    self.ux_walk_refresh_key(window, cx);
+                }
+            }
+            MenuKind::UxWalkHandoff => {
+                if let Some((value, _)) = ux_walk::HANDOFFS.get(index) {
+                    self.ux_walk_write("agent", Value::String((*value).into()), cx);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn ux_walk_field(&self, index: usize, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let (key, label) = FIELDS[index];
+        let input = &self.ux_walk.inputs[index];
+        let changed = input.read(cx).text().trim() != ux_walk::text(&self.ux_walk.values, key);
+        let controls = div()
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .w(px(290.))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .child(ui::TextInput::settings(&self.theme, key, input)),
+            )
+            .child(self.button(
+                ("ux-walk-save", index),
+                (ui::ButtonVariant::Gray, None),
+                "Save",
+                !changed,
+                cx,
+                move |this, _, cx| this.ux_walk_save_field(index, cx),
+            ));
+        self.setting_row(label, None, controls.into_any_element())
+    }
+
+    fn ux_walk_toggle(
+        &self,
+        key: &'static str,
+        label: &'static str,
+        description: &'static str,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        let enabled = ux_walk::enabled(&self.ux_walk.values, key);
+        self.setting_row(
+            label,
+            Some(description),
+            self.toggle(key, label, enabled, cx, move |this, cx| {
+                this.ux_walk_write(key, Value::Bool(!enabled), cx);
+            })
+            .into_any_element(),
+        )
+    }
+
+    fn ux_walk_notice(&self) -> gpui::AnyElement {
+        self.note_box()
+            .text_size(px(12.))
+            .text_color(self.theme.settings_muted())
+            .child(self.ux_walk.notice.clone().unwrap_or_else(|| {
+                "Shared with the UX Walk recorder and CLI. Environment variables and command-line options override these defaults.".into()
+            }))
+            .into_any_element()
+    }
+
+    pub(crate) fn render_ux_walk_general(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let handoff = ux_walk::HANDOFFS
+            .iter()
+            .find(|(value, _)| *value == ux_walk::text(&self.ux_walk.values, "agent"))
+            .map_or("Choose an action", |(_, label)| *label);
+        self.section(
+            "UX Walk",
+            Some("Defaults for narrated walkthroughs, notes and agent handoffs."),
+            Some(
+                self.button(
+                    "ux-walk-start",
+                    (ui::ButtonVariant::Primary, None),
+                    "Open UX Walk",
+                    false,
+                    cx,
+                    |_, _, cx| ux_walk::start(cx),
+                )
+                .into_any_element(),
+            ),
+            vec![
+                self.rows(vec![
+                    self.ux_walk_field(0, cx),
+                    self.ux_walk_field(1, cx),
+                    self.ux_walk_field(5, cx),
+                    self.ux_walk_toggle(
+                        "askSpeakers",
+                        "Ask who is speaking",
+                        "Confirm speaker names before each walk.",
+                        cx,
+                    ),
+                    self.setting_row(
+                        "Agent handoff",
+                        None,
+                        self.select("ux-walk-handoff", handoff, MenuKind::UxWalkHandoff, cx)
+                            .into_any_element(),
+                    ),
+                    self.ux_walk_toggle(
+                        "brief",
+                        "Generate chapter briefs",
+                        "Use your configured Claude CLI to summarize each processed chapter.",
+                        cx,
+                    ),
+                    self.ux_walk_field(6, cx),
+                    self.setting_row("Browser evidence", Some("Native walks save video, screenshots and notes. DOM, network and console traces are not collected."), div().into_any_element()),
+                ])
+                .into_any_element(),
+                self.ux_walk_notice(),
+            ],
+        )
+        .into_any_element()
+    }
+
+    pub(crate) fn render_ux_walk_recordings(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        self.section(
+            "UX Walk recordings",
+            Some("Walks keep their video, notes, chapters and reports together in this folder."),
+            None,
+            vec![
+                self.rows(vec![self.ux_walk_field(2, cx)])
+                    .into_any_element(),
+                self.ux_walk_notice(),
+            ],
+        )
+        .into_any_element()
+    }
+
+    pub(crate) fn render_ux_walk_transcription(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let provider = ux_walk::provider(&self.ux_walk.values);
+        let label = provider.map_or("Choose a provider", |provider| provider.label);
+        let mut rows = vec![
+            self.setting_row(
+                "Provider",
+                Some("Used for UX Walk recordings."),
+                self.select("ux-walk-provider", label, MenuKind::UxWalkProvider, cx)
+                    .into_any_element(),
+            ),
+        ];
+        if provider.is_some_and(|provider| provider.id != "none") {
+            rows.push(
+                self.setting_row(
+                    "API key",
+                    Some(self.ux_walk.key_status),
+                    self.button(
+                        "ux-walk-provider-key",
+                        (ui::ButtonVariant::Gray, None),
+                        "Add or Replace Key…",
+                        self.ux_walk.key_busy || !cfg!(target_os = "macos"),
+                        cx,
+                        |this, window, cx| this.ux_walk_edit_key(window, cx),
+                    )
+                    .into_any_element(),
+                ),
+            );
+            rows.push(self.ux_walk_field(3, cx));
+            rows.push(self.ux_walk_field(4, cx));
+            rows.push(self.ux_walk_toggle(
+                "screenNames",
+                "Use names shown on screen",
+                "Improve transcript spellings using names visible during the walk.",
+                cx,
+            ));
+        }
+        self.section(
+            "UX Walk transcription",
+            Some("Cloud providers receive recording audio when transcription runs. Cap UX editor captions keep their existing local models."),
+            None,
+            vec![self.rows(rows).into_any_element(), self.ux_walk_notice()],
+        ).into_any_element()
+    }
+
+    fn ux_walk_edit_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(provider) = ux_walk::provider(&self.ux_walk.values) else {
+            return;
+        };
+        if self.ux_walk.key_busy {
+            return;
+        }
+        self.ux_walk.key_busy = true;
+        let values = self.ux_walk.values.clone();
+        cx.notify();
+        cx.spawn_in(window, async move |this, cx| {
+            let secret = ux_walk::prompt_key(provider.label);
+            let result = if let Some(secret) = secret {
+                Some(
+                    cx.background_executor()
+                        .spawn(async move { ux_walk::save_key(&values, provider, &secret) })
+                        .await,
+                )
+            } else {
+                None
+            };
+            this.update_in(cx, |this, window, cx| {
+                this.ux_walk.key_busy = false;
+                if let Some(result) = result {
+                    this.ux_walk.notice = Some(match result {
+                        Ok(()) => "API key saved in Keychain".into(),
+                        Err(error) => error,
+                    });
+                }
+                this.ux_walk_refresh_key(window, cx);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+}

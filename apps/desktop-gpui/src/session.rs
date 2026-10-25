@@ -416,6 +416,9 @@ pub struct RecordingSession {
     /// Taken by the phase observer to honour `postStudioRecordingBehaviour`
     /// (`openEditor` by default) the way the Tauri app does.
     pub finished_studio: Option<std::path::PathBuf>,
+    pub walk: Option<crate::ux_walk_journal::Journal>,
+    pub walk_processing: bool,
+    pub walk_notice: String,
     preparing_studio_editor: Option<PreparingStudioEditor>,
     /// `EditorRecordingTarget` (`src-tauri/src/windows.rs:3679-3697`): the
     /// open editor project a "Record a new clip" capture must land back in.
@@ -463,6 +466,13 @@ impl Global for SessionGlobal {}
 
 impl RecordingSession {
     pub fn init(cx: &mut App) -> Entity<Self> {
+        let last_walk = crate::store::store_section(crate::store::RECORDING_SETTINGS)
+            .get("lastNativeWalk")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|file| std::fs::read(file).ok())
+            .and_then(|bytes| {
+                serde_json::from_slice::<crate::ux_walk_journal::Journal>(&bytes).ok()
+            });
         let session = cx.new(|_| Self {
             phase: Phase::Idle,
             active: None,
@@ -475,6 +485,11 @@ impl RecordingSession {
             controls_open: false,
             mic_muted: false,
             finished_studio: None,
+            walk: last_walk,
+            walk_processing: false,
+            walk_notice:
+                "Saved walk. Open its report, or reprocess it if preparation was interrupted."
+                    .into(),
             preparing_studio_editor: None,
             editor_recording_target: None,
             started_at: None,
@@ -641,7 +656,7 @@ impl RecordingSession {
                 .is_some_and(|pending| pending.capture_stopped)
     }
 
-    pub fn start(&mut self, config: StartConfig, cx: &mut Context<Self>) {
+    pub fn start(&mut self, mut config: StartConfig, cx: &mut Context<Self>) {
         if self.phase != Phase::Idle {
             return;
         }
@@ -651,8 +666,16 @@ impl RecordingSession {
         }
         self.storage_monitor = None;
         self.failure_monitor = None;
+        if let Some(request) = &mut config.ux_walk
+            && request.directory.exists()
+        {
+            *request = request.for_restart(&crate::store::new_uuid_v4());
+        }
         self.recording_generation = self.recording_generation.wrapping_add(1);
         self.preparing_studio_editor = None;
+        self.walk = None;
+        self.walk_processing = false;
+        self.walk_notice.clear();
         let generation = self.recording_generation;
         let countdown = crate::store::GeneralSettings::load()
             .recording_countdown
@@ -928,6 +951,36 @@ impl RecordingSession {
         }
         self.monitor_storage(project_dir, cx);
         self.monitor_recording_failure(done, cx);
+        if let Some(request) = self
+            .last_config
+            .as_ref()
+            .and_then(|config| config.ux_walk.clone())
+        {
+            let started = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64;
+            match crate::ux_walk_journal::Journal::begin(
+                request,
+                self.active.as_ref().unwrap().project_dir.clone(),
+                started,
+            ) {
+                Ok(journal) => {
+                    crate::store::set_store_setting(
+                        crate::store::RECORDING_SETTINGS,
+                        "lastNativeWalk",
+                        serde_json::Value::String(journal.file().to_string_lossy().into_owned()),
+                    );
+                    self.walk = Some(journal);
+                    self.walk_notice = "Recording. Notes and chapters save as you add them.".into();
+                }
+                Err(error) => {
+                    self.error = Some(format!("Could not create the walk journal: {error}"));
+                    self.stop(cx);
+                    return;
+                }
+            }
+        }
         #[cfg(target_os = "linux")]
         if self.stop_requested {
             self.stop(cx);
@@ -1165,8 +1218,9 @@ impl RecordingSession {
             low_storage,
             recording_failed,
             self.editor_recording_target.is_some(),
-            crate::store::GeneralSettings::load().post_studio_recording_behaviour
-                == crate::store::PostStudioBehaviour::OpenEditor,
+            self.walk.is_none()
+                && crate::store::GeneralSettings::load().post_studio_recording_behaviour
+                    == crate::store::PostStudioBehaviour::OpenEditor,
         ) {
             let (publisher, finalization) = recording::StudioFinalization::channel(
                 studio_project_path.clone(),
@@ -1322,6 +1376,10 @@ impl RecordingSession {
                         stop_sound.call_once(|| AppSound::StopRecording.play());
                         if low_storage {
                             this.storage_notice = Some("Recording stopped because storage is low. Your recording was saved.".into());
+                        }
+                        if this.walk.is_some() {
+                            this.complete_walk(cx);
+                            return;
                         }
                         if this.mode() == Some(crate::recording::RecordingMode::Studio) && !low_storage {
                             this.finished_studio = Some(project_dir);
@@ -1924,7 +1982,176 @@ impl RecordingSession {
         }).detach();
     }
 
+    pub fn add_walk_event(
+        &mut self,
+        kind: &str,
+        text: &str,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        if !matches!(self.phase, Phase::Recording { .. }) {
+            return Err("Start a walk before adding notes.".into());
+        }
+        let elapsed = self.elapsed().as_millis() as u64;
+        self.walk
+            .as_mut()
+            .ok_or("This recording is not a UX Walk.")?
+            .add(kind, text, elapsed)?;
+        cx.notify();
+        Ok(())
+    }
+
+    fn complete_walk(&mut self, cx: &mut Context<Self>) {
+        let elapsed = self.elapsed().as_millis() as u64;
+        let Some(walk) = self.walk.as_mut() else {
+            return;
+        };
+        if let Err(error) = walk.complete(elapsed) {
+            self.walk_notice = format!("Walk files saved; could not finish the journal: {error}");
+            self.finish(cx);
+            cx.defer(crate::ux_walk_window::open);
+            return;
+        }
+        let file = walk.file();
+        let generation = self.recording_generation;
+        self.walk_notice = "Saving an independent copy of the Cap project…".into();
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let result = cx.background_executor().spawn(async move { crate::ux_walk::run_engine("snapshot", &file) }).await;
+            this.update(cx, |this, cx| {
+                if this.recording_generation != generation || this.phase != Phase::Stopping { return; }
+                this.finish(cx);
+                match result {
+                    Ok(_) => this.process_walk(cx),
+                    Err(error) => this.walk_notice = format!("Your recording and notes are saved. Could not prepare the walk: {error}"),
+                }
+                cx.defer(crate::ux_walk_window::open);
+                cx.notify();
+            }).ok();
+        }).detach();
+    }
+
+    pub fn edit_walk(&mut self, cx: &mut Context<Self>) {
+        let Some(walk) = self.walk.as_ref().filter(|walk| walk.state == "complete") else {
+            return;
+        };
+        let file = walk.file();
+        let completed = file.clone();
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    crate::ux_walk::run_engine("prepare-edit", &file).and_then(|output| {
+                        serde_json::from_str::<std::path::PathBuf>(&output)
+                            .map_err(|e| e.to_string())
+                    })
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                if this.phase != Phase::Idle
+                    || this
+                        .walk
+                        .as_ref()
+                        .is_none_or(|walk| walk.file() != completed)
+                {
+                    return;
+                }
+                match result {
+                    Ok(path) => cx.defer(move |cx| crate::app_windows::open_editor(path, cx)),
+                    Err(error) => {
+                        this.walk_notice = format!("Could not prepare an editing copy: {error}");
+                        cx.notify();
+                    }
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    pub fn handoff_walk(&mut self, cx: &mut Context<Self>) {
+        let Some(walk) = self.walk.as_ref().filter(|walk| walk.state == "complete") else {
+            return;
+        };
+        let file = walk.file();
+        cx.spawn(async move |this, cx| {
+            let completed = file.clone();
+            let result = cx
+                .background_executor()
+                .spawn(async move { crate::ux_walk::run_engine("handoff", &file) })
+                .await;
+            this.update(cx, |this, cx| {
+                if this
+                    .walk
+                    .as_ref()
+                    .is_none_or(|walk| walk.file() != completed)
+                {
+                    return;
+                }
+                this.walk_notice = match result {
+                    Ok(_) => "Opened a Claude session in cmux with this walk’s prompt.".into(),
+                    Err(error) => {
+                        format!("The prompt is on your clipboard. Could not open cmux: {error}")
+                    }
+                };
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    pub fn process_walk(&mut self, cx: &mut Context<Self>) {
+        let Some(walk) = self.walk.as_ref().filter(|walk| walk.state == "complete") else {
+            return;
+        };
+        if self.walk_processing {
+            return;
+        }
+        let file = walk.file();
+        self.walk_processing = true;
+        self.walk_notice = "Preparing chapters, screenshots and transcript…".into();
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let completed = file.clone();
+            let result = cx
+                .background_executor()
+                .spawn(async move { crate::ux_walk::run_engine("process", &file) })
+                .await;
+            this.update(cx, |this, cx| {
+                if this
+                    .walk
+                    .as_ref()
+                    .is_none_or(|walk| walk.file() != completed)
+                {
+                    return;
+                }
+                this.walk_processing = false;
+                this.walk_notice = match result {
+                    Ok(_) => {
+                        "Walk ready. Open the report or copy its location for your agent.".into()
+                    }
+                    Err(error) => {
+                        format!("Recording and notes saved. Processing needs attention: {error}")
+                    }
+                };
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     fn finish(&mut self, cx: &mut Context<Self>) {
+        if let Some(walk) = self.walk.as_mut()
+            && walk.state == "recording"
+        {
+            if let Err(error) = walk.abort() {
+                tracing::error!(%error, "saving interrupted walk journal");
+            }
+            self.walk_notice =
+                "Recording ended without a completed walk. Your notes are saved in its folder."
+                    .into();
+        }
         self.abort_start_cue();
         self.discard_primed(cx);
         self.start_gate = None;

@@ -3,7 +3,14 @@ import { createHash } from "node:crypto";
 import * as fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildMacosPackages } from "./build-macos-packages.mjs";
+import {
+	detectHostTriple,
+	nativeBuildEnvironment,
+} from "./build-desktop-binaries.mjs";
+import {
+	buildMacosPackages,
+	resolveMacosDeploymentTarget,
+} from "./build-macos-packages.mjs";
 
 const repoRoot = path.resolve(
 	path.dirname(fileURLToPath(import.meta.url)),
@@ -30,12 +37,16 @@ export function mainBinaryName(target) {
 	return targetPlatform(target) === "win32" ? "Cap.exe" : "Cap";
 }
 
-export function gpuiBinaryPath(target, profile = "release") {
+export function gpuiBinaryPath(
+	target,
+	profile = "release",
+	directory = gpuiDirectory,
+) {
 	const extension = targetPlatform(target) === "win32" ? ".exe" : "";
 	return path.join(
-		gpuiDirectory,
+		directory,
 		"target",
-		target,
+		...(profile === "debug" ? [] : [target]),
 		profile,
 		`cap-gpui${extension}`,
 	);
@@ -67,8 +78,8 @@ export function gpuiPlatformConfig(platform) {
 	return null;
 }
 
-export function bundleArguments(target, args) {
-	return ["tauri", "bundle", "--target", target, ...args];
+export function bundleArguments(target, args, { native = false } = {}) {
+	return ["tauri", "bundle", ...(native ? [] : ["--target", target]), ...args];
 }
 
 export function bundleEnvironment(env) {
@@ -79,15 +90,19 @@ export function bundleEnvironment(env) {
 	};
 }
 
-function validate(target, args) {
+function validate(target, args, currentPlatform) {
 	const platform = targetPlatform(target ?? "");
-	if (!platform || platform !== process.platform) {
+	if (!platform || platform !== currentPlatform) {
 		throw new Error(
-			"Run on the target platform: node scripts/bundle-gpui.mjs <target-triple> [--skip-build] [--no-bundle] [tauri bundle options]",
+			"Run on the target platform: node scripts/bundle-gpui.mjs <target-triple> [--debug] [--skip-build] [--no-bundle] [tauri bundle options]",
 		);
 	}
-	if (args.some((argument) => /^--(?:target|debug)(?:=|$)/.test(argument))) {
-		throw new Error("The GPUI bundle is always a release build for <target>");
+	if (
+		args.some((argument) => /^--(?:target|debug|profile)(?:=|$)/.test(argument))
+	) {
+		throw new Error(
+			"Select the GPUI target with <target> and the build profile with --debug",
+		);
 	}
 	return platform;
 }
@@ -105,8 +120,12 @@ function run(command, args, options = {}) {
 const sha256 = (contents) =>
 	createHash("sha256").update(contents).digest("hex");
 
-export async function stageMainBinary(target) {
-	const source = gpuiBinaryPath(target);
+export async function stageMainBinary(
+	target,
+	profile = "release",
+	options = {},
+) {
+	const source = gpuiBinaryPath(target, profile, options.directory);
 	const destination = path.join(path.dirname(source), mainBinaryName(target));
 	const built = await fs.readFile(source);
 	if (built.length === 0) throw new Error(`${source} is empty`);
@@ -129,29 +148,73 @@ export async function writePlatformConfig(platform) {
 }
 
 export function parseOptions(args) {
-	const flags = new Set(["--skip-build", "--no-bundle"]);
+	const flags = new Set(["--skip-build", "--no-bundle", "--debug"]);
 	return {
+		debug: args.includes("--debug"),
 		skipBuild: args.includes("--skip-build"),
 		noBundle: args.includes("--no-bundle"),
 		bundleArgs: args.filter((argument) => !flags.has(argument)),
 	};
 }
 
-export async function bundleGpui(target, args, { env = process.env } = {}) {
-	const { skipBuild, noBundle, bundleArgs } = parseOptions(args);
-	const platform = validate(target, bundleArgs);
-
-	if (!skipBuild) {
-		run("bash", [
-			path.join(repoRoot, "scripts", "build-gpui-binary.sh"),
-			"release",
-			target,
-		]);
+export async function bundleGpui(
+	target,
+	args,
+	{
+		env = process.env,
+		platform: currentPlatform = process.platform,
+		runCommand = run,
+		stageBinary = stageMainBinary,
+		packageMacos = buildMacosPackages,
+		writeConfig = writePlatformConfig,
+		hostTriple = detectHostTriple,
+	} = {},
+) {
+	const {
+		debug,
+		skipBuild,
+		noBundle,
+		bundleArgs: requestedArgs,
+	} = parseOptions(args);
+	const platform = validate(target, requestedArgs, currentPlatform);
+	if (debug) {
+		const host = hostTriple({ env });
+		if (target !== host)
+			throw new Error(
+				`Debug GPUI bundles require host target ${host}, received ${target}`,
+			);
 	}
-	const staged = await stageMainBinary(target);
+	const profile = debug ? "debug" : "release";
+	const bundleArgs = [...(debug ? ["--debug"] : []), ...requestedArgs];
+	let environment = env;
+	if (platform === "darwin") {
+		const config = JSON.parse(
+			await fs.readFile(path.join(gpuiDirectory, "tauri.conf.json"), "utf8"),
+		);
+		environment = {
+			...env,
+			MACOSX_DEPLOYMENT_TARGET: resolveMacosDeploymentTarget(
+				env.MACOSX_DEPLOYMENT_TARGET,
+				config.bundle.macOS.minimumSystemVersion,
+			),
+		};
+	}
+	const buildEnv = debug ? nativeBuildEnvironment(environment) : environment;
+	if (!skipBuild) {
+		runCommand(
+			"bash",
+			[
+				path.join(repoRoot, "scripts", "build-gpui-binary.sh"),
+				profile,
+				...(debug ? [] : [target]),
+			],
+			{ env: buildEnv },
+		);
+	}
+	const staged = await stageBinary(target, profile);
 	console.log(`Staged ${staged}`);
 	if (noBundle) return;
-	await writePlatformConfig(platform);
+	await writeConfig(platform);
 	if (platform === "linux") {
 		await fs
 			.access(path.join(gpuiDirectory, platformConfigNames.linux))
@@ -163,9 +226,10 @@ export async function bundleGpui(target, args, { env = process.env } = {}) {
 	}
 
 	if (platform === "darwin") {
-		const result = await buildMacosPackages(target, bundleArgs, {
+		const result = await packageMacos(target, bundleArgs, {
 			bundleOnly: true,
-			env: bundleEnvironment(env),
+			native: debug,
+			env: bundleEnvironment(buildEnv),
 		});
 		if (result.signal || result.code !== 0) {
 			throw new Error(
@@ -175,10 +239,14 @@ export async function bundleGpui(target, args, { env = process.env } = {}) {
 		return;
 	}
 
-	run("bun", ["run", ...bundleArguments(target, bundleArgs)], {
-		cwd: desktopDirectory,
-		env: bundleEnvironment({ ...env, RUST_TARGET_TRIPLE: target }),
-	});
+	runCommand(
+		"bun",
+		["run", ...bundleArguments(target, bundleArgs, { native: debug })],
+		{
+			cwd: desktopDirectory,
+			env: bundleEnvironment({ ...buildEnv, RUST_TARGET_TRIPLE: target }),
+		},
+	);
 }
 
 if (

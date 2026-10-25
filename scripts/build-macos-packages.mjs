@@ -12,13 +12,15 @@ const desktopDirectory = fileURLToPath(
 const retryDelays = [15_000, 30_000];
 const outputTailLimit = 64 * 1024;
 
-export function resolveMacosDeploymentTarget(value) {
-	const minimum = JSON.parse(
+export function resolveMacosDeploymentTarget(
+	value,
+	minimum = JSON.parse(
 		readFileSync(
 			path.join(desktopDirectory, "src-tauri/tauri.conf.json"),
 			"utf8",
 		),
-	).bundle.macOS.minimumSystemVersion;
+	).bundle.macOS.minimumSystemVersion,
+) {
 	const target = value || minimum;
 	const parseVersion = (version) => {
 		if (typeof version !== "string" || !/^\d+(?:\.\d+){0,2}$/.test(version)) {
@@ -81,12 +83,13 @@ function validateArguments(target, args, platform) {
 			valid =
 				/^--(?:config|bundles)=.+/.test(argument) ||
 				argument === "--verbose" ||
+				argument === "--debug" ||
 				/^-v{1,2}$/.test(argument);
 		}
 	}
 	if (!valid) {
 		throw new Error(
-			"Run on macOS: node scripts/build-macos-packages.mjs <aarch64|x86_64>-apple-darwin [--config <path>] [--verbose]",
+			"Run on macOS: node scripts/build-macos-packages.mjs <aarch64|x86_64>-apple-darwin [--debug] [--config <path>] [--verbose]",
 		);
 	}
 }
@@ -153,6 +156,7 @@ export async function buildMacosPackages(
 	args = [],
 	{
 		bundleOnly = false,
+		native = false,
 		platform = process.platform,
 		env = process.env,
 		signal,
@@ -163,7 +167,9 @@ export async function buildMacosPackages(
 	} = {},
 ) {
 	validateArguments(target, args, platform);
-	const commandArguments = ["--target", target, ...args];
+	if (native && !args.includes("--debug"))
+		throw new Error("Native macOS packaging requires --debug");
+	const commandArguments = [...(native ? [] : ["--target", target]), ...args];
 	const environment = {
 		...env,
 		RUST_TARGET_TRIPLE: target,
@@ -171,6 +177,7 @@ export async function buildMacosPackages(
 			env.MACOSX_DEPLOYMENT_TARGET,
 		),
 	};
+	if (native) delete environment.CARGO_BUILD_TARGET;
 	commandArguments.push(
 		"--config",
 		JSON.stringify({

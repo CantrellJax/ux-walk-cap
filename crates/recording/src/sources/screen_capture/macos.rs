@@ -28,6 +28,41 @@ use tracing::{debug, error, info, warn};
 const MAX_CAPTURE_RESTARTS: u32 = 3;
 const RESTART_DELAY: Duration = Duration::from_secs(2);
 
+fn capture_filter(
+    config: &Config,
+    content: arc::R<sc::ShareableContent>,
+    excluded: &[WindowId],
+    phase: &'static str,
+) -> anyhow::Result<arc::R<sc::ContentFilter>> {
+    let windows = content.windows();
+    let available: Vec<_> = windows.iter().map(|window| window.id()).collect();
+    let excluded_ids: Vec<_> = excluded
+        .iter()
+        .filter_map(|id| id.to_string().parse().ok())
+        .collect();
+    let requested = config.window.as_ref().map(ToString::to_string);
+    if let Some(id) = super::window_target::resolve(requested.as_deref(), &available, &excluded_ids)
+        .map_err(anyhow::Error::msg)?
+    {
+        let window = windows
+            .iter()
+            .find(|window| window.id() == id)
+            .map(|window| window.retained())
+            .ok_or_else(|| anyhow!("Selected capture window is unavailable"))?;
+        info!(window_id = id, phase, "Using isolated window capture");
+        return Ok(sc::ContentFilter::with_desktop_independent_window(
+            window.as_ref(),
+        ));
+    }
+    let display = Display::from_id(&config.display)
+        .ok_or_else(|| SourceError::NoDisplay(config.display.clone()))?;
+    let excluded_windows = excluded_shareable_windows(excluded, &content, phase);
+    display
+        .raw_handle()
+        .as_content_filter_excluding_windows(content, excluded_windows)
+        .ok_or_else(|| SourceError::AsContentFilter.into())
+}
+
 fn excluded_shareable_windows(
     excluded_windows: &[WindowId],
     content: &sc::ShareableContent,
@@ -216,19 +251,12 @@ impl ScreenCaptureConfig<CMSampleBufferCapture> {
         let system_audio_drop_counter: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
         let system_audio_frame_counter: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
 
-        let display = Display::from_id(&self.config.display)
-            .ok_or_else(|| SourceError::NoDisplay(self.config.display.clone()))?;
-
-        let excluded_sc_windows =
-            excluded_shareable_windows(&self.excluded_windows, &self.shareable_content, "initial");
-
-        let content_filter = display
-            .raw_handle()
-            .as_content_filter_excluding_windows(
-                self.shareable_content.clone(),
-                excluded_sc_windows,
-            )
-            .ok_or(SourceError::AsContentFilter)?;
+        let content_filter = capture_filter(
+            &self.config,
+            self.shareable_content.clone(),
+            &self.excluded_windows,
+            "initial",
+        )?;
 
         debug!("SCK content filter: {:?}", content_filter);
 
@@ -737,7 +765,9 @@ impl output_pipeline::VideoSource for VideoSource {
                                 break Ok(());
                             }
 
-                            if Display::from_id(&rebuild_params.display_id).is_none() {
+                            if rebuild_params.config.window.is_none()
+                                && Display::from_id(&rebuild_params.display_id).is_none()
+                            {
                                 error!(
                                     display_id = ?rebuild_params.display_id,
                                     "Capture target display is gone; aborting restart"
@@ -945,16 +975,12 @@ async fn rebuild_capturer(params: &CapturerRebuildParams) -> anyhow::Result<Capt
         .await
         .map_err(|e| anyhow!("Failed to get shareable content during restart: {e}"))?;
 
-    let display = Display::from_id(&params.display_id)
-        .ok_or_else(|| anyhow!("Display not found during restart: {:?}", params.display_id))?;
-
-    let excluded_sc_windows =
-        excluded_shareable_windows(&params.excluded_windows, &shareable_content, "restart");
-
-    let content_filter = display
-        .raw_handle()
-        .as_content_filter_excluding_windows(shareable_content, excluded_sc_windows)
-        .ok_or_else(|| anyhow!("Failed to create content filter during restart"))?;
+    let content_filter = capture_filter(
+        &params.config,
+        shareable_content,
+        &params.excluded_windows,
+        "restart",
+    )?;
 
     let size = PhysicalSize::new(
         params.video_info.width as f64,
