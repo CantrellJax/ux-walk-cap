@@ -3519,11 +3519,13 @@ impl SettingsWindow {
 
         self.section(
             "Instant recordings",
-            Some(
+            Some(if cfg!(feature = "ux-walk") {
+                "Saved as a ready-to-play video on your Mac. Choose the capture resolution here, then share from Recordings when you are ready."
+            } else {
                 "Uploaded while you record, so the link is ready the moment you stop. For the \
                  best quality, use Studio mode: it records at the highest quality your screen \
-                 allows, and you can export up to 4K.",
-            ),
+                 allows, and you can export up to 4K."
+            }),
             None,
             vec![self.rows(rows).into_any_element()],
         )
@@ -3779,6 +3781,13 @@ impl SettingsWindow {
                         )
                         .into_any_element(),
                     ),
+                    if cfg!(feature = "ux-walk") {
+                        self.setting_row(
+                            "Original recordings",
+                            Some("Sharing keeps the original recording on your Mac. Delete it from Recordings when you choose."),
+                            div().text_size(px(12.)).child("Kept locally").into_any_element(),
+                        )
+                    } else {
                     self.setting_row(
                         "Delete Instant recordings after upload",
                         Some("Cap UX removes the local file once it has uploaded successfully."),
@@ -3795,7 +3804,8 @@ impl SettingsWindow {
                             },
                         )
                         .into_any_element(),
-                    ),
+                    )
+                    },
                     self.setting_row(
                         "Crash-recoverable recording",
                         Some(
