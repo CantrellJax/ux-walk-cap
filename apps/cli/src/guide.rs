@@ -445,6 +445,15 @@ fn build() -> Guide {
             .iter()
             .any(|prefix| item.command.split_whitespace().next() == Some(*prefix))
         });
+        if let Some(command) = guide
+            .commands
+            .iter_mut()
+            .find(|command| command.command == "agents install")
+        {
+            command.summary = "Install a Cap UX local CLI skill for one selected agent.";
+            command.notes =
+                Some("Use --component skill; the upstream cloud MCP adapter is not included.");
+        }
         guide.commands.push(cmd("sharing status|configure|revoke", "Choose your sharing server, manage its credential, or revoke a share. Local recording never uploads automatically.", OutputMode::SingleJson, &[]));
         guide.env.retain(|item| {
             ![
