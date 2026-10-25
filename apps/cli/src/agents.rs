@@ -119,8 +119,16 @@ fn skill_path(target: AgentTarget) -> Result<PathBuf, String> {
             } else {
                 "skills/cap/SKILL.md"
             }),
-        AgentTarget::Claude => home.join(".claude/skills/cap/SKILL.md"),
-        AgentTarget::Cursor => home.join(".cursor/skills/cap/SKILL.md"),
+        AgentTarget::Claude => home.join(if cfg!(feature = "ux-walk") {
+            ".claude/skills/cap-ux/SKILL.md"
+        } else {
+            ".claude/skills/cap/SKILL.md"
+        }),
+        AgentTarget::Cursor => home.join(if cfg!(feature = "ux-walk") {
+            ".cursor/skills/cap-ux/SKILL.md"
+        } else {
+            ".cursor/skills/cap/SKILL.md"
+        }),
     })
 }
 
