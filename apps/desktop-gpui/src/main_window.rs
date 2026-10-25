@@ -4934,6 +4934,8 @@ impl MainWindow {
                 if studio && opens_editor {
                     let path = path.clone();
                     cx.defer(move |cx| app_windows::open_editor(path, cx));
+                } else if cfg!(feature = "ux-walk") && !studio {
+                    library::play_instant_recording(&path);
                 } else if !studio && let Some(url) = &sharing {
                     cx.open_url(url);
                 } else if !studio {

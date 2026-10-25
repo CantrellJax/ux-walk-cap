@@ -2725,6 +2725,10 @@ impl SettingsWindow {
         let item = &row.item;
         // `studioCompleteCheck()`: the only rows whose body is a button.
         let opens_editor = item.opens_editor();
+        let opens_local = cfg!(feature = "ux-walk")
+            && item.mode == RecordingMode::Instant
+            && !item.status.is_in_progress()
+            && item.status.error().is_none();
         let path = item.path.clone();
 
         let thumbnail = match row.thumbnail.clone() {
@@ -2788,7 +2792,7 @@ impl SettingsWindow {
                 this.border_b_1().border_color(theme.settings_border())
             })
             .map(|this| {
-                if opens_editor {
+                if opens_editor || opens_local {
                     this.cursor_pointer()
                         .hover(|style| style.bg(theme.settings_fill()))
                 } else {
@@ -2797,9 +2801,13 @@ impl SettingsWindow {
             })
             .child(left)
             .child(self.render_recording_actions(index, item, cx))
-            .when(opens_editor, |this| {
+            .when(opens_editor || opens_local, |this| {
                 this.on_click(cx.listener(move |_this, _, _window, cx| {
                     let path = path.clone();
+                    if opens_local {
+                        library::play_instant_recording(&path);
+                        return;
+                    }
                     tracing::info!(path = %path.display(), "opening a recording in the editor");
                     // Deferred: opening a window paints it synchronously, and
                     // doing that inside a click handler would double-lease the
@@ -3020,6 +3028,17 @@ impl SettingsWindow {
         }
 
         if cfg!(feature = "ux-walk") {
+            if mode == RecordingMode::Instant {
+                let play_path = path.clone();
+                actions = actions.child(self.row_button(
+                    ("recording-play", index),
+                    "icons/play.svg",
+                    "Play video",
+                    in_progress || failed,
+                    cx,
+                    move |_, _, _| library::play_instant_recording(&play_path),
+                ));
+            }
             let share_path = path.clone();
             actions = actions.child(self.row_button(
                 ("recording-share", index),

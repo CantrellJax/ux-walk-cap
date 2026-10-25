@@ -608,6 +608,15 @@ pub fn delete_recording_directory(path: &Path) -> Result<(), String> {
 /// An instant recording opens its `content` directory --
 /// `commands.openFilePath` is `open <dir>` on macOS -- and anything else, or a
 /// bundle with no `content` directory, is revealed in the file manager.
+pub fn play_instant_recording(path: &Path) {
+    let output = path.join("content/output.mp4");
+    if output.is_file() {
+        open_path(&output);
+    } else {
+        open_recording_folder(path, RecordingMode::Instant);
+    }
+}
+
 pub fn open_recording_folder(path: &Path, mode: RecordingMode) {
     let content = path.join("content");
     if mode == RecordingMode::Instant && content.is_dir() {
