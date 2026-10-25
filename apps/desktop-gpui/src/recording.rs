@@ -2452,15 +2452,25 @@ async fn start_attempt_with_upload(
             if let Some(attempt) = &attempt {
                 attempt.attach(builder.lifecycle())?;
             }
-            let handle = Arc::new(
-                builder
-                    .build(
-                        #[cfg(target_os = "macos")]
-                        shareable_content,
-                    )
-                    .await
-                    .context("instant recording actor")?,
-            );
+            let built = builder
+                .build(
+                    #[cfg(target_os = "macos")]
+                    shareable_content,
+                )
+                .await
+                .context("instant recording actor");
+            if cfg!(feature = "ux-walk")
+                && let Err(error) = &built
+                && let Err(metadata_error) = persist_local_instant_meta(
+                    &project_dir,
+                    cap_project::InstantRecordingMeta::Failed {
+                        error: error.to_string(),
+                    },
+                )
+            {
+                tracing::error!(%metadata_error, "Could not save the failed local recording status");
+            }
+            let handle = Arc::new(built?);
             if cfg!(feature = "ux-walk")
                 && let Some(events) = handle.take_segment_rx()
             {
