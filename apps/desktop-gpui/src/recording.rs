@@ -2461,6 +2461,13 @@ async fn start_attempt_with_upload(
                     .await
                     .context("instant recording actor")?,
             );
+            if cfg!(feature = "ux-walk")
+                && let Some(events) = handle.take_segment_rx()
+            {
+                drop(tokio::task::spawn_blocking(move || {
+                    events.into_iter().for_each(drop)
+                }));
+            }
             if !cfg!(feature = "ux-walk") {
                 let setup = (|| {
                     let video = pre_created_video
