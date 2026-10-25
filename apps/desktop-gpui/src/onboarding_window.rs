@@ -1190,10 +1190,12 @@ impl OnboardingWindow {
         let logo_y = -24. * logo_leave * travel;
         let logo_opacity = ease(beat(m.t, 0.6, 1.2)) * (1. - logo_leave);
 
-        let logo = img("onboarding/wordmark.svg")
-            .w(px(120.))
-            .h(px(40.))
-            .object_fit(ObjectFit::Contain);
+        let logo = div()
+            .flex()
+            .items_center()
+            .gap(px(12.))
+            .child(img("branding/cap-ux.png").size(px(36.)))
+            .child(copy("Cap UX", 28., ink).font_weight(FontWeight::SEMIBOLD));
 
         let shadow = |color: u32, y: f32, blur: f32, spread: f32, inset: bool| gpui::BoxShadow {
             color: rgba(color).into(),

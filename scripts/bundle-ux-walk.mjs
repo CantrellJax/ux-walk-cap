@@ -77,8 +77,24 @@ export async function bundleUxWalk(app) {
 		path.join(resources, "engine-source.json"),
 		`${JSON.stringify({ repository: "https://github.com/CantrellJax/ux-walk-cap", sourceURL: `${parent.UXWalkSourceURL ?? `https://github.com/CantrellJax/ux-walk-cap/tree/${run("git", ["-C", root, "rev-parse", "HEAD"]).trim()}`}/vendor/ux-walk`, revision, node: process.version }, null, 2)}\n`,
 	);
+	for (const key of ["CFBundleName", "CFBundleDisplayName"]) {
+		run("plutil", [
+			"-replace",
+			key,
+			"-string",
+			"Cap UX",
+			path.join(contents, "Info.plist"),
+		]);
+	}
+	const identity = process.env.CAP_UX_SIGNING_IDENTITY || "-";
 	for (const target of [path.join(engine, "bin", "node"), path.resolve(app)]) {
-		run("codesign", ["--force", "--sign", "-", target]);
+		run("codesign", [
+			"--force",
+			"--sign",
+			identity,
+			"--preserve-metadata=entitlements",
+			target,
+		]);
 	}
 	run("codesign", ["--verify", "--deep", "--strict", path.resolve(app)]);
 	console.log(

@@ -38,6 +38,8 @@ The **ux-walk native checks** workflow checks the desktop and CLI, runs scoped t
 
 A signed public installer and fork-owned binary update feed are not available yet. The default `ux-walk` Cargo feature blocks official Cap installers from overwriting the fork. Do not distribute a build with `--no-default-features`, which restores the official updater.
 
+CI previews use ad-hoc signatures. Their signing identity changes with the binary, so a permission entry from an older preview may remain enabled while the new app sees access denied. Use the same existing local signing identity for successive local builds with `CAP_UX_SIGNING_IDENTITY="your signing identity" node scripts/bundle-ux-walk.mjs "/path/to/Cap UX.app"`. This signs the preview; it does not grant permissions. In macOS Privacy & Security, refresh only the Cap UX entries with the exact installed app, then relaunch it. [Apple's screen recording guide](https://support.apple.com/guide/mac-help/control-access-screen-system-audio-recording-mchld6aa7d23/mac) and [accessibility guide](https://support.apple.com/en-mo/guide/mac-help/mh43185/mac) describe those controls.
+
 ## Upstream and distribution
 
 Upstream changes arrive as reviewed update pull requests and are built before release. Keep customizations in fork-owned modules and extend Cap's recording and editor paths. Cap UX uses its own application identity, library and account state.
