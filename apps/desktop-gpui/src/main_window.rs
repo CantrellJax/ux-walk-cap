@@ -1950,25 +1950,43 @@ impl MainWindow {
                 if this.walk_browser_generation != generation || !this.ux_walk_selected {
                     return;
                 }
-                this.walk_browser_opening = false;
                 if this.session.read(cx).phase != Phase::Idle {
+                    this.walk_browser_opening = false;
                     this.walk_browser_notice = None;
                     cx.notify();
                     return;
                 }
-                match result {
-                    Ok(window) => {
-                        this.devices.windows.retain(|known| known.id != window.id);
-                        this.devices.windows.push(window.clone());
-                        this.selected_window = Some(window);
-                        this.target = Some(TargetType::Window);
-                        this.panel = None;
-                        this.walk_browser_notice = None;
-                        this.sync_overlays(cx);
+                let main = cx.global::<app_windows::AppWindows>().main;
+                cx.defer(move |cx| {
+                    let current = main
+                        .update(cx, |view, _, cx| {
+                            view.walk_browser_generation == generation
+                                && view.ux_walk_selected
+                                && view.session.read(cx).phase == Phase::Idle
+                        })
+                        .unwrap_or(false);
+                    if !current {
+                        return;
                     }
-                    Err(error) => this.walk_browser_notice = Some(error),
-                }
-                cx.defer(crate::app_windows::show_main_window);
+                    // Restoring the recorder clears its old target; apply the new window afterwards.
+                    app_windows::show_main_window(cx);
+                    main.update(cx, |view, _, cx| {
+                        view.walk_browser_opening = false;
+                        match result {
+                            Ok(window) => {
+                                view.devices.windows.retain(|known| known.id != window.id);
+                                view.devices.windows.push(window.clone());
+                                view.selected_window = Some(window);
+                                view.target = Some(TargetType::Window);
+                                view.panel = None;
+                                view.walk_browser_notice = None;
+                            }
+                            Err(error) => view.walk_browser_notice = Some(error),
+                        }
+                        cx.notify();
+                    })
+                    .ok();
+                });
                 cx.notify();
             })
             .ok();
@@ -2306,9 +2324,8 @@ impl MainWindow {
         .detach();
     }
 
-    /// Start with the target the UI state describes. The overlays own the real
-    /// start affordance now; this is the harness path
-    /// (`CAP_GPUI_AUTO_RECORD` without `CAP_GPUI_AUTO_OVERLAY`).
+    /// Start with the target shown in the recorder, including the preselected
+    /// UX Walk browser and the auto-record harness.
     pub fn start_recording(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(target) = self.armed_target() else {
             return;
@@ -3936,93 +3953,118 @@ impl MainWindow {
         // the full body, exactly as `!activeMenu() && ...` does in index.tsx.
         match self.panel {
             Some(panel) => root.child(self.render_panel(panel, cx)),
-            None => root.child(self.render_logo_row(cx)).child(
-                div()
-                    .id("home-scroll")
-                    .flex()
-                    .flex_col()
-                    .flex_1()
-                    .min_h_0()
-                    .w_full()
-                    .pb(px(4.))
-                    .gap(px(8.))
-                    .overflow_y_scroll()
-                    .when(self.mode_choice(cx) == ModeChoice::UxWalk, |this| {
-                        this.child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .gap(px(4.))
-                                .child(
-                                    div()
-                                        .text_size(px(11.))
-                                        .text_color(self.theme.gray_10)
-                                        .child("Walk topic"),
-                                )
-                                .child(ui::TextInput::settings(
-                                    &self.theme,
-                                    "ux-walk-topic",
-                                    &self.walk_topic,
-                                ))
-                                .when(
-                                    crate::ux_walk::load().is_ok_and(|settings| {
-                                        crate::ux_walk::enabled(&settings, "askSpeakers")
-                                    }),
-                                    |this| {
-                                        this.child(
-                                            div()
-                                                .text_size(px(11.))
-                                                .text_color(self.theme.gray_10)
-                                                .child("Who is speaking?"),
+            None => root
+                .child(self.render_logo_row(cx))
+                .child(
+                    div()
+                        .id("home-scroll")
+                        .flex()
+                        .flex_col()
+                        .flex_1()
+                        .min_h_0()
+                        .w_full()
+                        .pb(px(4.))
+                        .gap(px(8.))
+                        .overflow_y_scroll()
+                        .when(self.mode_choice(cx) == ModeChoice::UxWalk, |this| {
+                            this.child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .gap(px(4.))
+                                    .child(
+                                        div()
+                                            .text_size(px(11.))
+                                            .text_color(self.theme.gray_10)
+                                            .child("Walk topic"),
+                                    )
+                                    .child(ui::TextInput::settings(
+                                        &self.theme,
+                                        "ux-walk-topic",
+                                        &self.walk_topic,
+                                    ))
+                                    .when(
+                                        crate::ux_walk::load().is_ok_and(|settings| {
+                                            crate::ux_walk::enabled(&settings, "askSpeakers")
+                                        }),
+                                        |this| {
+                                            this.child(
+                                                div()
+                                                    .text_size(px(11.))
+                                                    .text_color(self.theme.gray_10)
+                                                    .child("Who is speaking?"),
+                                            )
+                                            .child(
+                                                ui::TextInput::settings(
+                                                    &self.theme,
+                                                    "ux-walk-speakers",
+                                                    &self.walk_speakers,
+                                                ),
+                                            )
+                                        },
+                                    )
+                                    .child(
+                                        ui::Button::body(
+                                            &self.theme,
+                                            "ux-walk-open-start",
+                                            ui::ButtonVariant::Gray,
+                                            ui::ButtonSize::Sm,
                                         )
-                                        .child(
-                                            ui::TextInput::settings(
-                                                &self.theme,
-                                                "ux-walk-speakers",
-                                                &self.walk_speakers,
-                                            ),
-                                        )
-                                    },
-                                )
-                                .child(
+                                        .label("New walk window ↗")
+                                        .on_click(
+                                            cx.listener(|this, _, _, cx| this.set_ux_walk(cx)),
+                                        ),
+                                    ),
+                            )
+                        })
+                        .when(
+                            self.mode_choice(cx) == ModeChoice::UxWalk
+                                && self.session.read(cx).walk.is_some(),
+                            |this| {
+                                this.child(
                                     ui::Button::body(
                                         &self.theme,
-                                        "ux-walk-open-start",
+                                        "ux-walk-recent",
                                         ui::ButtonVariant::Gray,
                                         ui::ButtonSize::Sm,
                                     )
-                                    .label("New walk window ↗")
-                                    .on_click(cx.listener(|this, _, _, cx| this.set_ux_walk(cx))),
-                                ),
-                        )
-                    })
-                    .when(
-                        self.mode_choice(cx) == ModeChoice::UxWalk
-                            && self.session.read(cx).walk.is_some(),
-                        |this| {
-                            this.child(
-                                ui::Button::body(
-                                    &self.theme,
-                                    "ux-walk-recent",
-                                    ui::ButtonVariant::Gray,
-                                    ui::ButtonSize::Sm,
+                                    .label("Open recent walk")
+                                    .on_click(|_, _, cx| cx.defer(crate::ux_walk_window::open)),
                                 )
-                                .label("Open recent walk")
-                                .on_click(|_, _, cx| cx.defer(crate::ux_walk_window::open)),
-                            )
-                        },
-                    )
-                    .when_some(self.walk_browser_notice.clone(), |this, notice| {
-                        this.child(
-                            div()
-                                .text_size(px(11.))
-                                .text_color(self.theme.gray_10)
-                                .child(notice),
+                            },
                         )
-                    })
-                    .child(self.render_targets(cx))
-                    .child(self.render_base_controls(cx)),
-            ),
+                        .when_some(self.walk_browser_notice.clone(), |this, notice| {
+                            this.child(
+                                div()
+                                    .text_size(px(11.))
+                                    .text_color(self.theme.gray_10)
+                                    .child(notice),
+                            )
+                        })
+                        .child(self.render_targets(cx))
+                        .child(self.render_base_controls(cx)),
+                )
+                .when(self.mode_choice(cx) == ModeChoice::UxWalk, |this| {
+                    this.child(
+                        ui::Button::plain(
+                            &self.theme,
+                            "ux-walk-start-recording",
+                            ui::ButtonVariant::Blue,
+                            ui::ButtonSize::Lg,
+                        )
+                        .icon("icons/ux-walk.svg")
+                        .label(if self.walk_browser_opening {
+                            "Opening walk window…"
+                        } else {
+                            "Start Recording"
+                        })
+                        .full_width()
+                        .disabled(self.is_preparing_recording() || self.armed_target().is_none())
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.start_recording(window, cx)),
+                        ),
+                    )
+                }),
         }
     }
 

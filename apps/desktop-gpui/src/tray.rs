@@ -874,14 +874,14 @@ mod mac {
     }
 
     fn icon_name(png: &[u8]) -> &'static str {
-        if std::ptr::eq(png.as_ptr(), STOP_ICON.as_ptr()) {
+        if png == STOP_ICON {
             return "stop";
         }
-        if std::ptr::eq(png.as_ptr(), UX_WALK_ICON.as_ptr()) {
+        if png == UX_WALK_ICON {
             return "ux-walk";
         }
         for mode in [Mode::Studio, Mode::Instant, Mode::Screenshot] {
-            if std::ptr::eq(png.as_ptr(), mode_icon(mode).as_ptr()) {
+            if png == mode_icon(mode) {
                 return match mode {
                     Mode::Studio => "studio",
                     Mode::Instant => "instant",

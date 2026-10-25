@@ -5,7 +5,7 @@ Cap UX is an independent AGPLv3 fork of [Cap](https://github.com/CapSoftware/Cap
 ## Record a walk
 
 1. Select **UX Walk** in the menu bar, main recorder or mode picker. A fresh Chrome window opens at your configured start page and is selected for recording. The menu bar switches to the footprint. Onboarding introduces the same mode alongside Instant, Studio and Screenshot.
-2. Enter a topic and, when enabled, confirm speaker names in the recorder. **New walk window** opens another fresh window. You can switch to any display, window, area or camera with the existing capture-source controls.
+2. Enter a topic and, when enabled, confirm speaker names in the recorder. The new browser window stays selected while you configure the walk, and **Start Recording** stays visible at the bottom. **New walk window** opens another fresh window. You can switch to any display, window, area or camera with the existing capture-source controls.
 3. Choose a display, window, area or camera, then use the existing camera, microphone and system-audio controls. Start recording normally.
 4. Open **Walk notes & chapters** from the recording bar. Add an observation or give the next chapter a title. Notes save immediately. Cap's existing Stop, Pause, Resume, Restart and Delete controls own the capture lifecycle.
 5. Stop to save the Cap project and prepare the walk. The native review window shows progress, notes, the report and files. **Edit a copy** opens an independent editing project in the existing editor.
