@@ -115,12 +115,11 @@ pub fn prompt_secret(title: &str, detail: &str) -> Option<String> {
         let alert: Id<AnyObject> = msg_send_id![class!(NSAlert), new];
         let field: Allocated<AnyObject> = msg_send_id![class!(NSSecureTextField), alloc];
         let field: Id<AnyObject> = msg_send_id![field, initWithFrame: NSRect::new(NSPoint::new(0., 0.), NSSize::new(320., 24.))];
-        let _: () =
-            msg_send![&*alert, setMessageText: &*NSString::from_str(&format!("{label} API key"))];
-        let _: () = msg_send![&*alert, setInformativeText: &*NSString::from_str("Saved in your login Keychain for UX Walk. Your audio is sent to this provider when transcription runs.")];
+        let _: () = msg_send![&*alert, setMessageText: &*NSString::from_str(title)];
+        let _: () = msg_send![&*alert, setInformativeText: &*NSString::from_str(detail)];
         let _: () = msg_send![&*alert, setAccessoryView: &*field];
         let _: *mut AnyObject =
-            msg_send![&*alert, addButtonWithTitle: &*NSString::from_str("Save Key")];
+            msg_send![&*alert, addButtonWithTitle: &*NSString::from_str("Save")];
         let _: *mut AnyObject =
             msg_send![&*alert, addButtonWithTitle: &*NSString::from_str("Cancel")];
         let window: *mut AnyObject = msg_send![&*alert, window];

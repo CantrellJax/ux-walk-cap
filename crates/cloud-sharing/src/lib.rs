@@ -196,6 +196,11 @@ impl SharingClient {
             .filter(|value| !value.is_empty())
             .or_else(|| entry(base.as_str()).ok()?.get_password().ok())
             .ok_or("Add your server's upload credential in Settings → Sharing.")?;
+        Self::with_credentials(settings, token)
+    }
+
+    fn with_credentials(settings: Settings, token: String) -> Result<Self, String> {
+        let base = endpoint(&settings.endpoint)?;
         let http = Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(15))
@@ -387,6 +392,145 @@ async fn decode<T: serde::de::DeserializeOwned>(mut response: Response) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::io::{Read as _, Write as _};
+    use std::net::TcpListener;
+    use std::sync::Arc;
+    use std::thread;
+
+    fn fixture_server(responses: Vec<String>) -> (String, thread::JoinHandle<Vec<String>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = format!("http://{}", listener.local_addr().unwrap());
+        let handle = thread::spawn(move || {
+            let mut requests = Vec::new();
+            for response in responses {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut bytes = Vec::new();
+                let header_end = loop {
+                    let mut buffer = [0; 4096];
+                    let length = stream.read(&mut buffer).unwrap();
+                    assert!(length > 0);
+                    bytes.extend_from_slice(&buffer[..length]);
+                    if let Some(index) = bytes.windows(4).position(|window| window == b"\r\n\r\n") {
+                        break index + 4;
+                    }
+                };
+                let header = String::from_utf8_lossy(&bytes[..header_end]).to_string();
+                let length = header
+                    .lines()
+                    .find_map(|line| {
+                        line.to_ascii_lowercase()
+                            .strip_prefix("content-length:")
+                            .and_then(|value| value.trim().parse::<usize>().ok())
+                    })
+                    .unwrap_or(0);
+                while bytes.len() < header_end + length {
+                    let mut buffer = [0; 4096];
+                    let length = stream.read(&mut buffer).unwrap();
+                    assert!(length > 0);
+                    bytes.extend_from_slice(&buffer[..length]);
+                }
+                requests.push(header);
+                stream.write_all(response.as_bytes()).unwrap();
+            }
+            requests
+        });
+        (address, handle)
+    }
+
+    fn http(body: serde_json::Value) -> String {
+        let body = serde_json::to_string(&body).unwrap();
+        format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+    }
+
+    fn prepared() -> String {
+        http(
+            serde_json::json!({ "id": "00000000-0000-0000-0000-000000000000", "partSize": 8388608, "sharePath": format!("/s/00000000-0000-0000-0000-000000000000#{}", "a".repeat(64)) }),
+        )
+    }
+
+    #[tokio::test]
+    async fn cancellation_revokes_remote_attempt_and_preserves_source() {
+        let (server, handle) = fixture_server(vec![
+            prepared(),
+            http(serde_json::json!({"partNumber": 1, "etag": "synthetic"})),
+            "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".into(),
+        ]);
+        let client = SharingClient::with_credentials(
+            Settings {
+                enabled: true,
+                endpoint: server,
+                expires_in_days: 7,
+            },
+            "synthetic-owner-token-with-32-characters".into(),
+        )
+        .unwrap();
+        let file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(file.path(), b"synthetic media").unwrap();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let progress_cancel = cancel.clone();
+        let result = client
+            .upload_file(
+                file.path(),
+                "Synthetic",
+                "video/mp4",
+                move |_| {
+                    progress_cancel.store(true, Ordering::Release);
+                },
+                &cancel,
+            )
+            .await;
+        assert_eq!(result.err().as_deref(), Some("Export cancelled"));
+        assert_eq!(std::fs::read(file.path()).unwrap(), b"synthetic media");
+        let requests = handle.join().unwrap();
+        assert!(requests[0].starts_with("POST /api/v1/shares "));
+        assert!(requests[1].starts_with("PUT /api/v1/shares/"));
+        assert!(requests[2].starts_with("DELETE /api/v1/shares/"));
+    }
+
+    #[tokio::test]
+    async fn wrong_completion_receipt_is_never_reported_as_success() {
+        let (server, handle) = fixture_server(vec![
+            prepared(),
+            http(serde_json::json!({"partNumber": 1, "etag": "synthetic"})),
+            http(serde_json::json!({"id": "a-different-upload", "ready": true})),
+            "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".into(),
+        ]);
+        let client = SharingClient::with_credentials(
+            Settings {
+                enabled: true,
+                endpoint: server,
+                expires_in_days: 7,
+            },
+            "synthetic-owner-token-with-32-characters".into(),
+        )
+        .unwrap();
+        let file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(file.path(), b"synthetic media").unwrap();
+        let result = client
+            .upload_file(
+                file.path(),
+                "Synthetic",
+                "video/mp4",
+                |_| {},
+                &AtomicBool::new(false),
+            )
+            .await;
+        assert_eq!(
+            result.err().as_deref(),
+            Some("The server has not confirmed this upload.")
+        );
+        let requests = handle.join().unwrap();
+        assert_eq!(requests.len(), 4);
+        assert!(requests[3].starts_with("DELETE /api/v1/shares/"));
+        assert!(file.path().is_file());
+    }
 
     #[test]
     fn endpoint_refuses_credentials_untrusted_schemes_and_upstream_services() {

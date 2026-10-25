@@ -1745,6 +1745,16 @@ impl SettingsWindow {
                         window.start_window_move();
                     }),
             )
+            .when(cfg!(feature = "ux-walk"), |this| {
+                this.child(
+                    div()
+                        .px(px(14.))
+                        .pb(px(16.))
+                        .text_size(px(18.))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child("Cap UX"),
+                )
+            })
             .when(!cfg!(feature = "ux-walk"), |this| {
                 this.child(self.render_profile(cx))
             })
@@ -3065,6 +3075,18 @@ impl SettingsWindow {
     ) {
         if !cap_cloud_sharing::load().is_ok_and(|settings| settings.enabled) {
             self.set_page(Page::Sharing, window, cx);
+            return;
+        }
+        if !revoke
+            && cap_project::RecordingMeta::load_for_project(&path).is_ok_and(|meta| {
+                matches!(meta.inner, cap_project::RecordingMetaInner::Studio(_))
+                    && !meta.output_path().is_file()
+            })
+        {
+            self.recordings.notice = Some(
+                "Export this recording in the editor, then choose Create shareable link.".into(),
+            );
+            self.open_editor_confirmed(path, false, window, cx);
             return;
         }
         if !self.recordings.sharing_busy.insert(path.clone()) {

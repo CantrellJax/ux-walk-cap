@@ -329,7 +329,7 @@ async function route(request: Request, env: RuntimeEnv): Promise<Response> {
 			return new Response(null, {
 				status: 204,
 				headers: {
-					"Set-Cookie": `capux_read=${token}; Path=/api/v1/shares/${id}/; HttpOnly${secure}; SameSite=Strict; Max-Age=${Math.min(1800, Math.floor((share.expiresAt - Date.now()) / 1000))}`,
+					"Set-Cookie": `capux_read=${token}; Path=/api/v1/shares/${id}/; HttpOnly${secure}; SameSite=Strict; Max-Age=${Math.floor((share.expiresAt - Date.now()) / 1000)}`,
 				},
 			});
 		}

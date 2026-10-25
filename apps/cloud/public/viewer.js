@@ -10,7 +10,6 @@ async function openShare() {
 		});
 		if (!access.ok)
 			throw new Error("This link has expired, was revoked, or is incomplete.");
-		history.replaceState(null, "", location.pathname);
 	}
 	const response = await fetch(`${base}/metadata`, {
 		credentials: "same-origin",
