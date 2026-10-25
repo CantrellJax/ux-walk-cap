@@ -109,6 +109,7 @@ test("chapters and notes keep Cap elapsed offsets and retries reuse their saved 
 			assert.equal(cfg.transcriber, "none");
 			assert.equal(options.brief, false);
 			assert.ok(fs.existsSync(path.join(directory, "chapter.json")));
+			assert.match(nativeWalkPrompt(f.file), /preparation: processing/);
 			return {};
 		},
 		writeIndex: () => {},
@@ -124,6 +125,10 @@ test("chapters and notes keep Cap elapsed offsets and retries reuse their saved 
 	]);
 	assert.equal(session.chapters[1].name, "Payment");
 	assert.equal(session.chapters[1].startMs, 104000);
+	assert.match(
+		fs.readFileSync(path.join(f.directory, "agent-prompt.txt"), "utf8"),
+		/preparation: ready/,
+	);
 	const actions = fs
 		.readFileSync(path.join(f.directory, "actions.jsonl"), "utf8")
 		.trim()
