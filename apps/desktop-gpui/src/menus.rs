@@ -532,7 +532,7 @@ fn apply_quit_action(action: QuitAction, cx: &mut App) {
                     cx.global_mut::<QuitCoordinator>().gate.cancel_exit();
                     tracing::error!(%error, "quit canceled because editor changes could not be saved");
                     cx.spawn(async move |_| {
-                        platform::alert_dialog("Cap is still open", &error);
+                        platform::alert_dialog(&format!("{APP_NAME} is still open"), &error);
                     })
                     .detach();
                     return;
@@ -546,17 +546,19 @@ fn apply_quit_action(action: QuitAction, cx: &mut App) {
             cx.global_mut::<QuitCoordinator>().observer = None;
             let message = RecordingSession::global(cx).update(cx, |session, cx| {
                 let message = match session.error.as_deref() {
-                    Some(error) => format!("Quit canceled: {error}. Cap will stay open so you can finish or recover the recording."),
-                    None if action == QuitAction::TimedOut => "Quit canceled because recording shutdown is still pending. Cap will stay open. Use Stop once available, then try Quit again.".into(),
-                    None => "Quit canceled because recording shutdown could not be confirmed. Cap will stay open. Use Stop, then try Quit again.".into(),
+                    Some(error) => format!("Quit canceled: {error}. {APP_NAME} will stay open so you can finish or recover the recording."),
+                    None if action == QuitAction::TimedOut => format!("Quit canceled because recording shutdown is still pending. {APP_NAME} will stay open. Use Stop once available, then try Quit again."),
+                    None => format!("Quit canceled because recording shutdown could not be confirmed. {APP_NAME} will stay open. Use Stop, then try Quit again."),
                 };
                 session.error = Some(message.clone());
                 cx.notify();
                 message
             });
             tracing::warn!(%message);
-            cx.spawn(async move |_| platform::alert_dialog("Cap is still open", &message))
-                .detach();
+            cx.spawn(async move |_| {
+                platform::alert_dialog(&format!("{APP_NAME} is still open"), &message)
+            })
+            .detach();
         }
     }
 }

@@ -249,12 +249,14 @@ const MODES: &[ModeDetail] = &[
 #[derive(Default)]
 struct ModeSelection {
     preview: Option<usize>,
+    selected: Option<ModeChoice>,
 }
 
 impl ModeSelection {
     fn select(&mut self, index: usize) -> Option<ModeChoice> {
         let mode = MODES.get(index)?.mode;
         self.preview = Some(index);
+        self.selected = Some(mode);
         Some(mode)
     }
 
@@ -263,9 +265,7 @@ impl ModeSelection {
     }
 
     fn choice(&self) -> Option<ModeChoice> {
-        self.preview
-            .and_then(|index| MODES.get(index))
-            .map(|mode| mode.mode)
+        self.selected
     }
 }
 
@@ -2904,7 +2904,10 @@ mod tests {
     fn choosing_another_mode_replaces_the_pending_onboarding_choice() {
         let mut selection = ModeSelection::default();
         assert_eq!(selection.choice(), None);
-        selection.select(0);
+        assert_eq!(
+            selection.select(0),
+            Some(ModeChoice::Capture(Mode::Instant))
+        );
         selection.navigate();
         let studio = ModeChoice::Capture(Mode::Studio);
         assert_eq!(selection.select(1), Some(studio));
