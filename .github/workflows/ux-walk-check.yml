@@ -100,8 +100,6 @@ jobs:
           cargo +1.95.0 check --manifest-path apps/desktop-gpui/Cargo.toml --locked -p cap-desktop-gpui
           cargo +1.95.0 check --locked -p cap
           cargo +1.95.0 test --locked -p cap-cloud-sharing
-      - name: Exercise local Instant recording metadata
-        run: cargo +1.95.0 test --manifest-path apps/desktop-gpui/Cargo.toml --locked --bin cap-gpui owned_sharing_tests
       - name: Exercise the native walk processor
         run: node --test apps/desktop-gpui/ux-walk/browser-evidence.test.mjs apps/desktop-gpui/ux-walk/native-walk.test.mjs
       - name: Exercise isolated window selection
@@ -113,6 +111,7 @@ jobs:
           task_frameworks="apps/desktop-gpui/target/debug/Frameworks"
           mkdir -p "$task_frameworks"
           ln -sfn "$GITHUB_WORKSPACE/target/Frameworks/Spacedrive.framework" "$task_frameworks/Spacedrive.framework"
+          cargo +1.95.0 test --manifest-path apps/desktop-gpui/Cargo.toml --locked --bin cap-gpui owned_sharing_tests
           cargo +1.95.0 test --manifest-path apps/desktop-gpui/Cargo.toml --locked --bin cap-gpui tray::tests
           cargo +1.95.0 test --manifest-path apps/desktop-gpui/Cargo.toml --locked --test ux_walk_journal_contract
           cargo +1.95.0 test --manifest-path apps/desktop-gpui/Cargo.toml --locked --test ux_walk_browser_contract
