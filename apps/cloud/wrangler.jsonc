@@ -8,12 +8,21 @@
 	"assets": {
 		"directory": "public",
 		"binding": "ASSETS",
-		"run_worker_first": true
+		"run_worker_first": true,
+		"html_handling": "none"
 	},
-	"r2_buckets": [{ "binding": "MEDIA", "bucket_name": "capux-media" }],
+	"r2_buckets": [
+		{
+			"binding": "MEDIA",
+			"bucket_name": "capux-media"
+		}
+	],
 	"observability": {
 		"enabled": true,
 		"head_sampling_rate": 0.1,
-		"traces": { "enabled": true, "head_sampling_rate": 0.1 }
+		"traces": {
+			"enabled": true,
+			"head_sampling_rate": 0.1
+		}
 	}
 }

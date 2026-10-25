@@ -9,6 +9,7 @@ pub(crate) struct SharingSettings {
     settings: cap_cloud_sharing::Settings,
     endpoint: Entity<ui::TextInputState>,
     notice: Option<String>,
+    key_busy: bool,
     _events: gpui::Subscription,
 }
 
@@ -28,6 +29,7 @@ impl SharingSettings {
             settings,
             endpoint,
             notice,
+            key_busy: false,
             _events: events,
         }
     }
@@ -58,16 +60,9 @@ impl SettingsWindow {
             ]).into_any_element(),
             self.section("Upload credential", Some("Stored in your system credential store for this server. Recordings never contain it."), None, vec![
                 self.card(true).flex().flex_row().gap(px(12.))
-                    .child(self.button("sharing-credential", (ui::ButtonVariant::Dark, None), "Set upload credential", settings.endpoint.is_empty(), cx, |this, _, cx| {
-                        if let Some(token) = crate::ux_walk::prompt_secret("Sharing upload credential", "Saved in your system credential store for this sharing server. Used only when you share a video or screenshot.") {
-                            this.sharing.notice = Some(match cap_cloud_sharing::set_token(&this.sharing.settings.endpoint, &token) { Ok(()) => "Upload credential saved.".into(), Err(error) => error });
-                            cx.notify();
-                        }
-                    }))
-                    .child(self.button("sharing-forget", (ui::ButtonVariant::Gray, None), "Forget credential", settings.endpoint.is_empty(), cx, |this, _, cx| {
-                        this.sharing.notice = Some(match cap_cloud_sharing::remove_token(&this.sharing.settings.endpoint) { Ok(()) => "Upload credential removed.".into(), Err(error) => error });
-                        cx.notify();
-                    })).into_any_element()
+                    .child(self.button("sharing-credential", (ui::ButtonVariant::Dark, None), "Set upload credential", settings.endpoint.is_empty() || self.sharing.key_busy || !cfg!(target_os = "macos"), cx, |this, window, cx| this.sharing_credential(false, window, cx)))
+                    .child(self.button("sharing-forget", (ui::ButtonVariant::Gray, None), "Forget credential", settings.endpoint.is_empty() || self.sharing.key_busy, cx, |this, window, cx| this.sharing_credential(true, window, cx)))
+                    .into_any_element()
             ]).into_any_element(),
             self.section("Link expiry", Some("Anyone with the full link can view it until it expires or you revoke it. Shared media stays private in your server's storage."), None, vec![
                 self.card(true).flex().gap(px(8.)).children([1, 7, 30].into_iter().map(|days| self.button(("sharing-expiry", days as usize), (if settings.expires_in_days == days { ui::ButtonVariant::Primary } else { ui::ButtonVariant::Gray }, None), format!("{days} {}", if days == 1 { "day" } else { "days" }), false, cx, move |this, _, cx| {
@@ -76,6 +71,28 @@ impl SettingsWindow {
             ]).into_any_element(),
             div().text_size(px(13.)).child(self.sharing.notice.clone().unwrap_or_default()).into_any_element(),
         ]
+    }
+
+    fn sharing_credential(&mut self, remove: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if self.sharing.key_busy {
+            return;
+        }
+        self.sharing.key_busy = true;
+        let server = self.sharing.settings.endpoint.clone();
+        cx.notify();
+        cx.spawn_in(window, async move |this, cx| {
+            let token = if remove { None } else { crate::ux_walk::prompt_secret("Sharing upload credential", "Saved in your system credential store for this sharing server. Used only when you share a video or screenshot.") };
+            let result = if remove || token.is_some() {
+                Some(cx.background_executor().spawn(async move {
+                    if remove { cap_cloud_sharing::remove_token(&server) } else { cap_cloud_sharing::set_token(&server, token.as_deref().unwrap_or_default()) }
+                }).await)
+            } else { None };
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.sharing.key_busy = false;
+                if let Some(result) = result { this.sharing.notice = Some(match result { Ok(()) => if remove { "Upload credential removed.".into() } else { "Upload credential saved.".into() }, Err(error) => error }); }
+                cx.notify(); window.refresh();
+            });
+        }).detach();
     }
 
     pub(crate) fn render_sharing_shortcut(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
