@@ -71,6 +71,11 @@ test("Cap-UX requires macOS 15 while the underlying capture pipeline keeps its b
 		),
 	);
 	assert.equal(gpui.bundle.macOS.minimumSystemVersion, "15.0");
+	assert.equal(resolveMacosDeploymentTarget(undefined, "15.0"), "15.0");
+	assert.throws(
+		() => resolveMacosDeploymentTarget("14.9", "15.0"),
+		/below Cap's minimum/,
+	);
 });
 
 test("the GPUI app is packaged by rebundling its prebuilt binary on every attempt", async () => {

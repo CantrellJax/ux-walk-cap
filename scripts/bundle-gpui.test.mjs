@@ -272,6 +272,8 @@ test("profile selection reaches the GPUI build, staging and macOS bundler", asyn
 		]);
 		assert.equal(packages[0][2].native, debug);
 		assert.equal(packages[0][2].bundleOnly, true);
+		assert.equal(packages[0][2].env.MACOSX_DEPLOYMENT_TARGET, "15.0");
+		assert.equal(commands[0][2].env.MACOSX_DEPLOYMENT_TARGET, "15.0");
 		if (debug) {
 			assert.equal(commands[0][2].env.CARGO_BUILD_TARGET, undefined);
 			assert.equal(commands[0][2].env.RUST_TARGET_TRIPLE, undefined);
