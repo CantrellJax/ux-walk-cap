@@ -109,6 +109,11 @@ jobs:
         run: |
           rustc +1.95.0 --edition 2024 --test crates/recording/tests/macos_window_target_contract.rs -o "$RUNNER_TEMP/window-capture-contract"
           "$RUNNER_TEMP/window-capture-contract"
+      - name: Exercise requested meeting audio failure reporting
+        run: |
+          mkdir -p target/debug/Frameworks
+          ln -sfn "$GITHUB_WORKSPACE/target/Frameworks/Spacedrive.framework" target/debug/Frameworks/Spacedrive.framework
+          cargo +1.95.0 test --locked -p cap-recording requested_system_audio_failure_reaches_recording_watcher
       - name: Exercise menu and fork update protection
         run: |
           task_frameworks="apps/desktop-gpui/target/debug/Frameworks"
