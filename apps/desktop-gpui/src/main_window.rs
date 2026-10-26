@@ -6814,6 +6814,7 @@ impl MainWindow {
 
     /// `BaseControls`: camera, microphone, system audio.
     fn render_base_controls(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = self.theme;
         div()
             .flex()
             .flex_col()
@@ -6925,6 +6926,13 @@ impl MainWindow {
                     )
                     // System audio has no device to choose, so the row is a
                     // plain toggle rather than a picker.
+                    .tooltip(move |_, cx| {
+                        ui::Tooltip::new(
+                            &theme,
+                            "Record calls and sound from all apps, even when capturing one window. Microphone is separate.",
+                        )
+                        .view(cx)
+                    })
                     .on_click(cx.listener(|this, _, _window, cx| {
                         if this.device_changes_allowed(cx) {
                             this.set_system_audio(!this.system_audio, cx);
