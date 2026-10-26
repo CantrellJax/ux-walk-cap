@@ -24,6 +24,12 @@ After confirmed recording finalization, the app snapshots the project into the w
 
 Saved journals are remembered across app launches. Settings → Recordings includes a **UX Walk** filter, **View notes** and **Copy agent prompt** for each associated recording. Saved notes can open the report/files, reprocess an interrupted preparation, or explicitly open a Claude session in cmux. The existing Shortcuts page offers **Open UX Walk** and **Open walk notes**. Walk folders retain the report, journal, browser evidence and media; handoff prompts describe the evidence actually available and treat recorded content as observations rather than instructions.
 
+## Prepare an editable demo
+
+The bundled `cap-demo` companion skill can prepare an existing recording for optional local FilmCraft and EffectCraft tools. Run `node <skilldir>/cap-demo.mjs prepare /path/to/native-walk.json --out /path/to/new-demo`, review the generated `edit.json`, then run `node <skilldir>/cap-demo.mjs render /path/to/new-demo`. A `.cap` project or video is also accepted; videos can reuse an SRT with `--captions`. `doctor` checks the optional tools. The skill is installed with the existing `cap agents install` workflow.
+
+This first bridge copies the source, keeps its hashes, maps explicit cuts and existing caption cues onto one output clock, and optionally inserts an editable EffectCraft title card. Each attempt creates a separate FilmCraft project and local HTML review under `renders/`; failures retain their draft files. It makes no model or cloud calls. Source bundles can move and render again; native editor projects may need media relinking after moving. Preproduction UI, word-level cuts and arbitrary graphics layouts are follow-ups. See [the companion skill](apps/cli/skill/cap-demo/SKILL.md) for commands and the tested tool versions.
+
 ## Settings and providers
 
 General contains your name, start page, speaker defaults, handoff preference, chapter briefs and product source folder. Recordings contains the walk output folder. Transcription contains ElevenLabs Scribe, AssemblyAI, Descript and None, plus language, glossary and screen-name preferences. Ordinary editor captions retain their existing local models.

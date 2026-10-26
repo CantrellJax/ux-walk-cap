@@ -9,6 +9,17 @@ import os from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+if (["prepare", "inspect", "render", "doctor"].includes(process.argv[2])) {
+	try {
+		const { productionMain } = await import("./lib/production-cli.mjs");
+		await productionMain(process.argv.slice(2));
+	} catch (error) {
+		console.error(`cap-demo: ${error.message}`);
+		process.exit(1);
+	}
+	process.exit(0);
+}
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const LIB = join(__dirname, "lib");
 
@@ -37,7 +48,7 @@ for (let i = 0; i < argv.length; i++) {
 
 function usage() {
 	console.log(
-		"Usage: cap-demo <url> [--out DIR] [--slug NAME] [--music ID] [--quality 4k|hd] [--story click|scroll]",
+		"Usage: cap-demo prepare|inspect|render|doctor [--help]\n       cap-demo <url> [--out DIR] [--slug NAME] [--music ID] [--quality 4k|hd] [--story click|scroll]",
 	);
 }
 
@@ -111,7 +122,7 @@ function parseScoutResult(out) {
 		if (!lines[i].startsWith("{")) continue;
 		try {
 			const o = JSON.parse(lines[i]);
-			if (o && o.scout) return o;
+			if (o?.scout) return o;
 		} catch {}
 	}
 	return null;
