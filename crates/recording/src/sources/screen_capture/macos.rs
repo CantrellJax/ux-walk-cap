@@ -3,14 +3,14 @@ use crate::output_pipeline::{self, ChannelVideoSource, ChannelVideoSourceConfig,
 use anyhow::{Context, anyhow};
 use cap_timestamp::Timestamp;
 use cidre::*;
-use futures::{FutureExt as _, future::BoxFuture};
+use futures::{FutureExt as _, channel::mpsc, future::BoxFuture};
 use std::{
     ptr,
     sync::{
         Arc, Mutex,
         atomic::{self, AtomicBool, AtomicU32, AtomicU64},
     },
-    time::{Duration, Instant},
+    time::Duration,
 };
 use tokio::{select, sync::broadcast};
 use tokio_util::{

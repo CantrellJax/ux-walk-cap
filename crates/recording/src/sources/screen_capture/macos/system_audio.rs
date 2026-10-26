@@ -3,7 +3,6 @@ use crate::{
     ChannelAudioSourceConfig,
     output_pipeline::{AudioFrame, ChannelAudioSource},
 };
-use futures::{FutureExt as _, channel::mpsc};
 
 pub struct SystemAudioSourceConfig {
     inner: ChannelAudioSourceConfig,
