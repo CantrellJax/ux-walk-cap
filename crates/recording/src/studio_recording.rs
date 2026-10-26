@@ -1584,7 +1584,7 @@ impl Pipeline {
                 OptionFuture::from(self.microphone.map(|s| s.stop_with_outcome())),
                 OptionFuture::from(self.camera.map(|s| s.stop_with_outcome())),
                 async {
-                    // These sources share a capturer; only the first stop awaits its native acknowledgement.
+                    // Stop computer audio before finalizing the selected-window stream.
                     let system_audio =
                         OptionFuture::from(self.system_audio.map(|s| s.stop_with_outcome())).await;
                     (self.screen.stop_with_outcome().await, system_audio)
@@ -1755,7 +1755,7 @@ impl Pipeline {
         if let Some(ref system_audio) = self.system_audio {
             futures.push(Box::pin({
                 let done_fut = system_audio.done_fut();
-                async move { (RecordingTrackKind::SystemAudio, false, done_fut.await) }
+                async move { (RecordingTrackKind::SystemAudio, true, done_fut.await) }
             }));
         }
 
@@ -6365,6 +6365,84 @@ mod tests {
             actor_ref.kill();
             actor_ref.wait_for_stop().await;
         }
+    }
+
+    #[tokio::test]
+    async fn requested_system_audio_failure_reaches_recording_watcher() {
+        let temp = tempfile::tempdir().unwrap();
+        let timestamps = Timestamps::now();
+        let (screen_tx, screen_rx) = flume::bounded(4);
+        let (mut audio_tx, audio_rx) = futures::channel::mpsc::channel(4);
+        let (completion_tx, mut completion_rx) = watch::channel(None);
+        let screen = OutputPipeline::builder(temp.path().join("display.mp4"))
+            .with_video::<ChannelVideoSource<TestVideoFrame>>(ChannelVideoSourceConfig::new(
+                test_video_info(),
+                screen_rx,
+            ))
+            .with_timestamps(timestamps)
+            .build::<SuccessfulVideoMuxer>(())
+            .await
+            .unwrap();
+        let audio = OutputPipeline::builder(temp.path().join("system_audio.ogg"))
+            .with_audio_source::<ChannelAudioSource>(ChannelAudioSourceConfig::new(
+                test_audio_info(),
+                audio_rx,
+            ))
+            .with_timestamps(timestamps)
+            .build::<FailingAudioMuxer>(FailingAudioMuxerConfig {
+                fail_after_frame: 1,
+            })
+            .await
+            .unwrap();
+        let audio_done = audio.done_fut();
+        let mut pipeline = Pipeline {
+            start_time: timestamps,
+            start_gate: None,
+            screen,
+            microphone: None,
+            camera: None,
+            system_audio: Some(audio),
+            cursor: None,
+            track_failures: Arc::new(std::sync::Mutex::new(Vec::new())),
+            watcher_task: None,
+            #[cfg(any(target_os = "linux", windows))]
+            stopping: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        };
+        pipeline.spawn_watcher(completion_tx);
+        screen_tx
+            .send_async(TestVideoFrame {
+                timestamp: Timestamp::Instant(timestamps.instant()),
+            })
+            .await
+            .unwrap();
+        audio_tx
+            .try_send(crate::output_pipeline::AudioFrame::new(
+                test_audio_info().empty_frame(960),
+                Timestamp::Instant(timestamps.instant()),
+            ))
+            .unwrap();
+        drop(audio_tx);
+        assert!(audio_done.await.is_err());
+        let notified = tokio::time::timeout(Duration::from_secs(2), completion_rx.changed()).await;
+        let stopped = pipeline.stop().await;
+        drop(screen_tx);
+        assert!(
+            notified.is_ok(),
+            "Requested meeting audio must not disappear silently"
+        );
+        assert!(completion_rx.borrow().as_ref().is_some_and(Result::is_err));
+        #[cfg(not(windows))]
+        {
+            let finished = stopped.unwrap().pipeline;
+            assert_eq!(finished.screen.video_frame_count, 1);
+            assert!(finished.system_audio.is_none());
+            assert_eq!(
+                finished.track_failures[0].track,
+                RecordingTrackKind::SystemAudio
+            );
+        }
+        #[cfg(windows)]
+        assert!(stopped.is_err());
     }
 
     #[tokio::test]

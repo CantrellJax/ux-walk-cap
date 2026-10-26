@@ -68,6 +68,8 @@ jobs:
           node-version: '22'
       - name: Check packaging profiles and staging
         run: node --test scripts/bundle-gpui.test.mjs scripts/build-desktop-binaries-cache.test.mjs scripts/build-macos-packages.test.mjs
+      - name: Check the cross-app audio hardware smoke runner
+        run: python3 -m py_compile scripts/test-independent-audio.py
       - uses: dtolnay/rust-toolchain@1.95.0
         with:
           components: rustfmt
@@ -84,6 +86,7 @@ jobs:
           rustfmt +1.95.0 --edition 2024 --config skip_children=true crates/recording/src/sources/screen_capture/mod.rs crates/recording/src/sources/screen_capture/macos.rs crates/recording/src/sources/screen_capture/window_target.rs crates/recording/src/studio_recording.rs crates/recording/src/instant_recording.rs crates/recording/tests/macos_window_target_contract.rs
           rustfmt +1.95.0 --edition 2024 --config skip_children=true apps/desktop-gpui/src/onboarding_window/stage.rs apps/desktop-gpui/src/permissions.rs
           rustfmt +1.95.0 --edition 2024 --config skip_children=true apps/cli/src/agents.rs
+          rustfmt +1.95.0 --edition 2024 --config skip_children=true crates/recording/src/sources/screen_capture/macos/system_audio.rs
           git diff > "$RUNNER_TEMP/rustfmt.patch"
       - uses: actions/upload-artifact@v4
         if: always()
@@ -106,6 +109,11 @@ jobs:
         run: |
           rustc +1.95.0 --edition 2024 --test crates/recording/tests/macos_window_target_contract.rs -o "$RUNNER_TEMP/window-capture-contract"
           "$RUNNER_TEMP/window-capture-contract"
+      - name: Exercise requested meeting audio failure reporting
+        run: |
+          mkdir -p target/debug/Frameworks
+          ln -sfn "$GITHUB_WORKSPACE/target/Frameworks/Spacedrive.framework" target/debug/Frameworks/Spacedrive.framework
+          cargo +1.95.0 test --locked -p cap-recording requested_system_audio_failure_reaches_recording_watcher
       - name: Exercise menu and fork update protection
         run: |
           task_frameworks="apps/desktop-gpui/target/debug/Frameworks"
