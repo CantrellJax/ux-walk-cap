@@ -1,9 +1,71 @@
 ---
 name: cap-demo
-description: Generate a cinematic 3D product-demo video from any URL — scouts the page, records it with virtual input, and treats it with Cap's 3D camera, brand background, and music.
+description: Prepare an existing Cap UX recording for reversible demo edits with optional FilmCraft and EffectCraft bridges, or record a short website showcase with Cap.
 ---
 
 # cap-demo
+
+## Existing recordings and UX Walks
+
+Use this path for a narrated demo or founder recording. It starts from saved media,
+without opening a browser, recording again, calling a model, or uploading files.
+FilmCraft edits the footage; EffectCraft optionally creates one editable title card.
+Both tools remain external programs selected by executable path or environment.
+
+```
+node <skilldir>/cap-demo.mjs doctor
+node <skilldir>/cap-demo.mjs prepare /path/to/native-walk.json --out /path/to/new-demo
+node <skilldir>/cap-demo.mjs inspect /path/to/new-demo
+node <skilldir>/cap-demo.mjs render /path/to/new-demo
+```
+
+`prepare` also accepts a `.cap` project or video file. For a video, add
+`--captions /path/to/transcript.srt` to reuse its existing transcription. A completed
+native walk contributes its chapter captions and saved notes automatically. Cap
+projects are copied before export; original tracks and settings remain intact.
+
+Edit the generated `edit.json`: `clips` contains source ranges in the project's
+frame grid, with inclusive `inFrame` and exclusive `outFrame`. Reorder ranges to
+change the story. The default keeps the entire recording. Optional `titleCard`:
+
+```json
+{
+	"title": "Your title",
+	"subtitle": "One concrete idea",
+	"durationFrames": 60,
+	"accent": "#4b85ff",
+	"background": "#101827"
+}
+```
+
+Match the card duration to the project's fps. There is no automatic music, stock
+footage, silence removal, or invented chart data. Preserve the speakers' wording,
+intentional pauses, readable product UI, and truthful claims. The legacy 12-second
+website recipe below does not apply to existing recordings.
+
+The first bridge uses existing cue-level captions. Cuts that split a spoken cue
+are refused because its individual words cannot be timed reliably. Text correction
+does not remove media. Word-level transcription preservation is a follow-up.
+
+Each render creates a new folder under `renders/`, with `demo.mp4`, `review.html`,
+`draft.fcproj`, optional `graphic.ecproj`, captions and a source/output timing map.
+Open the HTML review and inspect frames around cuts, typography and audible sync.
+Manual editor changes stay in that draft; another `render` creates a fresh draft
+from `edit.json`. Failed attempts retain their files and `result.json` error.
+
+The production bundle uses relative source paths and source hashes. Moving it
+preserves the source package and fresh renders. Native editor projects may require
+media relinking after a move; FilmCraft's `media.relink` command supports that.
+Do not overwrite an existing output folder or the original recording. Changed
+source hashes and stale edit revisions are refused.
+
+Set `FILMCRAFT_BIN` and `EFFECTCRAFT_BIN`, or pass `--filmcraft` and `--effectcraft`
+to `render`/`doctor`. Set `CAP_BIN` or pass `--cap` to `prepare` for `.cap` export.
+FFmpeg and FFprobe must be on PATH. This pilot was exercised with FilmCraft 0.12.0
+and EffectCraft 0.17.0 published macOS CLIs; other releases need verification.
+No server or MCP configuration is required.
+
+## Short website showcase preset
 
 Give it a URL, get back a short, cinematic product-demo video. The pipeline
 scouts the page headlessly, shoots a headed browser with **virtual input only**
@@ -40,7 +102,7 @@ alias cap-demo='node <skilldir>/cap-demo.mjs'
   Chromium** under `~/Library/Caches/ms-playwright`; if none is cached, run
   `npx playwright install chromium` once.
 - **`python3`** and **`ffmpeg`/`ffprobe`** on PATH.
-- The **`cap` CLI** on PATH (Cap Desktop, https://cap.so) with macOS
+- The **`cap` CLI** on PATH ([Cap UX](https://github.com/CantrellJax/ux-walk-cap)) with macOS
   **screen-recording permission** granted to it. Both stages otherwise resolve
   the binary from `CAP_BIN`; if neither is set they error clearly.
 
@@ -56,9 +118,9 @@ Output lands at `<outDir>/<slug>-demo.mp4` (default `<tmp>/cap-demo/<slug>/<slug
 
 - **Deterministic** (`cap-demo <url>`): fixed heuristics, no agent in the loop.
   Scores the best CTA, picks click-through vs scroll, paints a brand gradient
-  from the page colors, picks music by brand darkness. Good, ~70% quality. Use
+  from the page colors, picks music by brand darkness. Use
   it for batch runs or when you cannot watch the frames.
-- **Agent-driven recipe** (recommended, ~95% quality): the agent runs the
+- **Agent-driven recipe**: the agent runs the
   same steps but frame-QAs each stage and applies judgment — sets the brand
   color by eye, matches export fps to the real capture rate, reshoots on a
   dead-end CTA, regrades until the beats read. This is the path that produced

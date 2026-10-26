@@ -105,6 +105,8 @@ jobs:
           cargo +1.95.0 test --locked -p cap-cloud-sharing
       - name: Exercise the native walk processor
         run: node --test apps/desktop-gpui/ux-walk/browser-evidence.test.mjs apps/desktop-gpui/ux-walk/native-walk.test.mjs
+      - name: Exercise portable production projects
+        run: node --test apps/cli/skill/cap-demo/lib/production.test.mjs
       - name: Exercise isolated window selection
         run: |
           rustc +1.95.0 --edition 2024 --test crates/recording/tests/macos_window_target_contract.rs -o "$RUNNER_TEMP/window-capture-contract"
