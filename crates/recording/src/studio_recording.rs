@@ -1755,7 +1755,7 @@ impl Pipeline {
         if let Some(ref system_audio) = self.system_audio {
             futures.push(Box::pin({
                 let done_fut = system_audio.done_fut();
-                async move { (RecordingTrackKind::SystemAudio, false, done_fut.await) }
+                async move { (RecordingTrackKind::SystemAudio, true, done_fut.await) }
             }));
         }
 

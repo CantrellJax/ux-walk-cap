@@ -180,7 +180,7 @@ impl output_pipeline::AudioSource for SystemAudioSource {
                             if is_user_stop_error(error.as_ref()) {
                                 stop_signal.mark_user_stopped();
                                 pipeline_cancel.cancel();
-                                break;
+                                return Err(anyhow!("Computer audio sharing was stopped from macOS sharing controls"));
                             }
                             if !is_system_stop_error(error.as_ref()) || restarts >= MAX_CAPTURE_RESTARTS {
                                 return Err(anyhow!("Computer audio capture stopped: {error}"));
