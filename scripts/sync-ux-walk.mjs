@@ -29,6 +29,7 @@ const included = [
 	"test/unit/companion.test.mjs",
 	"test/unit/companion-owner-race.test.mjs",
 	"test/unit/companion-page.test.mjs",
+	"test/unit/companion-popup.test.mjs",
 	"test/unit/companion-start.test.mjs",
 	"test/unit/companion-utf8.test.mjs",
 	"test/unit/companion-controller.test.mjs",

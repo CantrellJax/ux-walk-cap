@@ -6,6 +6,11 @@ const buttons = [...document.querySelectorAll("button")],
 	errorEl = document.getElementById("error");
 const time = (ms) =>
 	`${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, "0")}`;
+const recent = (timestamp) =>
+	Number.isSafeInteger(timestamp) &&
+	timestamp >= 0 &&
+	Date.now() - timestamp >= -1000 &&
+	Date.now() - timestamp <= 15000;
 let busy = false;
 async function act(action = "status", role) {
 	if (busy) return;
@@ -56,11 +61,51 @@ async function act(action = "status", role) {
 			? `Last caption ${Math.max(0, Math.floor((Date.now() - meet.lastCaptionAt) / 1000))}s ago. Names remain unconfirmed.`
 			: "No captions received yet. Turn captions on in the selected Meet tab.";
 		const backup = state.backup;
+		const connected = state.connection === "connected";
+		const audio = state.audio;
+		const audioChoice = (kind) =>
+			connected &&
+			recent(audio?.updatedAt) &&
+			["on", "off"].includes(audio[kind])
+				? audio[kind]
+				: "unconfirmed";
+		const computerAudio = audioChoice("systemAudio");
+		document.getElementById("audio").textContent =
+			`Mic: ${audioChoice("microphone")} · Computer audio: ${computerAudio}. Selected in Cap UX; sound and mute status aren’t verified here.${state.roles?.meet && computerAudio === "off" ? " Meet speech is not captured through computer audio. Captions can still save." : ""}`;
+		const eventLabels = {
+			current: "current at last check",
+			waiting: "waiting for backup",
+			none: "none saved yet",
+			unconfirmed: "unconfirmed",
+		};
+		const audioLabels = {
+			current: "current at last check",
+			waiting: "waiting for backup",
+			"not-selected": "not selected",
+			attention: "needs attention",
+			unconfirmed: "unconfirmed",
+		};
+		let backupText = "Private backup is unconfirmed. Check Cap UX.";
+		if (connected && recent(backup?.updatedAt)) {
+			if (backup.enabled === false) backupText = "Private backup is off.";
+			else if (backup.enabled === true) {
+				const notes =
+					Number.isSafeInteger(backup.journalThroughMs) &&
+					backup.journalThroughMs > 0
+						? `Notes backed up through ${time(backup.journalThroughMs)}.`
+						: "Notes backup is waiting for confirmation.";
+				backupText = `${backup.needsAttention ? "Private backup needs attention. Check Cap UX. " : ""}${notes} Tab and Meet evidence: ${eventLabels[state.queued ? "waiting" : backup.eventState] || "unconfirmed"}. Saved audio: ${audioLabels[backup.audioState] || "unconfirmed"}.`;
+			}
+		}
 		document.getElementById("backup").textContent =
-			`${state.queued ? `${state.queued} observations queued in Chrome. ` : ""}${backup?.enabled ? `Private evidence backup acknowledged through ${time(backup.clockThroughMs || 0)}.` : "Private backup is off or not yet confirmed."}`;
+			`${state.queued ? `${state.queued} observations queued in Chrome. ` : ""}${backupText}`;
 	} catch (error) {
 		statusEl.textContent = "Cap UX companion unavailable";
 		errorEl.textContent = `${error.message} In Cap UX settings, choose Set up browser companion.`;
+		document.getElementById("audio").textContent =
+			"Mic: unconfirmed · Computer audio: unconfirmed.";
+		document.getElementById("backup").textContent =
+			"Private backup is unconfirmed. Check Cap UX.";
 	} finally {
 		busy = false;
 	}

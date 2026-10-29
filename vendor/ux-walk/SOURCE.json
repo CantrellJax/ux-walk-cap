@@ -1,7 +1,7 @@
 {
   "name": "UX Walk",
   "repository": "https://github.com/CantrellJax/ux-walk",
-  "revision": "f504ab94d361ee4c7af030c30795bf766869714f",
+  "revision": "a3084ac56771cd17e9d53b49946a17ccfcd04dfb",
   "license": "AGPL-3.0-only",
   "files": {
     ".gitignore": "77cc9c247322e06e2a62b7fb48877c0427f5e414d0addbd8d898efda5b7b6ad5",
@@ -21,8 +21,8 @@
     "extension/key.json": "28565a973472e0ed9eb3bb78fa3310e5bc25177ed18c708a0e20ede83191dca1",
     "extension/manifest.json": "8364736cfe04ae8d5fbe169c582ef4f39385b9643a162fc4f47716b070c85033",
     "extension/page.js": "eaf0856dce0778653d4db77cdcadb8d8d1613a55d441843250b38768e5ef59e1",
-    "extension/popup.html": "fa23d463c540acf2decd21235bd90e4d4a4fbd93d97c5b40259f0a2c8c01d67b",
-    "extension/popup.js": "932b7af40d29705165e4b428e4eae31495fd29a1f0eb4b76fd510733251dfb45",
+    "extension/popup.html": "1e747b06cd10f0915ac6cc48085300f669cdf816b229273b8b9f5aabd88c021f",
+    "extension/popup.js": "e44fa65a25f649540a8cf096560b20ed75aef1f09f7ae612364d5fccb1e400ca",
     "extension/selected-tab.js": "2c4a957c2667886b508134ab1f7d7bd61ad4dc49c8d44a304719343f0a2f8142",
     "extension/tab-recorder.js": "5c033d806ecdb132946fdacda49e285f084d8fa385255f9de3a154ed8d7b6171",
     "glossary.example.txt": "d80250d4a512294a585127c0c8c802d5ee42fb1b7be339067ac2bb9d325ddefa",
@@ -69,6 +69,7 @@
     "test/unit/companion-install.test.mjs": "107edbf5a7b9090dd50e759a7c8d219dad42368245f8f33f0f295a1c11da261e",
     "test/unit/companion-owner-race.test.mjs": "ff285ee616e4fc730f40efaaa9c272c5c5c26b3e6edb007ee1fea410108f040a",
     "test/unit/companion-page.test.mjs": "26819a5bc8501e5a6671ccf0cef19fb9669b867a962c90b21b69c5f387c8af39",
+    "test/unit/companion-popup.test.mjs": "322faa24a8f56eb20bba4b2fedf06fb62a1011c1ea44c9b636accc8e336896fd",
     "test/unit/companion-start.test.mjs": "55c8267252fb90856ef4a01d4c7f9cd142eeefc0afe61245e991a30003a694ab",
     "test/unit/companion-utf8.test.mjs": "f1ec4b8688479b7a530dbc49ceebf9655e38ba2a60f21c4dfde75e444f7527ff",
     "test/unit/companion.test.mjs": "2201b863fe4e2186df135f4ef554054e6055fcd49515a0f8d839fee676894dd9",
