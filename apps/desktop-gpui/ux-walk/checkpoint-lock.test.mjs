@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 async function childMain() {
 	const fs = (await import("node:fs")).default;
@@ -16,13 +16,13 @@ async function childMain() {
 	const read = fs.readFileSync.bind(fs),
 		write = fs.writeFileSync.bind(fs),
 		rename = fs.renameSync.bind(fs);
-	const marker = (name) => path.join(directory, name + ".json");
+	const marker = (name) => path.join(directory, `${name}.json`);
 	const mark = (name, value = {}) =>
 		write(marker(name), JSON.stringify({ ...value, pid: process.pid }));
 	const wait = (name) => {
 		const deadline = Date.now() + 10000;
 		while (!fs.existsSync(marker(name))) {
-			if (Date.now() > deadline) throw new Error("Barrier timed out: " + name);
+			if (Date.now() > deadline) throw new Error(`Barrier timed out: ${name}`);
 			Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
 		}
 	};
@@ -47,7 +47,7 @@ async function childMain() {
 			} catch {}
 			if (owner?.pid === Number(process.env.LOCK_DEAD_PID)) {
 				sawStale = true;
-				mark("read-" + role);
+				mark(`read-${role}`);
 				if (role === "A") {
 					const end = Date.now() + 10000;
 					while (
@@ -64,8 +64,8 @@ async function childMain() {
 	};
 	const ownerWritten = (to) => {
 		if (path.resolve(String(to)) === target && kind === "full") {
-			mark("entered-" + role);
-			wait("release-" + role);
+			mark(`entered-${role}`);
+			wait(`release-${role}`);
 		}
 	};
 	fs.renameSync = (from, to, ...args) => {
@@ -84,8 +84,8 @@ async function childMain() {
 				pathToFileURL(path.join(source, "walk-lock.mjs"))
 			);
 			const lease = await acquireWalkLock(alias || walk, scope);
-			mark("entered-" + role);
-			wait("release-" + role);
+			mark(`entered-${role}`);
+			wait(`release-${role}`);
 			await lease.release();
 		} else if (kind === "worker") {
 			const { CheckpointStore } = await import(
@@ -94,7 +94,7 @@ async function childMain() {
 			const commit = CheckpointStore.prototype.commit;
 			CheckpointStore.prototype.commit = function (...args) {
 				const result = commit.apply(this, args);
-				mark("committed-" + role, { sequence: result.sequence });
+				mark(`committed-${role}`, { sequence: result.sequence });
 				return result;
 			};
 			const { runCheckpointWorker } = await import(
@@ -106,8 +106,8 @@ async function childMain() {
 				{
 					transport: {
 						status: async () => {
-							mark("entered-" + role);
-							wait("release-" + role);
+							mark(`entered-${role}`);
+							wait(`release-${role}`);
 							return { backupEnabled: false, server: "" };
 						},
 					},
@@ -124,8 +124,8 @@ async function childMain() {
 					fullTranscription: kind === "full",
 					client: {
 						export: async () => {
-							mark("entered-" + role);
-							wait("release-" + role);
+							mark(`entered-${role}`);
+							wait(`release-${role}`);
 							throw new Error("Synthetic exporter stop");
 						},
 					},
@@ -134,9 +134,9 @@ async function childMain() {
 				},
 			);
 		}
-		mark("done-" + role, { ok: true });
+		mark(`done-${role}`, { ok: true });
 	} catch (error) {
-		mark("done-" + role, { ok: false, error: error.message, code: error.code });
+		mark(`done-${role}`, { ok: false, error: error.message, code: error.code });
 	}
 }
 
@@ -182,9 +182,9 @@ function fixture(t) {
 	const child = path.join(directory, "child.mjs");
 	fs.writeFileSync(child, `(${childMain.toString()})()`);
 	const processes = [];
-	const file = (name) => path.join(directory, name + ".json");
+	const file = (name) => path.join(directory, `${name}.json`);
 	const read = (name) => JSON.parse(fs.readFileSync(file(name), "utf8"));
-	const release = (role) => fs.writeFileSync(file("release-" + role), "{}");
+	const release = (role) => fs.writeFileSync(file(`release-${role}`), "{}");
 	t.after(async () => {
 		for (const role of ["A", "B"]) release(role);
 		for (const item of processes)
@@ -207,7 +207,7 @@ function fixture(t) {
 		async wait(name) {
 			const end = Date.now() + 10000;
 			while (!fs.existsSync(file(name))) {
-				if (Date.now() > end) throw new Error("Missing child event: " + name);
+				if (Date.now() > end) throw new Error(`Missing child event: ${name}`);
 				await sleep(5);
 			}
 			return read(name);
@@ -215,22 +215,22 @@ function fixture(t) {
 		async decide(role) {
 			const end = Date.now() + 10000;
 			while (
-				!fs.existsSync(file("entered-" + role)) &&
-				!fs.existsSync(file("done-" + role))
+				!fs.existsSync(file(`entered-${role}`)) &&
+				!fs.existsSync(file(`done-${role}`))
 			) {
 				if (Date.now() > end) throw new Error("Missing decision");
 				await sleep(5);
 			}
-			return fs.existsSync(file("entered-" + role))
+			return fs.existsSync(file(`entered-${role}`))
 				? { entered: true }
-				: { ...read("done-" + role), entered: false };
+				: { ...read(`done-${role}`), entered: false };
 		},
 		start(
 			role,
 			kind,
 			{ race = false, deadPid = 0, scope = "checkpoint", alias = "" } = {},
 		) {
-			const output = fs.openSync(path.join(directory, role + ".log"), "w");
+			const output = fs.openSync(path.join(directory, `${role}.log`), "w");
 			const item = spawn(
 				process.execPath,
 				[child, role, kind, directory, source, scope, alias],
@@ -380,4 +380,8 @@ test("legacy live owners and an occupied OS endpoint fail closed without metadat
 		/already|busy|collision|wait/i,
 	);
 	assert.equal(fs.existsSync(directory), false);
+});
+
+test("new-format stale PID metadata cannot veto a free OS guard, while a bound guard stays busy", async(t)=>{
+ const f=fixture(t);const {acquireWalkLock}=await import("./walk-lock.mjs");const file=path.join(f.walk,".checkpoint-worker/owner.json");const first=await acquireWalkLock(f.walk,"checkpoint");const marker=fs.readFileSync(file);await assert.rejects(acquireWalkLock(f.walk,"checkpoint"),/already|busy|collision|wait/i);await first.release();fs.mkdirSync(path.dirname(file));fs.writeFileSync(file,marker);const recovered=await acquireWalkLock(f.walk,"checkpoint");await recovered.release();
 });
