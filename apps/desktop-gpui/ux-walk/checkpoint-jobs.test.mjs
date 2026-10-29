@@ -51,3 +51,9 @@ test("successful silent jobs complete once and ambiguous submissions require exp
 	assert.equal(calls, 2);
 	assert.equal(resumed.read(lost.jobId).state, "ambiguous");
 });
+
+test("ambiguous jobs only retry through a bounded explicit action", async (t) => {
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),"uxw-job-retry-"));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));const store=new CheckpointStore(root,{recordingId:"11111111-1111-4111-8111-111111111111",generation:"22222222-2222-4222-8222-222222222222",endpoint:""});
+ let calls=0;const jobs=new CheckpointJobs(store,{transcriber:"elevenlabs"},{materialize:async()=>"synthetic.wav",words:async()=>{calls++;throw new Error("lost response");}});const job=jobs.prepare("segment-0:microphone",[],0,1000);await jobs.runNext();
+ for(let i=0;i<3;i++){jobs.retry(job.jobId);await jobs.runNext();}assert.equal(calls,4);assert.throws(()=>jobs.retry(job.jobId),/limit/);assert.equal(jobs.read(job.jobId).state,"ambiguous");
+});
