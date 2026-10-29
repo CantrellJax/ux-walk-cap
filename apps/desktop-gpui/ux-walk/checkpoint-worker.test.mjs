@@ -1,0 +1,30 @@
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+import { durableJson } from "./checkpoint-store.mjs";
+import { CheckpointWorker } from "./checkpoint-worker.mjs";
+import { restoreRecovery } from "./restore-checkpoint.mjs";
+
+test("local complete audio and log checkpoints advance while network is held; acknowledged sources restore and stop tail transcribes once", async (t) => {
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),"uxw-worker-"));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+ const project=path.join(root,"source.cap");const segment=path.join(project,"content/segments/segment-0");fs.mkdirSync(segment,{recursive:true});
+ const audio=path.join(segment,"audio-input.m4a");execFileSync("ffmpeg",["-v","error","-f","lavfi","-i","sine=frequency=660:duration=2.4","-c:a","aac","-threads","1","-movflags","frag_keyframe+empty_moov+default_base_moof","-frag_duration","1000000",audio]);
+ durableJson(path.join(segment,"start-times.json"),{mic:0,display:0});
+ const file=path.join(root,"native-walk.json");durableJson(file,{schemaVersion:1,state:"recording",request:{directory:root,topic:"Synthetic",speakers:[]},sourceProject:project,startedAtMs:1,events:[{kind:"note",text:"recover me",offsetMs:0}],durationMs:null});
+ const heartbeat=(ms)=>durableJson(path.join(root,"checkpoint-heartbeat.json"),{activeElapsedMs:ms,wallMs:ms+1,paused:false,parentPid:process.pid,generation:1,expectedAudio:{microphone:true},noteDraft:"draft"});heartbeat(2500);
+ fs.writeFileSync(path.join(root,"browser-evidence.jsonl"),' {"ev":"click"}\n{"partial":');
+ const settings={backupEnabled:true,server:"https://backup.example",expiresInDays:7};let release;const gate=new Promise(resolve=>{release=resolve});const uploaded=new Map();const descriptors=[];let calls=0;
+ const transport={status:async()=>settings,request:async(method,resource,options={})=>{if(method==="PUT"){await gate;if(resource.includes("/objects/"))uploaded.set(resource.split("/").at(-1),fs.readFileSync(options.input));else if(resource.includes("/checkpoints/"))descriptors.push(JSON.parse(fs.readFileSync(options.input)));return{};}if(options.output){fs.writeFileSync(options.output,uploaded.get(resource.split("/").at(-1)));return{};}return{recordingId:worker.store.options.recordingId,writerGeneration:worker.store.options.generation,checkpoints:descriptors,title:"Synthetic"};}};
+ const worker=new CheckpointWorker(file,{transcriber:"elevenlabs"},settings,{transport,sessionGeneration:1,jobs:{words:async()=>{calls++;return[{start:0.2,end:0.4,text:"synthetic",speaker:0}];}}});
+ await worker.checkpoint({force:true});assert.match(worker.status().transcription,/waiting/i);
+ const firstEnd=worker.sources["segment-0:microphone"].sourceEndMs;assert.ok(firstEnd>2000);assert.equal(worker.store.state.remoteSequence,0);
+ const uploading=worker.uploadNext();heartbeat(5000);await worker.checkpoint({force:true});assert.equal(worker.store.state.sequence,2);assert.equal(worker.store.state.remoteSequence,0);assert.equal(worker.sources["segment-0:microphone"].sourceEndMs,firstEnd);
+ release();await uploading;assert.equal(worker.store.state.remoteSequence,1);assert.equal(worker.store.state.remoteClockThroughMs,2500);
+ const restored=path.join(root,"restored");await restoreRecovery(transport,worker.store.options.recordingId,restored);assert.match(fs.readFileSync(path.join(restored,"report.html"),"utf8"),/recover me/);assert.match(fs.readFileSync(path.join(restored,"report.html"),"utf8"),/draft/);
+ const ready=JSON.parse(fs.readFileSync(path.join(restored,"recovery-ready.json")));assert.equal(ready.audio.length,1);execFileSync("ffprobe",["-v","error",path.join(restored,ready.audio[0].relative)]);
+ worker.phase="draining";worker.prepareJobs(true);await worker.jobs.runNext();await worker.jobs.runNext();assert.equal(calls,1);const job=worker.jobs.all()[0];assert.equal(job.state,"complete");assert.match(JSON.parse(fs.readFileSync(worker.jobs.resultPath(job.jobId))).words[0].speaker,/segment-0:microphone:/);
+ const resumed=new CheckpointWorker(file,{transcriber:"elevenlabs"},settings,{transport,sessionGeneration:1});assert.equal(resumed.store.state.remoteSequence,1);assert.equal(resumed.sources["segment-0:microphone"].sourceEndMs,firstEnd);
+});
