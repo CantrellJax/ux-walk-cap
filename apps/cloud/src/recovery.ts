@@ -208,7 +208,7 @@ async function route(
 		const page = await bucket.list({
 			prefix: `${prefix(id)}checkpoints/`,
 			cursor,
-			limit: 100,
+			limit: 16,
 		});
 		const checkpoints = [];
 		for (const object of page.objects) {
@@ -293,13 +293,20 @@ async function route(
 			!clock ||
 			clock.activeElapsedMs !== checkpoint.activeThroughMs ||
 			!Number.isSafeInteger(clock.wallMs) ||
+			Number(clock.wallMs) < 0 ||
 			typeof clock.paused !== "boolean" ||
 			!Array.isArray(checkpoint.objects) ||
 			checkpoint.objects.length > 256
 		)
 			return fail(400, "Invalid checkpoint descriptor.");
-		if (sequence > 1 && !(await bucket.head(sequenceKey(id, sequence - 1))))
-			return fail(409, "Previous checkpoint is not yet acknowledged.");
+		if (sequence > 1) {
+			const previousObject = await bucket.get(sequenceKey(id, sequence - 1));
+			if (!previousObject)
+				return fail(409, "Previous checkpoint is not yet acknowledged.");
+			const previous = await previousObject.json<{ activeThroughMs: number }>();
+			if (Number(checkpoint.activeThroughMs) < previous.activeThroughMs)
+				return fail(400, "Checkpoint active clock moved backwards.");
+		}
 		for (const reference of checkpoint.objects) {
 			if (
 				!reference ||
@@ -310,9 +317,41 @@ async function route(
 				!HASH.test(reference.sha256) ||
 				!Number.isSafeInteger(reference.size) ||
 				reference.size < 0 ||
-				reference.size > MAX_BYTES
+				reference.size > MAX_BYTES ||
+				!Number.isSafeInteger(reference.activeStartMs) ||
+				!Number.isSafeInteger(reference.activeEndMs) ||
+				reference.activeStartMs < 0 ||
+				reference.activeEndMs < reference.activeStartMs ||
+				reference.activeEndMs > Number(checkpoint.activeThroughMs)
 			)
 				return fail(400, "Invalid checkpoint object reference.");
+			if (
+				[
+					"microphone",
+					"systemAudio",
+					"microphoneInit",
+					"systemAudioInit",
+					"transcriptWords",
+				].includes(reference.kind) &&
+				(typeof reference.source !== "string" ||
+					!/^[\w:.-]{1,128}$/.test(reference.source))
+			)
+				return fail(
+					400,
+					"Audio and transcript sources must be explicitly identified.",
+				);
+			if (
+				reference.byteStart !== undefined ||
+				reference.byteEnd !== undefined
+			) {
+				if (
+					!Number.isSafeInteger(reference.byteStart) ||
+					!Number.isSafeInteger(reference.byteEnd) ||
+					reference.byteStart < 0 ||
+					reference.byteEnd <= reference.byteStart
+				)
+					return fail(400, "Invalid audio byte range.");
+			}
 			const object = await bucket.head(
 				`${prefix(id)}objects/${reference.sha256}`,
 			);
