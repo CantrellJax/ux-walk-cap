@@ -158,6 +158,85 @@ test("ordinary regeneration keeps confirmed attribution over Meet inference and 
 	assert.doesNotMatch(timeline, /Automatic Meet Name/);
 });
 
+test("cached independent source and export keep confirmed names after original source deletion", async (t) => {
+	const f = await fixture(t);
+	fs.rmSync(f.project, { recursive: true });
+	await finishNativeWalk(f.file, f.cfg, f.dependencies);
+	const after = JSON.parse(fs.readFileSync(f.chapterFile));
+	assert.deepEqual(after.speakerMap, f.manual.speakerMap);
+	assert.deepEqual(after.speakers, f.manual.speakers);
+	assert.equal(after.speakerIdentity, f.manual.speakerIdentity);
+	assert.match(
+		fs.readFileSync(path.join(f.chapter, "timeline.md"), "utf8"),
+		/Confirmed Alice/,
+	);
+});
+
+test("pre-upgrade confirmed names bind once to the unchanged cached chapter and transcript", async (t) => {
+	const f = await fixture(t);
+	const legacy = { ...f.manual };
+	delete legacy.nativeCaptureIdentity;
+	delete legacy.transcriptSourceIdentity;
+	f.save(f.chapterFile, legacy);
+	fs.rmSync(path.join(f.chapter, "speaker-attribution-history"), {
+		recursive: true,
+	});
+	for (let attempt = 0; attempt < 2; attempt++) {
+		await finishNativeWalk(f.file, f.cfg, f.dependencies);
+		const after = JSON.parse(fs.readFileSync(f.chapterFile));
+		assert.deepEqual(after.speakerMap, legacy.speakerMap);
+		assert.deepEqual(after.speakers, legacy.speakers);
+		assert.equal(after.speakerIdentity, legacy.speakerIdentity);
+		assert.match(after.nativeCaptureIdentity, /^[a-f0-9]{64}$/);
+		assert.match(after.transcriptSourceIdentity.srt, /^[a-f0-9]{64}$/);
+	}
+	archived(f);
+	const history = fs
+		.readdirSync(path.join(f.chapter, "speaker-attribution-history"))
+		.filter((name) => name.endsWith(".json"))
+		.map((name) =>
+			JSON.parse(
+				fs.readFileSync(
+					path.join(f.chapter, "speaker-attribution-history", name),
+				),
+			),
+		);
+	assert.ok(
+		history.some(
+			(entry) =>
+				entry.metadata.speakerMap?.["Speaker 1"] === "Confirmed Alice" &&
+				!entry.metadata.nativeCaptureIdentity,
+		),
+	);
+});
+
+for (const change of ["source", "bounds", "raw labels"])
+	test(`legacy confirmed names never adopt changed ${change}`, async (t) => {
+		const f = await fixture(t),
+			legacy = { ...f.manual };
+		delete legacy.nativeCaptureIdentity;
+		delete legacy.transcriptSourceIdentity;
+		f.save(f.chapterFile, legacy);
+		if (change === "source") {
+			f.journal.sourceProject = path.join(f.root, "other.cap");
+			fs.mkdirSync(f.journal.sourceProject);
+			f.save(f.file, f.journal);
+		} else if (change === "bounds") {
+			f.journal.durationMs = 2500;
+			f.save(f.file, f.journal);
+		} else
+			fs.writeFileSync(
+				path.join(f.chapter, "transcript.srt"),
+				f.srt.replace("Speaker 1:", "Speaker 2:"),
+			);
+		await finishNativeWalk(f.file, f.cfg, f.dependencies);
+		assert.equal(
+			JSON.parse(fs.readFileSync(f.chapterFile)).speakerMap,
+			undefined,
+		);
+		archived(f);
+	});
+
 for (const change of ["source", "bounds", "transcript", "chapter"])
 	test(`changed ${change} archives a confirmed mapping instead of applying it to another identity`, async (t) => {
 		const f = await fixture(t);
