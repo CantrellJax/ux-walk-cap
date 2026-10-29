@@ -50,3 +50,9 @@ test("final transcript reuses source-qualified jobs with display spans, offsets 
 	assert.match(srt, /retained/);
 	assert.equal(JSON.parse(fs.readFileSync(resultFile)).words[0].start, 1.5);
 });
+
+
+test("a live checkpoint owner with no prepared jobs cannot race a duplicate batch submission", async (t) => {
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),"uxw-pending-"));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));fs.mkdirSync(path.join(root,"checkpoints/jobs"),{recursive:true});durableJson(path.join(root,"checkpoints/identity.json"),{generation:"owned"});fs.mkdirSync(path.join(root,"chapter"));
+ const reused=await reuseCheckpointTranscript(root,[{dir:"chapter",startMs:0,endMs:1000}],0,{transcriber:"elevenlabs"});assert.equal(reused.handled,true);assert.match(reused.results.get("chapter").transcriptError,/pending|draining/i);
+});
