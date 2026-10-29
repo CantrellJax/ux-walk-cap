@@ -420,6 +420,7 @@ export async function finishNativeWalk(file, cfg, dependencies = {}) {
 				directory,
 				earlyRows,
 				journal.startedAtMs,
+				cfg,
 			);
 			if (cached.handled) {
 				liveCacheHandled = true;
@@ -534,6 +535,7 @@ export async function finishNativeWalk(file, cfg, dependencies = {}) {
 				directory,
 				rows,
 				journal.startedAtMs,
+				cfg,
 			);
 			for (const [name, summary] of cached.results)
 				earlyResults.set(name, summary);

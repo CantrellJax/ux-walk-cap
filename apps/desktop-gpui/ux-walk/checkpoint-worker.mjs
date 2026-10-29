@@ -137,6 +137,9 @@ export class CheckpointWorker {
 			["elevenlabs", "assemblyai"].includes(this.cfg.transcriber) &&
 			this.cfg.liveTranscription !== false;
 		const jobs = this.jobs.all();
+		const pendingAudio = Object.values(sources).some(
+			(source) => source.durableSourceMs - source.transcribedSourceMs > 100,
+		);
 		const eventsFile = path.join(this.directory, "browser-evidence.jsonl");
 		const remoteDescriptor = this.store
 			.descriptors()
@@ -182,7 +185,7 @@ export class CheckpointWorker {
 							? "needs attention"
 							: jobs.some((job) => job.state !== "complete")
 								? "working"
-								: !jobs.length
+								: !jobs.length || pendingAudio
 									? "waiting for a five-minute chunk or stop tail"
 									: "caught up to saved source audio"
 						: "after recording stops",
@@ -637,7 +640,9 @@ export class CheckpointWorker {
 				schemaVersion: 1,
 				recordingId: this.store.options.recordingId,
 				writerGeneration: this.store.options.generation,
-				title: this.journal.request.topic.slice(0, 200),
+				title: this.journal.request.topic
+					.replace(/[\u0000-\u001f\u007f]/g, " ")
+					.slice(0, 200),
 				startedAtMs: this.journal.startedAtMs,
 				expiresInDays: this.store.options.expiresInDays ?? 7,
 			};

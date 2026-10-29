@@ -12,7 +12,12 @@ const engine = fs.existsSync(local)
 	? new URL("./src/", import.meta.url)
 	: new URL("../../../vendor/ux-walk/src/", import.meta.url);
 
-export async function reuseCheckpointTranscript(directory, rows, startedAtMs) {
+export async function reuseCheckpointTranscript(
+	directory,
+	rows,
+	startedAtMs,
+	cfg = {},
+) {
 	const root = path.join(directory, "checkpoints");
 	const jobsRoot = path.join(root, "jobs");
 	if (!fs.existsSync(jobsRoot)) return { handled: false };
@@ -20,7 +25,26 @@ export async function reuseCheckpointTranscript(directory, rows, startedAtMs) {
 		.readdirSync(jobsRoot)
 		.filter((name) => /^[a-f0-9]{64}\.json$/.test(name))
 		.map((name) => readJson(path.join(jobsRoot, name)));
-	if (!jobs.length) return { handled: false };
+	if (!jobs.length) {
+		if (
+			!fs.existsSync(path.join(root, "identity.json")) ||
+			cfg.liveTranscription === false ||
+			!["elevenlabs", "assemblyai"].includes(cfg.transcriber)
+		)
+			return { handled: false };
+		const error =
+			"Live transcription is pending or draining. Source audio is retained; reprocess after the checkpoint worker finishes.";
+		return {
+			handled: true,
+			error,
+			results: new Map(
+				rows.map((row) => [
+					row.dir,
+					{ transcript: false, transcriptError: error },
+				]),
+			),
+		};
+	}
 	const results = new Map();
 	let error = null;
 	let layout;
