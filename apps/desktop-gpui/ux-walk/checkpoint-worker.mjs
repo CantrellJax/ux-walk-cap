@@ -878,9 +878,16 @@ export async function runCheckpointWorker(file, cfg, dependencies = {}) {
 							providerJobs: worker.jobs.all().length,
 							unsupportedSources: worker.sourceErrors,
 							expectedAudio: worker.heartbeat().expectedAudio,
-							sourceCaptureState: readJson(
+							sourceCaptureState: fs.existsSync(
 								path.join(worker.journal.sourceProject, "recording-meta.json"),
-							).status?.status,
+							)
+								? readJson(
+										path.join(
+											worker.journal.sourceProject,
+											"recording-meta.json",
+										),
+									).status?.status
+								: null,
 							finalLayoutHash: fs.existsSync(
 								path.join(worker.store.root, "final-layout.json"),
 							)
