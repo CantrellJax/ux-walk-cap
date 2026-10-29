@@ -72,6 +72,32 @@ test("a live checkpoint owner with no prepared jobs cannot race a duplicate batc
 	);
 });
 
+test("a verified terminal capture with intentionally disabled audio is unavailable without errors, while missing intent and active ownership stay pending", async (t) => {
+	for (const variant of ["intentional", "expected-mic", "unknown-intent", "unsealed", "changed-layout", "active-owner", "ambiguous-job"]) {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "uxw-no-audio-"));
+		t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+		const checkpoint = path.join(root, "checkpoints");
+		fs.mkdirSync(path.join(checkpoint, "jobs"), { recursive: true });
+		fs.mkdirSync(path.join(checkpoint, "descriptors"));
+		fs.mkdirSync(path.join(root, "chapter"));
+		const identity = { recordingId: "synthetic", generation: "one" };
+		durableJson(path.join(checkpoint, "identity.json"), identity);
+		const layout = path.join(checkpoint, "final-layout.json");
+		durableJson(layout, { displaySpans: [1], meta: { status: { status: "Complete" }, segments: [{ display: { path: "display.mp4", start_time: 0 } }] }, config: {}, sourceDurations: {} });
+		const descriptor = path.join(checkpoint, "descriptors/000000000001.json");
+		durableJson(descriptor, { sequence: 1, captureState: "complete", finalized: true, objects: [] });
+		if (variant !== "unsealed") durableJson(path.join(checkpoint, "seal.json"), { schemaVersion: 1, ...identity, sequence: 1, descriptorHash: sha256(fs.readFileSync(descriptor)), captureState: "complete", providerJobs: 0, unsupportedSources: {}, expectedAudio: variant === "unknown-intent" ? {} : { microphone: variant === "expected-mic", systemAudio: false }, finalLayoutHash: sha256(fs.readFileSync(layout)) });
+		if (variant === "changed-layout") fs.appendFileSync(layout, " ");
+		if (variant === "active-owner") { fs.mkdirSync(path.join(root, ".checkpoint-worker")); durableJson(path.join(root, ".checkpoint-worker/owner.json"), { pid: process.pid }); }
+		if (variant === "ambiguous-job") durableJson(path.join(checkpoint, `jobs/${"f".repeat(64)}.json`), { jobId: "f".repeat(64), state: "ambiguous", source: "segment-0:microphone", sourceStartMs: 0, sourceEndMs: 1000 });
+		const reused = await reuseCheckpointTranscript(root, [{ dir: "chapter", startMs: 0, endMs: 1000 }], 0, { transcriber: "elevenlabs", liveTranscription: true });
+		assert.equal(reused.handled, true, variant);
+		assert.equal(reused.results.get("chapter").transcript, false, variant);
+		if (variant === "intentional") assert.equal(reused.error, null, variant);
+		else assert.ok(reused.error, variant);
+	}
+});
+
 test("unsupported channel, calibration and edited timeline layouts never claim aligned live captions", async (t) => {
 	for (const config of [
 		{ audio: { micStereoMode: "monoL" } },
