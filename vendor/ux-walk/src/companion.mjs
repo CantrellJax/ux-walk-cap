@@ -398,6 +398,7 @@ export async function startCompanionServer({
 			return;
 		}
 		connections.add(socket);
+		socket.setEncoding("utf8");
 		socket.on("close", () => connections.delete(socket));
 		let buffer = "",
 			consumed = false;
@@ -500,6 +501,7 @@ export function requestCompanion(descriptor, message) {
 			host: "127.0.0.1",
 			port: descriptor.port,
 		});
+		socket.setEncoding("utf8");
 		let data = "";
 		socket.setTimeout(5000, () =>
 			socket.destroy(new Error("Companion owner timed out.")),

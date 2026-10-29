@@ -1,7 +1,7 @@
 {
   "name": "UX Walk",
   "repository": "https://github.com/CantrellJax/ux-walk",
-  "revision": "19c271d3c5294eb90ed5fd28cb3ab5198d2b2940",
+  "revision": "f504ab94d361ee4c7af030c30795bf766869714f",
   "license": "AGPL-3.0-only",
   "files": {
     ".gitignore": "77cc9c247322e06e2a62b7fb48877c0427f5e414d0addbd8d898efda5b7b6ad5",
@@ -41,7 +41,7 @@
     "src/cap.mjs": "fb5af9a5d5486049bf4dba7fc83c09e5c887d3ddfc26ff47595f15b841ecad7c",
     "src/capture.mjs": "8012e6dd41ae990f5b08a5c7f9bcc3ce77da7bf5e2fe701fbf8e86dccaca438c",
     "src/companion-install.mjs": "a6ce47d9e3112e49aa9a9768729b8fc850f48d5b6b284e28f557505b0ec3ea2b",
-    "src/companion.mjs": "72f74a65cdd362c73ef6151031f4905befc686e674cc35087cf987436ad06958",
+    "src/companion.mjs": "3acc4929955cc9d9120b5fa425062a52c4615fb9ffc024f3da32821d1ad939e2",
     "src/config.mjs": "bdaeae1603ef8dce376396965e0f6321a26c35cdb00c23ca46ca3e5431db6411",
     "src/descript.mjs": "203a21b0b206b855ca4337b3a3364e370bc2eed9aef9c4e65cc302452bdbae76",
     "src/evidence.mjs": "e0115e1180bd84da16e347e2051419b03b684b602b3253e020f5ddc17ad5c911",
@@ -70,6 +70,7 @@
     "test/unit/companion-owner-race.test.mjs": "ff285ee616e4fc730f40efaaa9c272c5c5c26b3e6edb007ee1fea410108f040a",
     "test/unit/companion-page.test.mjs": "26819a5bc8501e5a6671ccf0cef19fb9669b867a962c90b21b69c5f387c8af39",
     "test/unit/companion-start.test.mjs": "55c8267252fb90856ef4a01d4c7f9cd142eeefc0afe61245e991a30003a694ab",
+    "test/unit/companion-utf8.test.mjs": "f1ec4b8688479b7a530dbc49ceebf9655e38ba2a60f21c4dfde75e444f7527ff",
     "test/unit/companion.test.mjs": "2201b863fe4e2186df135f4ef554054e6055fcd49515a0f8d839fee676894dd9",
     "test/unit/embedded-config.test.mjs": "5ce28adcf30756fa44f79f63d415cfaa6c00f236c9cbddd320565ed50b07b38e",
     "test/unit/meet-attribution.test.mjs": "08a531cce8ddd04b7c1e2e2356fad9f1c8870c225b7499e0751bd3ba37ea145b",
