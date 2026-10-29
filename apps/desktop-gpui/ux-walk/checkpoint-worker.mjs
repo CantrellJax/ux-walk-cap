@@ -181,15 +181,23 @@ export class CheckpointWorker {
 			transcription:
 				this.cfg.transcriber === "none"
 					? "disabled"
-					: supported && !Object.keys(this.sourceErrors).length
-						? jobs.some((job) => ["failed", "ambiguous"].includes(job.state))
-							? "needs attention"
-							: jobs.some((job) => job.state !== "complete")
-								? "working"
-								: !jobs.length || pendingAudio
-									? "waiting for a five-minute chunk or stop tail"
-									: "caught up to saved source audio"
-						: "after recording stops",
+					: this.phase === "stopped" &&
+							this.finalized &&
+							!jobs.length &&
+							!Object.keys(sources).length &&
+							!Object.keys(this.sourceErrors).length &&
+							heartbeat?.expectedAudio?.microphone === false &&
+							heartbeat?.expectedAudio?.systemAudio === false
+						? "unavailable: no audio was selected"
+						: supported && !Object.keys(this.sourceErrors).length
+							? jobs.some((job) => ["failed", "ambiguous"].includes(job.state))
+								? "needs attention"
+								: jobs.some((job) => job.state !== "complete")
+									? "working"
+									: !jobs.length || pendingAudio
+										? "waiting for a five-minute chunk or stop tail"
+										: "caught up to saved source audio"
+							: "after recording stops",
 			error: this.error,
 			updatedAt: Date.now(),
 		};
@@ -869,6 +877,19 @@ export async function runCheckpointWorker(file, cfg, dependencies = {}) {
 							captureState: journal.state,
 							providerJobs: worker.jobs.all().length,
 							unsupportedSources: worker.sourceErrors,
+							expectedAudio: worker.heartbeat().expectedAudio,
+							sourceCaptureState: readJson(
+								path.join(worker.journal.sourceProject, "recording-meta.json"),
+							).status?.status,
+							finalLayoutHash: fs.existsSync(
+								path.join(worker.store.root, "final-layout.json"),
+							)
+								? sha256(
+										fs.readFileSync(
+											path.join(worker.store.root, "final-layout.json"),
+										),
+									)
+								: null,
 							sealedAt: Date.now(),
 						});
 					}
