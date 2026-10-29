@@ -5,8 +5,16 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { projectBrowserEvidence, safeBrowserUrl } from "./browser-evidence.mjs";
-import { durableJson, durableWrite, sha256 } from "./checkpoint-store.mjs";
-import { reuseCheckpointTranscript } from "./checkpoint-transcript.mjs";
+import {
+	durableJson,
+	durableWrite,
+	sha256,
+	syncDirectory,
+} from "./checkpoint-store.mjs";
+import {
+	reuseCheckpointTranscript,
+	sealedUnsupportedFallback,
+} from "./checkpoint-transcript.mjs";
 import { clipNativeAudio, prepareNativeAudio } from "./native-audio.mjs";
 import { RecoveryTransport } from "./recovery-transport.mjs";
 import { restoreRecovery } from "./restore-checkpoint.mjs";
@@ -307,6 +315,8 @@ export async function finishNativeWalk(file, cfg, dependencies = {}) {
 		mode: 0o600,
 	});
 	const stages = {};
+	let fullLockOwned = false;
+	const fullLock = path.join(directory, ".checkpoint-worker");
 	const progress = (state, error, changes = {}) => {
 		Object.assign(stages, changes);
 		save(path.join(directory, "processing.json"), {
@@ -414,15 +424,26 @@ export async function finishNativeWalk(file, cfg, dependencies = {}) {
 			directory,
 			"checkpoints/full-transcript.json",
 		);
-		const explicitFull = dependencies.fullTranscription === true;
+		const automaticFallback =
+			!fs.existsSync(fullReceipt) && sealedUnsupportedFallback(directory, cfg);
+		const explicitFull =
+			dependencies.fullTranscription === true || automaticFallback;
 		const fullCached = !explicitFull && fs.existsSync(fullReceipt);
 		if (explicitFull) {
-			const workerOwner = path.join(directory, ".checkpoint-worker/owner.json");
-			if (fs.existsSync(workerOwner)) {
-				const { pid } = JSON.parse(fs.readFileSync(workerOwner, "utf8"));
+			try {
+				fs.mkdirSync(fullLock, { mode: 0o700 });
+			} catch (error) {
+				if (error.code !== "EEXIST") throw error;
+				const owner = JSON.parse(
+					fs.readFileSync(path.join(fullLock, "owner.json"), "utf8"),
+				);
+				if (!Number.isSafeInteger(owner.pid) || owner.pid < 1)
+					throw new Error(
+						"Evidence sync ownership is unverified; retained data was left unchanged",
+					);
 				let alive = true;
 				try {
-					process.kill(pid, 0);
+					process.kill(owner.pid, 0);
 				} catch (error) {
 					if (error.code === "ESRCH") alive = false;
 					else throw error;
@@ -431,7 +452,19 @@ export async function finishNativeWalk(file, cfg, dependencies = {}) {
 					throw new Error(
 						"Wait for evidence sync to finish before requesting a full paid transcription. Existing jobs and audio remain saved.",
 					);
+				fs.unlinkSync(path.join(fullLock, "owner.json"));
+				fs.rmdirSync(fullLock);
+				fs.mkdirSync(fullLock, { mode: 0o700 });
 			}
+			fullLockOwned = true;
+			durableJson(path.join(fullLock, "owner.json"), {
+				pid: process.pid,
+				kind: "full-transcript",
+			});
+			if (automaticFallback && !sealedUnsupportedFallback(directory, cfg, true))
+				throw new Error(
+					"Stop-time transcription ownership changed; retained audio will be reused after evidence sync finishes",
+				);
 			if (cfg.transcriber === "none")
 				throw new Error(
 					"Choose a transcription provider before requesting a full transcript",
@@ -449,7 +482,9 @@ export async function finishNativeWalk(file, cfg, dependencies = {}) {
 				provider: cfg.transcriber,
 				state: "requested",
 				requestId: randomUUID(),
-				manualRequests: (previous.manualRequests ?? 0) + 1,
+				manualRequests:
+					(previous.manualRequests ?? 0) + (automaticFallback ? 0 : 1),
+				automaticFallback,
 			});
 			for (const row of earlyRows) {
 				const srt = path.join(directory, row.dir, "transcript.srt");
@@ -527,6 +562,26 @@ export async function finishNativeWalk(file, cfg, dependencies = {}) {
 						receipt?.requestId === request.requestId &&
 						receipt?.state === "complete" &&
 						receipt.resultHash === sha256(fs.readFileSync(srt));
+					if (!exists && fs.existsSync(srt)) {
+						const bytes = fs.readFileSync(srt);
+						durableWrite(
+							path.join(
+								directory,
+								row.dir,
+								`transcript-unverified-${sha256(bytes).slice(0, 12)}.srt`,
+							),
+							bytes,
+						);
+						fs.unlinkSync(srt);
+						durableJson(
+							path.join(directory, row.dir, "full-transcript-quarantine.json"),
+							{
+								reason: "Caption receipt identity or checksum did not verify",
+								sha256: sha256(bytes),
+								quarantinedAt: Date.now(),
+							},
+						);
+					}
 					earlyResults.set(row.dir, {
 						transcript: exists,
 						...(!exists
@@ -762,6 +817,11 @@ export async function finishNativeWalk(file, cfg, dependencies = {}) {
 			durableJson(fullReceipt, {
 				...JSON.parse(fs.readFileSync(fullReceipt, "utf8")),
 				state: transcriptsReady ? "complete" : "partial",
+				wordsHash: sha256(
+					fs.readFileSync(
+						path.join(directory, "checkpoints/full-transcript-words.json"),
+					),
+				),
 				completedAt: Date.now(),
 			});
 		}
@@ -786,6 +846,11 @@ export async function finishNativeWalk(file, cfg, dependencies = {}) {
 		progress("failed", error.message);
 		throw error;
 	} finally {
+		if (fullLockOwned) {
+			fs.unlinkSync(path.join(fullLock, "owner.json"));
+			fs.rmdirSync(fullLock);
+			syncDirectory(directory);
+		}
 		fs.unlinkSync(owner);
 		fs.rmdirSync(lock);
 	}

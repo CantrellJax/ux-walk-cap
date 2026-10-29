@@ -204,3 +204,70 @@ export async function reuseCheckpointTranscript(
 	}
 	return { handled: true, results, error };
 }
+
+export function sealedUnsupportedFallback(
+	directory,
+	cfg,
+	allowFullOwner = false,
+) {
+	if (
+		cfg.liveTranscription === false ||
+		!["elevenlabs", "assemblyai"].includes(cfg.transcriber)
+	)
+		return false;
+	const root = path.join(directory, "checkpoints");
+	try {
+		const identity = readJson(path.join(root, "identity.json"));
+		const seal = readJson(path.join(root, "seal.json"));
+		if (
+			seal.schemaVersion !== 1 ||
+			seal.recordingId !== identity.recordingId ||
+			seal.generation !== identity.generation ||
+			seal.captureState !== "complete" ||
+			seal.providerJobs !== 0 ||
+			!Object.keys(seal.unsupportedSources ?? {}).length
+		)
+			return false;
+		if (fs.readdirSync(path.join(root, "jobs")).length) return false;
+		const names = fs
+			.readdirSync(path.join(root, "descriptors"))
+			.filter((name) => /^\d{12}\.json$/.test(name))
+			.sort();
+		const latest = fs.readFileSync(
+			path.join(root, "descriptors", names.at(-1)),
+		);
+		if (
+			sha256(latest) !== seal.descriptorHash ||
+			JSON.parse(latest).sequence !== seal.sequence
+		)
+			return false;
+		for (const name of names)
+			if (
+				readJson(path.join(root, "descriptors", name)).objects.some(
+					(object) => object.kind === "transcriptWords",
+				)
+			)
+				return false;
+		const lock = path.join(directory, ".checkpoint-worker");
+		if (fs.existsSync(lock)) {
+			const owner = readJson(path.join(lock, "owner.json"));
+			if (!Number.isSafeInteger(owner.pid) || owner.pid < 1) return false;
+			try {
+				process.kill(owner.pid, 0);
+				if (
+					!(
+						allowFullOwner &&
+						owner.pid === process.pid &&
+						owner.kind === "full-transcript"
+					)
+				)
+					return false;
+			} catch (error) {
+				if (error.code !== "ESRCH") return false;
+			}
+		}
+		return true;
+	} catch {
+		return false;
+	}
+}

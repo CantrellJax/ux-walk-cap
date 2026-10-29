@@ -373,7 +373,13 @@ export class CheckpointWorker {
 		const fullWords = path.join(this.store.root, "full-transcript-words.json");
 		if (fs.existsSync(fullWords)) {
 			const bytes = fs.readFileSync(fullWords);
-			if (!this.transcriptObjects.has(sha256(bytes)))
+			const receipt = readJson(
+				path.join(this.store.root, "full-transcript.json"),
+			);
+			if (receipt.wordsHash !== sha256(bytes))
+				this.error =
+					"Full transcript metadata failed its integrity receipt; unverified bytes are excluded from backup";
+			else if (!this.transcriptObjects.has(sha256(bytes)))
 				objects.push(
 					this.store.put("transcriptWords", bytes, {
 						source: "exported-session",
@@ -847,6 +853,25 @@ export async function runCheckpointWorker(file, cfg, dependencies = {}) {
 					if (worker.jobs.running) await worker.jobs.running;
 					if (worker.uploading) await worker.uploading;
 					if (!terminalSealed) await worker.checkpoint({ force: true });
+					if (terminalSealed) {
+						const sequence = worker.store.state.sequence;
+						const descriptorFile = path.join(
+							worker.store.root,
+							"descriptors",
+							`${String(sequence).padStart(12, "0")}.json`,
+						);
+						durableJson(path.join(worker.store.root, "seal.json"), {
+							schemaVersion: 1,
+							recordingId: worker.store.options.recordingId,
+							generation: worker.store.options.generation,
+							sequence,
+							descriptorHash: sha256(fs.readFileSync(descriptorFile)),
+							captureState: journal.state,
+							providerJobs: worker.jobs.all().length,
+							unsupportedSources: worker.sourceErrors,
+							sealedAt: Date.now(),
+						});
+					}
 					worker.phase =
 						journal.state === "complete" ? "stopped" : "interrupted";
 					worker.status();

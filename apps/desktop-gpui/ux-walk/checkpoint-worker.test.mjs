@@ -318,6 +318,44 @@ test("terminal drain backs up the final event and descriptor before a healthy wo
 	assert.ok(blobs.some((text) => text.includes("final failure")));
 });
 
-test("modified full transcript metadata is never admitted to the durable backup outbox",async(t)=>{
- const root=fs.mkdtempSync(path.join(os.tmpdir(),"uxw-full-words-"));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));const sourceProject=path.join(root,"source.cap");fs.mkdirSync(sourceProject);const file=path.join(root,"native-walk.json");durableJson(file,{state:"recording",request:{directory:root,topic:"Test"},sourceProject,startedAtMs:1});durableJson(path.join(root,"checkpoint-heartbeat.json"),{activeElapsedMs:1000,wallMs:1000,parentPid:process.pid,generation:1,paused:false});const worker=new CheckpointWorker(file,{transcriber:"none"},{backupEnabled:false,server:""});durableJson(path.join(root,"checkpoints/full-transcript.json"),{wordsHash:sha256(Buffer.from("original"))});durableJson(path.join(root,"checkpoints/full-transcript-words.json"),{source:"exported-session",words:[{start:0,end:1,text:"UNVERIFIED"}]});await worker.checkpoint({force:true});assert.equal(worker.store.descriptors().flatMap(value=>value.objects).filter(object=>object.kind==="transcriptWords").length,0);assert.match(worker.error,/integrity|checksum|receipt/i);
+test("modified full transcript metadata is never admitted to the durable backup outbox", async (t) => {
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "uxw-full-words-"));
+	t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+	const sourceProject = path.join(root, "source.cap");
+	fs.mkdirSync(sourceProject);
+	const file = path.join(root, "native-walk.json");
+	durableJson(file, {
+		state: "recording",
+		request: { directory: root, topic: "Test" },
+		sourceProject,
+		startedAtMs: 1,
+	});
+	durableJson(path.join(root, "checkpoint-heartbeat.json"), {
+		activeElapsedMs: 1000,
+		wallMs: 1000,
+		parentPid: process.pid,
+		generation: 1,
+		paused: false,
+	});
+	const worker = new CheckpointWorker(
+		file,
+		{ transcriber: "none" },
+		{ backupEnabled: false, server: "" },
+	);
+	durableJson(path.join(root, "checkpoints/full-transcript.json"), {
+		wordsHash: sha256(Buffer.from("original")),
+	});
+	durableJson(path.join(root, "checkpoints/full-transcript-words.json"), {
+		source: "exported-session",
+		words: [{ start: 0, end: 1, text: "UNVERIFIED" }],
+	});
+	await worker.checkpoint({ force: true });
+	assert.equal(
+		worker.store
+			.descriptors()
+			.flatMap((value) => value.objects)
+			.filter((object) => object.kind === "transcriptWords").length,
+		0,
+	);
+	assert.match(worker.error, /integrity|checksum|receipt/i);
 });

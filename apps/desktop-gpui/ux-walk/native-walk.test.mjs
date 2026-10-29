@@ -810,10 +810,114 @@ test("explicit full transcription is available after unsupported live capture an
 	);
 });
 
-test("an unverified full-caption cache is quarantined before normal timelines can parse it",async(t)=>{
- const f=fixture(t);f.journal.events=[];f.save();let submissions=0;let parsedBad=false;const deps={client:{export:async(_project,output)=>{fs.writeFileSync(output,"export");return{durationS:10};}},prepareAudio:async()=>null,processChapter:async(directory,cfg)=>{const file=path.join(directory,"transcript.srt");if(cfg.transcriber!=="none"){submissions++;fs.writeFileSync(file,'1\n00:00:00,000 --> 00:00:01,000\nVerified speech\n');}if(fs.existsSync(file))parsedBad ||=fs.readFileSync(file,"utf8").includes("CORRUPTED");return{transcript:fs.existsSync(file)};},writeIndex:()=>{},writeReport:()=>{}};await finishNativeWalk(f.file,{transcriber:"elevenlabs"},{...deps,fullTranscription:true});const row=JSON.parse(fs.readFileSync(path.join(f.directory,"session.json"))).chapters[0];fs.writeFileSync(path.join(f.directory,row.dir,"transcript.srt"),'1\n00:00:00,000 --> 00:00:01,000\nCORRUPTED UNVERIFIED CAPTION\n');await finishNativeWalk(f.file,{transcriber:"elevenlabs"},deps);assert.equal(submissions,1);assert.equal(parsedBad,false);assert.equal(fs.existsSync(path.join(f.directory,row.dir,"transcript.srt")),false);assert.ok(fs.readdirSync(path.join(f.directory,row.dir)).some(name=>name.startsWith("transcript-unverified-")));
+test("an unverified full-caption cache is quarantined before normal timelines can parse it", async (t) => {
+	const f = fixture(t);
+	f.journal.events = [];
+	f.save();
+	let submissions = 0;
+	let parsedBad = false;
+	const deps = {
+		client: {
+			export: async (_project, output) => {
+				fs.writeFileSync(output, "export");
+				return { durationS: 10 };
+			},
+		},
+		prepareAudio: async () => null,
+		processChapter: async (directory, cfg) => {
+			const file = path.join(directory, "transcript.srt");
+			if (cfg.transcriber !== "none") {
+				submissions++;
+				fs.writeFileSync(
+					file,
+					"1\n00:00:00,000 --> 00:00:01,000\nVerified speech\n",
+				);
+			}
+			if (fs.existsSync(file))
+				parsedBad ||= fs.readFileSync(file, "utf8").includes("CORRUPTED");
+			return { transcript: fs.existsSync(file) };
+		},
+		writeIndex: () => {},
+		writeReport: () => {},
+	};
+	await finishNativeWalk(
+		f.file,
+		{ transcriber: "elevenlabs" },
+		{ ...deps, fullTranscription: true },
+	);
+	const row = JSON.parse(
+		fs.readFileSync(path.join(f.directory, "session.json")),
+	).chapters[0];
+	fs.writeFileSync(
+		path.join(f.directory, row.dir, "transcript.srt"),
+		"1\n00:00:00,000 --> 00:00:01,000\nCORRUPTED UNVERIFIED CAPTION\n",
+	);
+	await finishNativeWalk(f.file, { transcriber: "elevenlabs" }, deps);
+	assert.equal(submissions, 1);
+	assert.equal(parsedBad, false);
+	assert.equal(
+		fs.existsSync(path.join(f.directory, row.dir, "transcript.srt")),
+		false,
+	);
+	assert.ok(
+		fs
+			.readdirSync(path.join(f.directory, row.dir))
+			.some((name) => name.startsWith("transcript-unverified-")),
+	);
 });
 
-test("sealed unsupported zero-job capture falls back once after stop and caches the result",async(t)=>{
- const f=fixture(t);f.journal.events=[];f.save();const segment=path.join(f.source,"content/segments/segment-0");fs.mkdirSync(segment,{recursive:true});fs.writeFileSync(path.join(segment,"audio-input.ogg"),"unsupported synthetic source");const {durableJson}=await import("./checkpoint-store.mjs");durableJson(path.join(f.directory,"checkpoint-heartbeat.json"),{wallMs:110000,activeElapsedMs:10000,parentPid:process.pid,generation:1,paused:true,captureEnded:true});const {runCheckpointWorker}=await import("./checkpoint-worker.mjs");await runCheckpointWorker(f.file,{transcriber:"elevenlabs"},{transport:{status:async()=>({backupEnabled:false,server:""})}});let submissions=0;const deps={client:{export:async(_project,output)=>{fs.writeFileSync(output,"export");return{durationS:10};}},prepareAudio:async()=>null,processChapter:async(directory,cfg)=>{const srt=path.join(directory,"transcript.srt");if(cfg.transcriber!=="none"&&!fs.existsSync(srt)){submissions++;fs.writeFileSync(srt,'1\n00:00:00,000 --> 00:00:01,000\nStop-time fallback\n');}return{transcript:fs.existsSync(srt)};},writeIndex:()=>{},writeReport:()=>{}};await finishNativeWalk(f.file,{transcriber:"elevenlabs"},deps);assert.equal(submissions,1);await finishNativeWalk(f.file,{transcriber:"elevenlabs"},deps);assert.equal(submissions,1);
+test("sealed unsupported zero-job capture falls back once after stop and caches the result", async (t) => {
+	const f = fixture(t);
+	f.journal.events = [];
+	f.save();
+	const segment = path.join(f.source, "content/segments/segment-0");
+	fs.mkdirSync(segment, { recursive: true });
+	fs.writeFileSync(
+		path.join(segment, "audio-input.ogg"),
+		"unsupported synthetic source",
+	);
+	const { durableJson } = await import("./checkpoint-store.mjs");
+	durableJson(path.join(f.directory, "checkpoint-heartbeat.json"), {
+		wallMs: 110000,
+		activeElapsedMs: 10000,
+		parentPid: process.pid,
+		generation: 1,
+		paused: true,
+		captureEnded: true,
+	});
+	const { runCheckpointWorker } = await import("./checkpoint-worker.mjs");
+	await runCheckpointWorker(
+		f.file,
+		{ transcriber: "elevenlabs" },
+		{
+			transport: { status: async () => ({ backupEnabled: false, server: "" }) },
+		},
+	);
+	let submissions = 0;
+	const deps = {
+		client: {
+			export: async (_project, output) => {
+				fs.writeFileSync(output, "export");
+				return { durationS: 10 };
+			},
+		},
+		prepareAudio: async () => null,
+		processChapter: async (directory, cfg) => {
+			const srt = path.join(directory, "transcript.srt");
+			if (cfg.transcriber !== "none" && !fs.existsSync(srt)) {
+				submissions++;
+				fs.writeFileSync(
+					srt,
+					"1\n00:00:00,000 --> 00:00:01,000\nStop-time fallback\n",
+				);
+			}
+			return { transcript: fs.existsSync(srt) };
+		},
+		writeIndex: () => {},
+		writeReport: () => {},
+	};
+	await finishNativeWalk(f.file, { transcriber: "elevenlabs" }, deps);
+	assert.equal(submissions, 1);
+	await finishNativeWalk(f.file, { transcriber: "elevenlabs" }, deps);
+	assert.equal(submissions, 1);
 });
