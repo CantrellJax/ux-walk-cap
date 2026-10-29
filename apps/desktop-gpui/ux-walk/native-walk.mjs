@@ -346,24 +346,11 @@ export async function finishNativeWalk(file, cfg, dependencies = {}) {
 		const { resolveGlossaries } = await import(new URL("glossary.mjs", engine));
 		const glossaries = resolveGlossaries(cfg.glossary || "");
 		const browser = projectBrowserEvidence(file, journal);
-		let meetingEvents = browser.events;
-		try {
-			meetingEvents = fs
-				.readFileSync(path.join(directory, "browser-evidence.jsonl"), "utf8")
-				.split("\n")
-				.filter(Boolean)
-				.flatMap((line) => {
-					try {
-						return [JSON.parse(line)];
-					} catch {
-						return [];
-					}
-				});
-		} catch {}
 		const meet = projectMeetCaptions(
-			meetingEvents,
+			browser.meetEvents,
 			journal.startedAtMs,
 			journal.durationMs,
+			browser.owner,
 		);
 		durableWrite(
 			path.join(directory, "meet.jsonl"),

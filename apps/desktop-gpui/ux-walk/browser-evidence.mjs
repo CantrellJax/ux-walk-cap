@@ -225,6 +225,7 @@ export function sanitizeBrowserEvent(raw, receivedAt = Date.now()) {
 
 const unavailable = (reason = "not captured") => ({
 	events: [],
+	meetEvents: [],
 	coverage: { dom: reason, network: reason, console: reason },
 });
 
@@ -234,6 +235,33 @@ function sameFile(first, second) {
 	} catch {
 		return false;
 	}
+}
+
+export function browserEvidenceMatches(
+	metadata,
+	journal,
+	file,
+	compare = sameFile,
+) {
+	return !!(
+		metadata?.schemaVersion === 1 &&
+		metadata.captureId &&
+		metadata.windowId &&
+		metadata.state !== "unavailable" &&
+		compare(String(metadata.journal || ""), file) &&
+		compare(String(metadata.sourceProject || ""), journal.sourceProject) &&
+		metadata.startedAtMs === journal.startedAtMs &&
+		Array.isArray(metadata.anchors)
+	);
+}
+
+function companionEventMatches(event, owner) {
+	return (
+		typeof owner?.recordingId === "string" &&
+		typeof owner.generation === "string" &&
+		event.companion?.recordingId === owner.recordingId &&
+		event.companion?.generation === owner.generation
+	);
 }
 
 export function projectBrowserEvidence(file, journal) {
@@ -250,15 +278,7 @@ export function projectBrowserEvidence(file, journal) {
 		return unavailable(
 			`not captured: ${metadata.reason || "browser collector unavailable"}`,
 		);
-	if (
-		metadata.schemaVersion !== 1 ||
-		!metadata.captureId ||
-		!metadata.windowId ||
-		!sameFile(String(metadata.journal || ""), file) ||
-		!sameFile(String(metadata.sourceProject || ""), journal.sourceProject) ||
-		metadata.startedAtMs !== journal.startedAtMs ||
-		!Array.isArray(metadata.anchors)
-	)
+	if (!browserEvidenceMatches(metadata, journal, file))
 		return unavailable(
 			"unavailable: browser evidence recording identity mismatch",
 		);
@@ -289,6 +309,7 @@ export function projectBrowserEvidence(file, journal) {
 		return offset >= 0 && offset <= journal.durationMs ? offset : null;
 	};
 	const events = [];
+	const meetEvents = [];
 	let malformed = 0;
 	try {
 		for (const line of fs
@@ -297,8 +318,14 @@ export function projectBrowserEvidence(file, journal) {
 			if (!line.trim()) continue;
 			try {
 				const raw = JSON.parse(line);
+				if (
+					raw.source === "chrome-extension" &&
+					!companionEventMatches(raw, metadata)
+				)
+					throw new Error("Browser event recording identity mismatch");
 				if (!Number.isSafeInteger(raw.observedAt))
 					throw new Error("Invalid observedAt");
+				if (raw.ev === "meet-caption") meetEvents.push(raw);
 				const offset =
 					Number.isSafeInteger(raw.nativeOffsetMs) &&
 					raw.nativeOffsetMs >= 0 &&
@@ -336,6 +363,11 @@ export function projectBrowserEvidence(file, journal) {
 	const external = metadata.browserMode === "external";
 	return {
 		events,
+		meetEvents,
+		owner: {
+			recordingId: metadata.recordingId,
+			generation: metadata.generation,
+		},
 		coverage: {
 			dom: external
 				? events.some((event) => event.companion?.role === "walkthrough")
@@ -360,11 +392,13 @@ export function projectMeetCaptions(
 	events,
 	startedAtMs = 0,
 	durationMs = Number.MAX_SAFE_INTEGER,
+	owner,
 ) {
 	return events.flatMap((raw) => {
 		const event = sanitizeBrowserEvent(raw, raw.observedAt);
 		if (
 			event?.ev !== "meet-caption" ||
+			!companionEventMatches(event, owner) ||
 			!event.name ||
 			!event.text ||
 			event.companion?.role !== "meet"

@@ -1,6 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
-import { projectMeetCaptions } from "./browser-evidence.mjs";
+import {
+	browserEvidenceMatches,
+	projectMeetCaptions,
+} from "./browser-evidence.mjs";
 import {
 	CHECKPOINT_KINDS,
 	durableJson,
@@ -256,6 +259,30 @@ export async function restoreRecovery(transport, recordingId, destination) {
 			audio.push({ source, relative });
 		}
 	}
+	const sourceIdentity =
+		savedJournal.checkpointSourceIdentity?.schemaVersion === 1
+			? savedJournal.checkpointSourceIdentity
+			: {
+					journal: savedJournal.request?.directory
+						? path.join(savedJournal.request.directory, "native-walk.json")
+						: undefined,
+					sourceProject: savedJournal.sourceProject,
+				};
+	const browserOwner =
+		savedJournal.request?.directory &&
+		browserEvidenceMatches(
+			clockData.browser,
+			{ ...savedJournal, sourceProject: sourceIdentity.sourceProject },
+			sourceIdentity.journal,
+			(first, second) =>
+				typeof first === "string" &&
+				typeof second === "string" &&
+				path.isAbsolute(first) &&
+				path.isAbsolute(second) &&
+				path.resolve(first) === path.resolve(second),
+		)
+			? clockData.browser
+			: undefined;
 	const sourceProject = path.join(destination, "recovered.cap");
 	durableMkdir(sourceProject);
 	const journal = {
@@ -279,9 +306,10 @@ export async function restoreRecovery(transport, recordingId, destination) {
 			...clockData.browser,
 			journal: path.join(destination, "native-walk.json"),
 			sourceProject,
-			state: "aborted",
-			reason:
-				"Recovered critical evidence; video capture completeness is unverified",
+			state: browserOwner ? "aborted" : "unavailable",
+			reason: browserOwner
+				? "Recovered critical evidence; video capture completeness is unverified"
+				: "Recovered browser evidence recording identity mismatch; raw evidence is preserved",
 		});
 	durableJson(path.join(destination, "transcript-sources.json"), {
 		schemaVersion: 1,
@@ -313,6 +341,7 @@ export async function restoreRecovery(transport, recordingId, destination) {
 			.map((line) => JSON.parse(line)),
 		journal.startedAtMs,
 		active,
+		browserOwner,
 	);
 	durableWrite(
 		path.join(destination, "meet.jsonl"),

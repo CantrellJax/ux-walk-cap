@@ -307,10 +307,23 @@ export class CheckpointWorker {
 		const proposedCursors = { ...this.fileCursors };
 		this.journal = readJson(this.file);
 		objects.push(
-			this.store.put("journal", fs.readFileSync(this.file), {
-				activeStartMs: 0,
-				activeEndMs: heartbeat.activeElapsedMs,
-			}),
+			this.store.put(
+				"journal",
+				Buffer.from(
+					JSON.stringify({
+						...this.journal,
+						checkpointSourceIdentity: {
+							schemaVersion: 1,
+							journal: this.file,
+							sourceProject: fs.realpathSync(this.journal.sourceProject),
+						},
+					}),
+				),
+				{
+					activeStartMs: 0,
+					activeEndMs: heartbeat.activeElapsedMs,
+				},
+			),
 		);
 		for (const name of ["browser-evidence.jsonl"]) {
 			const file = path.join(this.directory, name);
