@@ -104,15 +104,51 @@ async function childMain() {
 			const { CheckpointWorker, runCheckpointWorker } = await import(
 				pathToFileURL(path.join(source, "checkpoint-worker.mjs"))
 			);
-            if(kind === "failing-upload") {const original=CheckpointWorker.prototype.status;CheckpointWorker.prototype.status=function(...args){if(fs.existsSync(marker("upload-pending"))){mark("failing-status");throw new Error("Synthetic status persistence failure");}return original.apply(this,args);};}
+			if (kind === "failing-upload") {
+				const original = CheckpointWorker.prototype.status;
+				CheckpointWorker.prototype.status = function (...args) {
+					if (fs.existsSync(marker("upload-pending"))) {
+						mark("failing-status");
+						throw new Error("Synthetic status persistence failure");
+					}
+					return original.apply(this, args);
+				};
+			}
 			await runCheckpointWorker(
 				path.join(walk, "native-walk.json"),
 				{ transcriber: "none" },
 				{
-                    transport: {
-                        status: async()=>{mark(`entered-${role}`);if(kind!=="failing-upload")wait(`release-${role}`);return {backupEnabled:kind==="failing-upload",server:kind==="failing-upload"?"https://backup.example":""};},
-                        request: async(_method,_resource,{input})=>{mark("upload-pending");await new Promise(resolve=>{const timer=setInterval(()=>{if(fs.existsSync(marker("release-upload"))){clearInterval(timer);resolve();}},5);});const {createHash}=await import("node:crypto");const value=JSON.parse(read(input));return {...value,requestHash:createHash("sha256").update(JSON.stringify(value)).digest("hex"),expiresAt:Date.now()+60000};},
-                    },
+					transport: {
+						status: async () => {
+							mark(`entered-${role}`);
+							if (kind !== "failing-upload") wait(`release-${role}`);
+							return {
+								backupEnabled: kind === "failing-upload",
+								server:
+									kind === "failing-upload" ? "https://backup.example" : "",
+							};
+						},
+						request: async (_method, _resource, { input }) => {
+							mark("upload-pending");
+							await new Promise((resolve) => {
+								const timer = setInterval(() => {
+									if (fs.existsSync(marker("release-upload"))) {
+										clearInterval(timer);
+										resolve();
+									}
+								}, 5);
+							});
+							const { createHash } = await import("node:crypto");
+							const value = JSON.parse(read(input));
+							return {
+								...value,
+								requestHash: createHash("sha256")
+									.update(JSON.stringify(value))
+									.digest("hex"),
+								expiresAt: Date.now() + 60000,
+							};
+						},
+					},
 				},
 			);
 		} else {
@@ -127,7 +163,7 @@ async function childMain() {
 					client: {
 						export: async () => {
 							mark(`entered-${role}`);
-	                        if(kind !== "failing-upload") wait(`release-${role}`);
+							if (kind !== "failing-upload") wait(`release-${role}`);
 							throw new Error("Synthetic exporter stop");
 						},
 					},
@@ -439,7 +475,27 @@ test("metadata cleanup stays under OS exclusion and never deletes a foreign repl
 	);
 });
 
-
-test("failed status persistence cannot release ownership before an in-flight upload settles",async(t)=>{
- const f=fixture(t);const journalFile=path.join(f.walk,"native-walk.json"),heartbeatFile=path.join(f.walk,"checkpoint-heartbeat.json");const journal=JSON.parse(fs.readFileSync(journalFile));journal.state="recording";journal.durationMs=null;fs.writeFileSync(journalFile,JSON.stringify(journal));const heartbeat=JSON.parse(fs.readFileSync(heartbeatFile));heartbeat.captureEnded=false;fs.writeFileSync(heartbeatFile,JSON.stringify(heartbeat));f.start("A","failing-upload");await f.wait("failing-status");await sleep(50);f.start("B","lease");const decision=await f.decide("B");assert.equal(decision.entered,false,"Another process entered while the former owner still had a pending upload");fs.writeFileSync(f.file("release-upload"),"{}");await f.wait("done-A");
+test("failed status persistence cannot release ownership before an in-flight upload settles", async (t) => {
+	const f = fixture(t);
+	const journalFile = path.join(f.walk, "native-walk.json"),
+		heartbeatFile = path.join(f.walk, "checkpoint-heartbeat.json");
+	const journal = JSON.parse(fs.readFileSync(journalFile));
+	journal.state = "recording";
+	journal.durationMs = null;
+	fs.writeFileSync(journalFile, JSON.stringify(journal));
+	const heartbeat = JSON.parse(fs.readFileSync(heartbeatFile));
+	heartbeat.captureEnded = false;
+	fs.writeFileSync(heartbeatFile, JSON.stringify(heartbeat));
+	f.start("A", "failing-upload");
+	await f.wait("failing-status");
+	await sleep(50);
+	f.start("B", "lease");
+	const decision = await f.decide("B");
+	assert.equal(
+		decision.entered,
+		false,
+		"Another process entered while the former owner still had a pending upload",
+	);
+	fs.writeFileSync(f.file("release-upload"), "{}");
+	await f.wait("done-A");
 });

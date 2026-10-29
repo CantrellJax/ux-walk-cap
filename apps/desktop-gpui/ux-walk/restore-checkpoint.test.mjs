@@ -184,7 +184,93 @@ test("restore refuses missing bytes between valid event chunks before issuing a 
 	);
 });
 
-test("identical standalone audio bytes retain distinct source placements and exact repeated references deduplicate",async(t)=>{
- const root=fs.mkdtempSync(path.join(os.tmpdir(),"uxw-audio-placement-"));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));const recordingId="11111111-1111-4111-8111-111111111111",generation="22222222-2222-4222-8222-222222222222";const store=new CheckpointStore(path.join(root,"original"),{recordingId,generation,endpoint:""});const audio=Buffer.alloc(32044);audio.write("RIFF",0);audio.writeUInt32LE(32036,4);audio.write("WAVEfmt ",8);audio.writeUInt32LE(16,16);audio.writeUInt16LE(1,20);audio.writeUInt16LE(1,22);audio.writeUInt32LE(16000,24);audio.writeUInt32LE(32000,28);audio.writeUInt16LE(2,32);audio.writeUInt16LE(16,34);audio.write("data",36);audio.writeUInt32LE(32000,40);
- const first=store.put("microphone",audio,{source:"segment-0:microphone",encoding:"standalone",container:"wav",sourceStartMs:0,sourceEndMs:1000,activeStartMs:0,activeEndMs:1000});const second=store.put("microphone",audio,{source:"segment-0:microphone",encoding:"standalone",container:"wav",sourceStartMs:1000,sourceEndMs:2000,activeStartMs:0,activeEndMs:2000});store.commit([first],{wallMs:1000,activeElapsedMs:1000,paused:false});store.commit([first,second],{wallMs:2000,activeElapsedMs:2000,paused:false});let downloads=0;const transport={request:async(_method,resource,options)=>{if(options?.output){downloads++;fs.writeFileSync(options.output,fs.readFileSync(store.objectPath(resource.split("/").at(-1))));return{};}return{recordingId,writerGeneration:generation,checkpoints:store.descriptors()};}};const destination=path.join(root,"restored");await restoreRecovery(transport,recordingId,destination);const receipt=JSON.parse(fs.readFileSync(path.join(destination,"recovery-ready.json")));assert.equal(downloads,1);assert.equal(receipt.audio.length,2);assert.deepEqual(receipt.audio.map(item=>[item.sourceStartMs,item.sourceEndMs,item.activeStartMs,item.activeEndMs]),[[0,1000,0,1000],[1000,2000,0,2000]]);assert.equal(new Set(receipt.audio.map(item=>item.relative)).size,1);const report=fs.readFileSync(path.join(destination,"report.html"),"utf8");assert.equal((report.match(/<audio controls/g)||[]).length,2);assert.match(report,/0\.000s–1\.000s/);assert.match(report,/1\.000s–2\.000s/);
+test("identical standalone audio bytes retain distinct source placements and exact repeated references deduplicate", async (t) => {
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "uxw-audio-placement-"));
+	t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+	const recordingId = "11111111-1111-4111-8111-111111111111",
+		generation = "22222222-2222-4222-8222-222222222222";
+	const store = new CheckpointStore(path.join(root, "original"), {
+		recordingId,
+		generation,
+		endpoint: "",
+	});
+	const audio = Buffer.alloc(32044);
+	audio.write("RIFF", 0);
+	audio.writeUInt32LE(32036, 4);
+	audio.write("WAVEfmt ", 8);
+	audio.writeUInt32LE(16, 16);
+	audio.writeUInt16LE(1, 20);
+	audio.writeUInt16LE(1, 22);
+	audio.writeUInt32LE(16000, 24);
+	audio.writeUInt32LE(32000, 28);
+	audio.writeUInt16LE(2, 32);
+	audio.writeUInt16LE(16, 34);
+	audio.write("data", 36);
+	audio.writeUInt32LE(32000, 40);
+	const first = store.put("microphone", audio, {
+		source: "segment-0:microphone",
+		encoding: "standalone",
+		container: "wav",
+		sourceStartMs: 0,
+		sourceEndMs: 1000,
+		activeStartMs: 0,
+		activeEndMs: 1000,
+	});
+	const second = store.put("microphone", audio, {
+		source: "segment-0:microphone",
+		encoding: "standalone",
+		container: "wav",
+		sourceStartMs: 1000,
+		sourceEndMs: 2000,
+		activeStartMs: 0,
+		activeEndMs: 2000,
+	});
+	store.commit([first], { wallMs: 1000, activeElapsedMs: 1000, paused: false });
+	store.commit([first, second], {
+		wallMs: 2000,
+		activeElapsedMs: 2000,
+		paused: false,
+	});
+	let downloads = 0;
+	const transport = {
+		request: async (_method, resource, options) => {
+			if (options?.output) {
+				downloads++;
+				fs.writeFileSync(
+					options.output,
+					fs.readFileSync(store.objectPath(resource.split("/").at(-1))),
+				);
+				return {};
+			}
+			return {
+				recordingId,
+				writerGeneration: generation,
+				checkpoints: store.descriptors(),
+			};
+		},
+	};
+	const destination = path.join(root, "restored");
+	await restoreRecovery(transport, recordingId, destination);
+	const receipt = JSON.parse(
+		fs.readFileSync(path.join(destination, "recovery-ready.json")),
+	);
+	assert.equal(downloads, 1);
+	assert.equal(receipt.audio.length, 2);
+	assert.deepEqual(
+		receipt.audio.map((item) => [
+			item.sourceStartMs,
+			item.sourceEndMs,
+			item.activeStartMs,
+			item.activeEndMs,
+		]),
+		[
+			[0, 1000, 0, 1000],
+			[1000, 2000, 0, 2000],
+		],
+	);
+	assert.equal(new Set(receipt.audio.map((item) => item.relative)).size, 1);
+	const report = fs.readFileSync(path.join(destination, "report.html"), "utf8");
+	assert.equal((report.match(/<audio controls/g) || []).length, 2);
+	assert.match(report, /0\.000s–1\.000s/);
+	assert.match(report, /1\.000s–2\.000s/);
 });

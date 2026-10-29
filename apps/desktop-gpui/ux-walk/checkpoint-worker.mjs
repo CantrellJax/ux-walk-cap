@@ -12,11 +12,11 @@ import {
 	MAX_OBJECT_BYTES,
 	readJson,
 	sha256,
-	syncDirectory,
 } from "./checkpoint-store.mjs";
 import { scanFragmentedAudio } from "./fragmented-audio.mjs";
 import { sourceAudioProblem } from "./native-audio.mjs";
 import { RecoveryTransport } from "./recovery-transport.mjs";
+import { acquireWalkLock } from "./walk-lock.mjs";
 
 const local = new URL("./src/config.mjs", import.meta.url);
 const engine = fs.existsSync(local)
@@ -769,31 +769,13 @@ export class CheckpointWorker {
 
 export async function runCheckpointWorker(file, cfg, dependencies = {}) {
 	const directory = path.dirname(fs.realpathSync(file));
-	const lock = path.join(directory, ".checkpoint-worker");
-	try {
-		fs.mkdirSync(lock, { mode: 0o700 });
-	} catch (error) {
-		if (error.code !== "EEXIST") throw error;
-		const owner = readJson(path.join(lock, "owner.json"));
-		let alive = true;
-		try {
-			process.kill(owner.pid, 0);
-		} catch (failure) {
-			if (failure.code === "ESRCH") alive = false;
-			else throw failure;
-		}
-		if (alive)
-			throw new Error("This recording already has a checkpoint worker");
-		fs.unlinkSync(path.join(lock, "owner.json"));
-		fs.rmdirSync(lock);
-		fs.mkdirSync(lock, { mode: 0o700 });
-	}
-	durableJson(path.join(lock, "owner.json"), { pid: process.pid });
+	const lease = await acquireWalkLock(directory, "checkpoint");
+	let worker;
 	try {
 		const initial = readJson(path.join(directory, "checkpoint-heartbeat.json"));
 		const transport = dependencies.transport ?? new RecoveryTransport("");
 		const settings = await transport.status();
-		const worker = new CheckpointWorker(file, cfg, settings, {
+		worker = new CheckpointWorker(file, cfg, settings, {
 			...dependencies,
 			sessionGeneration: initial.generation,
 			transport: dependencies.transport,
@@ -848,7 +830,9 @@ export async function runCheckpointWorker(file, cfg, dependencies = {}) {
 					!worker.uploading &&
 					(terminalAt == null || Date.now() - terminalAt < 150000)
 				)
-					void worker.uploadNext();
+					void worker.uploadNext().catch((error) => {
+						worker.error = String(error.message).slice(0, 500);
+					});
 				const pendingRemote =
 					worker.store.options.backupEnabled &&
 					worker.store.state.remoteSequence < worker.store.state.sequence;
@@ -914,9 +898,17 @@ export async function runCheckpointWorker(file, cfg, dependencies = {}) {
 			await pause(1000);
 		}
 	} finally {
-		fs.unlinkSync(path.join(lock, "owner.json"));
-		fs.rmdirSync(lock);
-		syncDirectory(directory);
+		try {
+			if (worker) {
+				worker.jobs.cancel();
+				worker.uploadDeadlineAt = Date.now();
+				await Promise.allSettled(
+					[worker.jobs.running, worker.uploading].filter(Boolean),
+				);
+			}
+		} finally {
+			await lease.release();
+		}
 	}
 }
 

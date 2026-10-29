@@ -55,12 +55,12 @@ async function fixture(t) {
 	save(file, journal);
 	fs.writeFileSync(
 		path.join(directory, "meet.jsonl"),
-		JSON.stringify({
+		`${JSON.stringify({
 			kind: "caption",
 			t: 3500,
 			name: "Automatic Meet Name",
 			id: "turn",
-		}) + "\n",
+		})}\n`,
 	);
 	const chapter = path.join(directory, "01-walkthrough");
 	fs.mkdirSync(chapter);
@@ -158,7 +158,7 @@ test("ordinary regeneration keeps confirmed attribution over Meet inference and 
 	assert.doesNotMatch(timeline, /Automatic Meet Name/);
 });
 
-for (const change of ["source", "bounds", "transcript"])
+for (const change of ["source", "bounds", "transcript", "chapter"])
 	test(`changed ${change} archives a confirmed mapping instead of applying it to another identity`, async (t) => {
 		const f = await fixture(t);
 		if (change === "source") {
@@ -166,6 +166,11 @@ for (const change of ["source", "bounds", "transcript"])
 			fs.mkdirSync(next);
 			f.journal.sourceProject = next;
 			f.save(f.file, f.journal);
+		} else if (change === "chapter") {
+			const metadata = JSON.parse(fs.readFileSync(f.chapterFile));
+			metadata.n = 42;
+			metadata.name = "Different chapter";
+			f.save(f.chapterFile, metadata);
 		} else if (change === "bounds") {
 			f.journal.durationMs = 2500;
 			f.save(f.file, f.journal);

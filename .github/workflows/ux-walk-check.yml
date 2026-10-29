@@ -59,6 +59,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          components: rustfmt
       - name: Exercise existing journal and library contracts without desktop dependencies
         run: |
           python3 - <<'PY'
@@ -79,6 +81,15 @@ jobs:
           shutil.copyfile(root / 'apps/desktop-gpui/tests/ux_walk_library_contract.rs', out / 'tests/ux_walk_library_contract.rs')
           PY
           cargo test --manifest-path "$RUNNER_TEMP/ux-walk-library-contract/Cargo.toml" --test ux_walk_library_contract -- --test-threads=1
+      - name: Format advisory ownership surfaces
+        run: |
+          rustfmt +1.95.0 --edition 2024 --config skip_children=true apps/desktop-gpui/src/ux_walk_library.rs apps/desktop-gpui/src/ux_walk_window.rs apps/desktop-gpui/tests/ux_walk_library_contract.rs
+          git diff > "$RUNNER_TEMP/library-rustfmt.patch"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: library-rustfmt-corrections
+          path: ${{ runner.temp }}/library-rustfmt.patch
+      - run: git diff --exit-code
   native:
     needs: library-contract
     if: github.repository == 'CantrellJax/ux-walk-cap'
