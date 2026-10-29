@@ -66,7 +66,7 @@ export function wordsToSrt(words, firstVoices = []) {
 
 async function elevenlabs(audio, { key, terms, cfg, log, signal }) {
   const form = new FormData();
-  form.append('file', await fs.openAsBlob(audio, { type: 'audio/mp4' }), path.basename(audio));
+  form.append('file', await fs.openAsBlob(audio, { type: path.extname(audio).toLowerCase() === '.wav' ? 'audio/wav' : 'audio/mp4' }), path.basename(audio));
   form.append('model_id', cfg.elevenlabsModel || 'scribe_v2');
   form.append('diarize', 'true');
   form.append('timestamps_granularity', 'word');
