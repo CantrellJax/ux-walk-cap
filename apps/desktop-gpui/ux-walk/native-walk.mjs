@@ -290,7 +290,11 @@ function writeNativeReport(directory, session, journal, browser) {
 export async function finishNativeWalk(file, cfg, dependencies = {}) {
 	const journal = readJournal(file);
 	const directory = journal.request.directory;
-	const processingLease = await acquireWalkLock(directory, "processing");
+	const processingLease = await acquireWalkLock(directory, "processing", {
+		waitMs: dependencies.reconcileStopTail
+			? (dependencies.reconcileWaitMs ?? 150000)
+			: 0,
+	});
 	const stages = {};
 	let fullLease = null;
 	const progress = (state, error, changes = {}) => {
@@ -302,6 +306,31 @@ export async function finishNativeWalk(file, cfg, dependencies = {}) {
 		});
 	};
 	try {
+		if (dependencies.reconcileStopTail) {
+			let previous;
+			try {
+				previous = JSON.parse(
+					fs.readFileSync(path.join(directory, "processing.json"), "utf8"),
+				);
+			} catch {}
+			if (
+				!previous ||
+				!["ready", "processing"].includes(previous.state) ||
+				(previous.state === "ready" && previous.transcript !== "partial")
+			)
+				return directory;
+			if (
+				!fs.existsSync(path.join(directory, "media/video.mp4")) ||
+				!fs.existsSync(path.join(directory, "media/export.json"))
+			) {
+				progress(
+					"failed",
+					"Transcript chunks are saved; video preparation is incomplete. Prepare the walk again to finish its report.",
+					{ transcript: "partial" },
+				);
+				return directory;
+			}
+		}
 		progress("processing", null, {
 			transcript: "waiting",
 			video: "exporting",
@@ -682,6 +711,19 @@ export async function finishNativeWalk(file, cfg, dependencies = {}) {
 			throw videoResult.reason;
 		}
 		const info = videoResult.value;
+		if (
+			!explicitFull &&
+			!fullCached &&
+			!fs.existsSync(fullReceipt) &&
+			sealedUnsupportedFallback(directory, cfg)
+		) {
+			await processingLease.release();
+			// This lease no longer owns status writes; let the new guarded attempt handle its own errors.
+			return finishNativeWalk(file, cfg, {
+				...dependencies,
+				reconcileStopTail: true,
+			});
+		}
 		const durationMs = Math.min(
 			journal.durationMs,
 			Math.round(info.durationS * 1000),

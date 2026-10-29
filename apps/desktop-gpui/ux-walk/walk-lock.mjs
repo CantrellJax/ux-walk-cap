@@ -66,7 +66,14 @@ async function close(server) {
 	);
 }
 
-export async function acquireWalkLock(directory, scope, { kind } = {}) {
+export async function acquireWalkLock(
+	directory,
+	scope,
+	{ kind, waitMs = 0 } = {},
+) {
+	const deadline =
+		performance.now() +
+		Math.max(0, Math.min(150000, Number.isFinite(waitMs) ? waitMs : 0));
 	const owned = identity(directory, scope);
 	const endpoint = {
 		host: "127.0.0.1",
@@ -86,6 +93,15 @@ export async function acquireWalkLock(directory, scope, { kind } = {}) {
 		server.removeAllListeners("error");
 	} catch (error) {
 		await close(server);
+		if (error.code === "EADDRINUSE" && performance.now() < deadline) {
+			await new Promise((resolve) =>
+				setTimeout(resolve, Math.min(100, deadline - performance.now())),
+			);
+			return acquireWalkLock(directory, scope, {
+				kind,
+				waitMs: Math.max(0, deadline - performance.now()),
+			});
+		}
 		if (error.code === "EADDRINUSE") throw busy(scope);
 		throw new Error(
 			`Walk ownership socket is unavailable (${error.code || "unknown"}); no files were changed`,
