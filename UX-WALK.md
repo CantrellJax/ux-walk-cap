@@ -38,9 +38,13 @@ Progress separates saved journal clocks, event byte cursors, per-source saved au
 
 Use **Recover private backup** in saved notes or Sharing settings, choose an authenticated backup, then a parent folder for a new recovered copy. Restore verifies all object hashes, sizes, source identities and fragment contiguity before issuing a recovery receipt. Recorded absolute paths are replaced with owned paths inside the new folder. An interrupted report can show notes, speech, audio and click/error logs without a finalized MP4; it remains marked interrupted. Partial downloads remain in their separate folder without a ready receipt and never overwrite the original recording.
 
+Restored audio retains every source placement, even when separate intervals contain identical bytes. The receipt and audio controls identify each source time range; a single verified audio file can serve multiple placements. Exact repeated references are deduplicated.
+
 Recovery uses the existing cloud Worker's owner-authenticated `/api/v1/recovery` API and existing R2 bucket. It must be deployed separately with the updated server source before backup will work; there is no deployment during a desktop build. Registration fixes retention at 1–30 days (default seven), and the API denies access after expiry. The existing bucket's 31-day lifecycle eventually deletes objects physically. Owner-authenticated DELETE writes a tombstone before paginated cleanup; repeat while the API returns cleanup pending. Recovery has no public viewer capability, and it does not back up video. Network loss or a computer crash before remote acknowledgement can still lose the unacknowledged tail.
 
 For a retained outbox, `node <bundle>/checkpoint-worker.mjs /absolute/path/native-walk.json` resumes local jobs and private uploads through the bundled `cap-cli` credential bridge. `cap-cli recovery status --json` exposes nonsecret settings; `cap-cli recovery request --server-origin https://your-server --method DELETE --resource /api/v1/recovery/<recording-uuid> --json` deletes a private backup. Never place a credential in these arguments or request files.
+
+Ordinary Reprocess preserves confirmed chapter speaker maps, participant lists and attribution notes only when capture, chapter bounds and transcript provenance still match. Confirmed maps take precedence over Meet inference. Changed source or fresh full transcription archives the old metadata and captions in `speaker-attribution-history/` and marks the report for speaker reconfirmation.
 
 ## Prepare an editable demo
 
@@ -61,6 +65,8 @@ Automatic walk windows require Google Chrome. The walkthrough processor requires
 ## Build and preview
 
 Use the existing Cap GPUI setup and packaging pipeline. Install pinned engine dependencies with `npm ci --ignore-scripts --prefix vendor/ux-walk`, then run `node scripts/bundle-ux-walk.mjs /path/to/Cap\ UX.app` after packaging. The bundle contains Node, the pinned engine and a fork-owned native lifecycle adapter in `Contents/Resources/ux-walk`. No separate UX Walk application is required.
+
+Checkpoint work and full transcription share an OS-held ownership guard; ordinary video/report processing has a separate guard and can overlap live transcription. Guard identity uses the resolved walk directory and filesystem identity, so aliases share ownership. PID files are advisory for current guards; known-live legacy owners still block a mixed-version attempt. Crash metadata is archived, unknown files are retained, and the OS guard is released only after owned metadata cleanup. The loopback-only socket accepts no application protocol; an unrelated port collision fails closed rather than starting a second writer.
 
 The public engine snapshot contains selected source files, license, contract tests and per-file hashes in `SOURCE.json`. Refresh it with `scripts/sync-ux-walk.mjs` from a reviewed canonical revision; do not edit the snapshot directly. The lifecycle adapter is maintained under `apps/desktop-gpui/ux-walk`.
 

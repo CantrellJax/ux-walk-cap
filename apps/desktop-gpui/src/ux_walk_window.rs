@@ -783,14 +783,8 @@ impl Render for WalkWindow {
                 let checkpoint_file = file.clone();
                 let has_checkpoints = folder.join("checkpoints/identity.json").is_file();
                 let retry_disabled = capture_active
-                    || processing
-                    || self.reprocessing.contains(&file)
-                    || self.summary.as_ref().is_some_and(|summary| {
-                        matches!(
-                            summary.status,
-                            crate::ux_walk_library::WalkStatus::OwnerUnknown(_)
-                        )
-                    });
+                    || (!saved_view && processing)
+                    || self.reprocessing.contains(&file);
                 let prompt_file = file.clone();
                 let handoff_file = file.clone();
                 let cmux = crate::ux_walk::load()

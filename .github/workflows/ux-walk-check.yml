@@ -65,7 +65,46 @@ jobs:
           node-version: '22'
       - run: npm ci --ignore-scripts --prefix apps/cloud
       - run: npm run check --prefix apps/cloud
+  library-contract:
+    if: github.repository == 'CantrellJax/ux-walk-cap'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          components: rustfmt
+      - name: Exercise existing journal and library contracts without desktop dependencies
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib, shutil, tomllib
+          root = pathlib.Path.cwd()
+          out = pathlib.Path(os.environ['RUNNER_TEMP']) / 'ux-walk-library-contract'
+          (out / 'src').mkdir(parents=True)
+          (out / 'tests').mkdir()
+          versions = {item['name']: item['version'] for item in tomllib.loads((root / 'Cargo.lock').read_text())['package']}
+          manifest = '[package]\nname = "cap-walk-library-contract"\nversion = "0.0.0"\nedition = "2024"\n\n[dependencies]\n'
+          manifest += 'serde = { version = ' + json.dumps('=' + versions['serde']) + ', features = ["derive"] }\n'
+          manifest += 'serde_json = ' + json.dumps('=' + versions['serde_json']) + '\n'
+          manifest += 'libc = ' + json.dumps('=' + versions['libc']) + '\n'
+          (out / 'Cargo.toml').write_text(manifest)
+          (out / 'src/lib.rs').write_text('')
+          for name in ['ux_walk_library.rs', 'ux_walk_journal.rs']:
+              shutil.copyfile(root / 'apps/desktop-gpui/src' / name, out / 'src' / name)
+          shutil.copyfile(root / 'apps/desktop-gpui/tests/ux_walk_library_contract.rs', out / 'tests/ux_walk_library_contract.rs')
+          PY
+          cargo test --manifest-path "$RUNNER_TEMP/ux-walk-library-contract/Cargo.toml" --test ux_walk_library_contract -- --test-threads=1
+      - name: Format advisory ownership surfaces
+        run: |
+          rustfmt +1.95.0 --edition 2024 --config skip_children=true apps/desktop-gpui/src/ux_walk_library.rs apps/desktop-gpui/src/ux_walk_window.rs apps/desktop-gpui/tests/ux_walk_library_contract.rs
+          git diff > "$RUNNER_TEMP/library-rustfmt.patch"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: library-rustfmt-corrections
+          path: ${{ runner.temp }}/library-rustfmt.patch
+      - run: git diff --exit-code
   native:
+    needs: library-contract
     if: github.repository == 'CantrellJax/ux-walk-cap'
     runs-on: macos-15
     timeout-minutes: 90

@@ -243,7 +243,7 @@ fn dead_processor_is_retryable_without_removing_the_engines_lock() {
 }
 
 #[test]
-fn missing_or_invalid_processor_owner_never_allows_another_run() {
+fn advisory_unknown_processor_metadata_allows_the_exclusive_backend_attempt() {
     let f = Fixture::new();
     let source = f.source("source");
     let file = f.journal("walk", &source, 100);
@@ -253,20 +253,20 @@ fn missing_or_invalid_processor_owner_never_allows_another_run() {
         read_summary(&file).unwrap().status,
         WalkStatus::OwnerUnknown(_)
     ));
-    assert!(ux_walk_library::reprocess_allowed(&file).is_err());
+    assert!(ux_walk_library::reprocess_allowed(&file).is_ok());
     fs::create_dir(folder.join(".processing-lock")).unwrap();
     assert!(matches!(
         read_summary(&file).unwrap().status,
         WalkStatus::OwnerUnknown(_)
     ));
-    assert!(ux_walk_library::reprocess_allowed(&file).is_err());
+    assert!(ux_walk_library::reprocess_allowed(&file).is_ok());
     fs::write(folder.join(".processing-lock/owner.json"), r#"{"pid":0}"#).unwrap();
-    assert!(ux_walk_library::reprocess_allowed(&file).is_err());
+    assert!(ux_walk_library::reprocess_allowed(&file).is_ok());
 }
 
 #[cfg(unix)]
 #[test]
-fn a_live_processor_blocks_reprocessing_even_if_a_stale_report_exists() {
+fn metadata_pid_does_not_replace_the_exclusive_backend_guard() {
     let f = Fixture::new();
     let source = f.source("source");
     let file = f.journal("walk", &source, 100);
@@ -280,7 +280,7 @@ fn a_live_processor_blocks_reprocessing_even_if_a_stale_report_exists() {
     )
     .unwrap();
     assert_eq!(read_summary(&file).unwrap().status, WalkStatus::Processing);
-    assert!(ux_walk_library::reprocess_allowed(&file).is_err());
+    assert!(ux_walk_library::reprocess_allowed(&file).is_ok());
 }
 
 #[test]

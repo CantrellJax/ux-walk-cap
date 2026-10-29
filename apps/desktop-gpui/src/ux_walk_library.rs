@@ -280,7 +280,7 @@ pub fn processing_status(directory: &Path) -> WalkStatus {
         return WalkStatus::Processing;
     }
     if owner == ProcessorOwner::Unknown {
-        return WalkStatus::OwnerUnknown("The existing processor’s ownership could not be verified. Reprocessing is paused to protect this walk.".into());
+        return WalkStatus::OwnerUnknown("The existing processor’s ownership could not be verified. Reprocess will verify exclusive ownership before changing files.".into());
     }
     if file.exists() && state.is_none() {
         return WalkStatus::Failed("The processing status could not be read.".into());
@@ -290,7 +290,7 @@ pub fn processing_status(directory: &Path) -> WalkStatus {
             "The previous processor stopped. Reprocess this walk to continue.".into(),
         ),
         Some("processing") => WalkStatus::OwnerUnknown(
-            "Processing owner information is missing. Reprocessing is paused to protect this walk."
+            "Processing owner information is missing. Reprocess will verify exclusive ownership before changing files."
                 .into(),
         ),
         Some("failed") => WalkStatus::Failed(
@@ -311,15 +311,11 @@ pub fn processing_status(directory: &Path) -> WalkStatus {
 }
 
 pub fn reprocess_allowed(file: &Path) -> Result<(), String> {
-    let (summary, journal) = read_walk(file)?;
+    let (_, journal) = read_walk(file)?;
     if journal.state != "complete" {
         return Err("Only a completed walk can be reprocessed.".into());
     }
-    match summary.status {
-        WalkStatus::Processing => Err("This walk is already being processed.".into()),
-        WalkStatus::OwnerUnknown(error) => Err(error),
-        _ => Ok(()),
-    }
+    Ok(())
 }
 
 pub fn evidence_notice(directory: &Path) -> String {

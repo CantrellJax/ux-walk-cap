@@ -138,6 +138,7 @@ export async function restoreRecovery(transport, recordingId, destination) {
 	const objectsDir = path.join(destination, "recovered-objects");
 	durableMkdir(objectsDir);
 	const seen = new Set();
+	const placements = new Map();
 	const records = [];
 	for (const descriptor of pages)
 		for (const object of descriptor.objects) {
@@ -154,7 +155,26 @@ export async function restoreRecovery(transport, recordingId, destination) {
 				sha256(fs.readFileSync(file)) !== object.sha256
 			)
 				throw new Error("Downloaded recovery object checksum integrity failed");
-			const identity = `${object.kind}:${object.source ?? ""}:${object.byteStart ?? object.activeStartMs}:${object.sha256}`;
+			const placement = JSON.stringify([
+				object.kind,
+				object.source,
+				object.encoding,
+				object.container,
+				object.sourceStartMs,
+				object.sourceEndMs,
+				object.byteStart,
+				object.byteEnd,
+				object.activeStartMs,
+				object.activeEndMs,
+			]);
+			if (
+				["microphone", "systemAudio"].includes(object.kind) &&
+				placements.has(placement) &&
+				placements.get(placement) !== object.sha256
+			)
+				throw new Error("Conflicting recovery audio placement");
+			placements.set(placement, object.sha256);
+			const identity = JSON.stringify([placement, object.sha256]);
 			if (!seen.has(identity)) {
 				records.push({ ...object, file });
 				seen.add(identity);
@@ -200,6 +220,7 @@ export async function restoreRecovery(transport, recordingId, destination) {
 		fs.closeSync(eventFd);
 	}
 	const audio = [];
+	const writtenAudio = new Set();
 	for (const source of new Set(
 		records
 			.filter((object) => ["microphone", "systemAudio"].includes(object.kind))
@@ -216,7 +237,7 @@ export async function restoreRecovery(transport, recordingId, destination) {
 					(left.sourceStartMs ?? left.activeStartMs) -
 					(right.sourceStartMs ?? right.activeStartMs),
 			);
-		const safeSource = sha256(Buffer.from(source)).slice(0, 24);
+		const safeSource = sha256(Buffer.from(source));
 		const init = records.find(
 			(object) =>
 				object.source === source &&
@@ -248,15 +269,36 @@ export async function restoreRecovery(transport, recordingId, destination) {
 			} finally {
 				fs.closeSync(fd);
 			}
-			audio.push({ source, relative });
+			audio.push({
+				source,
+				relative,
+				sourceStartMs: fragmentParts[0].sourceStartMs,
+				sourceEndMs: fragmentParts.at(-1).sourceEndMs,
+				activeStartMs: Math.min(
+					...fragmentParts.map((part) => part.activeStartMs),
+				),
+				activeEndMs: Math.max(...fragmentParts.map((part) => part.activeEndMs)),
+				byteStart: fragmentParts[0].byteStart,
+				byteEnd: fragmentParts.at(-1).byteEnd,
+			});
 		}
 		for (const part of parts.filter((part) => part.encoding === "standalone")) {
-			const relative = `recovered-${safeSource}-${part.sha256.slice(0, 12)}.${part.container === "wav" ? "wav" : "m4a"}`;
-			durableWrite(
-				path.join(destination, relative),
-				fs.readFileSync(part.file),
-			);
-			audio.push({ source, relative });
+			const relative = `recovered-${part.sha256}.${part.container === "wav" ? "wav" : "m4a"}`;
+			if (!writtenAudio.has(relative)) {
+				durableWrite(
+					path.join(destination, relative),
+					fs.readFileSync(part.file),
+				);
+				writtenAudio.add(relative);
+			}
+			audio.push({
+				source,
+				relative,
+				sourceStartMs: part.sourceStartMs,
+				sourceEndMs: part.sourceEndMs,
+				activeStartMs: part.activeStartMs,
+				activeEndMs: part.activeEndMs,
+			});
 		}
 	}
 	const sourceIdentity =
@@ -356,7 +398,7 @@ export async function restoreRecovery(transport, recordingId, destination) {
 		.join("");
 	durableWrite(
 		path.join(destination, "report.html"),
-		`<!doctype html><meta charset="utf-8"><title>Recovered walk evidence</title><h1>${escape(journal.request.topic)}</h1><p>Interrupted recording. Critical evidence was recovered without a finalized video. Audio and transcript timestamps are qualified by source; global alignment may be incomplete.</p><h2>Notes</h2><ul>${notes}</ul><h2>Audio</h2>${audio.map((item) => `<p>${escape(item.source)}</p><audio controls src="${item.relative}"></audio>`).join("")}<h2>Speech</h2><p>Speaker labels may change between chunks.</p><ul>${speech}</ul><h2>Meet caption evidence</h2><p>Names and caption timing are unconfirmed. Audio remains the speech source.</p><ul>${meetHtml}</ul><p><a href="browser-evidence.jsonl">Click, error and meeting evidence</a> · <a href="meet.jsonl">Projected Meet captions</a> · <a href="transcript-sources.json">Transcript source data</a></p>`,
+		`<!doctype html><meta charset="utf-8"><title>Recovered walk evidence</title><h1>${escape(journal.request.topic)}</h1><p>Interrupted recording. Critical evidence was recovered without a finalized video. Audio and transcript timestamps are qualified by source; global alignment may be incomplete.</p><h2>Notes</h2><ul>${notes}</ul><h2>Audio</h2>${audio.map((item) => `<p>${escape(item.source)} · ${(item.sourceStartMs / 1000).toFixed(3)}s–${(item.sourceEndMs / 1000).toFixed(3)}s (source clock)</p><audio controls src="${item.relative}"></audio>`).join("")}<h2>Speech</h2><p>Speaker labels may change between chunks.</p><ul>${speech}</ul><h2>Meet caption evidence</h2><p>Names and caption timing are unconfirmed. Audio remains the speech source.</p><ul>${meetHtml}</ul><p><a href="browser-evidence.jsonl">Click, error and meeting evidence</a> · <a href="meet.jsonl">Projected Meet captions</a> · <a href="transcript-sources.json">Transcript source data</a></p>`,
 	);
 	durableJson(path.join(destination, "recovery-ready.json"), {
 		recordingId,
@@ -364,7 +406,8 @@ export async function restoreRecovery(transport, recordingId, destination) {
 		checkpointSequence: previous,
 		clockThroughMs: active,
 		interrupted: true,
-		verifiedObjects: seen.size,
+		verifiedObjects: new Set(records.map((object) => object.sha256)).size,
+		verifiedReferences: seen.size,
 		audio,
 	});
 	syncDirectory(destination);

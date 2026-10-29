@@ -74,6 +74,8 @@ export async function bundleUxWalk(app) {
 		"native-walk.mjs",
 		"native-audio.mjs",
 		"checkpoint-store.mjs",
+		"walk-lock.mjs",
+		"chapter-attribution.mjs",
 		"checkpoint-jobs.mjs",
 		"checkpoint-worker.mjs",
 		"checkpoint-transcript.mjs",
