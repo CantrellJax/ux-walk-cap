@@ -72,6 +72,13 @@ export async function bundleUxWalk(app) {
 	for (const file of [
 		"native-walk.mjs",
 		"native-audio.mjs",
+		"checkpoint-store.mjs",
+		"checkpoint-jobs.mjs",
+		"checkpoint-worker.mjs",
+		"checkpoint-transcript.mjs",
+		"fragmented-audio.mjs",
+		"recovery-transport.mjs",
+		"restore-checkpoint.mjs",
 		"native-browser.mjs",
 		"browser-evidence.mjs",
 	]) {

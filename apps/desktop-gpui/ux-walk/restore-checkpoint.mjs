@@ -61,7 +61,10 @@ export async function restoreRecovery(transport, recordingId, destination) {
 			descriptor.previousSequence !== previous ||
 			!Number.isSafeInteger(descriptor.clock?.activeElapsedMs) ||
 			descriptor.clock.activeElapsedMs < active ||
-			!Array.isArray(descriptor.objects)
+			!Array.isArray(descriptor.objects) ||
+			!Number.isSafeInteger(descriptor.clock.wallMs) ||
+			descriptor.clock.wallMs < 0 ||
+			typeof descriptor.clock.paused !== "boolean"
 		)
 			throw new Error(
 				"Recovery checkpoint sequence, clock or identity is invalid",
@@ -94,6 +97,26 @@ export async function restoreRecovery(transport, recordingId, destination) {
 			)
 				throw new Error("Recovery source identity is invalid");
 			if (
+				["microphone", "systemAudio", "transcriptWords"].includes(
+					object.kind,
+				) &&
+				(!Number.isFinite(object.sourceStartMs) ||
+					!Number.isFinite(object.sourceEndMs) ||
+					object.sourceStartMs < 0 ||
+					object.sourceEndMs < object.sourceStartMs)
+			)
+				throw new Error("Recovery source presentation range is invalid");
+			if (
+				["microphone", "systemAudio"].includes(object.kind) &&
+				object.encoding !== "standalone" &&
+				(!Number.isSafeInteger(object.headerSize) ||
+					object.headerSize < 0 ||
+					object.headerSize > object.size ||
+					!/^[a-f0-9]{64}$/.test(object.initHash) ||
+					object.byteStart === undefined)
+			)
+				throw new Error("Recovery fragment header or byte range is invalid");
+			if (
 				object.byteStart !== undefined &&
 				(!Number.isSafeInteger(object.byteStart) ||
 					!Number.isSafeInteger(object.byteEnd) ||
@@ -101,7 +124,8 @@ export async function restoreRecovery(transport, recordingId, destination) {
 					object.byteEnd <= object.byteStart ||
 					(["microphone", "systemAudio"].includes(object.kind) &&
 						object.encoding !== "standalone" &&
-						object.byteEnd - object.byteStart !== object.size))
+						object.byteEnd - object.byteStart + (object.headerSize ?? 0) !==
+							object.size))
 			)
 				throw new Error("Recovery source byte range is invalid");
 		}
@@ -142,7 +166,10 @@ export async function restoreRecovery(transport, recordingId, destination) {
 			if (object.kind === "journal")
 				savedJournal = JSON.parse(fs.readFileSync(object.file, "utf8"));
 			if (object.kind === "clock")
-				clockData = JSON.parse(fs.readFileSync(object.file, "utf8"));
+				clockData = {
+					...clockData,
+					...JSON.parse(fs.readFileSync(object.file, "utf8")),
+				};
 			if (object.kind === "transcriptWords")
 				words.push(JSON.parse(fs.readFileSync(object.file, "utf8")));
 			if (object.kind === "events") {
@@ -184,8 +211,9 @@ export async function restoreRecovery(transport, recordingId, destination) {
 		const fragmentParts = parts.filter(
 			(part) => part.encoding !== "standalone",
 		);
-		if (fragmentParts.length && init) {
+		if (fragmentParts.length) {
 			const relative = `recovered-${safeSource}.m4a`;
+			if (!init) throw new Error("Recovery audio initialization is missing");
 			const fd = fs.openSync(path.join(destination, relative), "wx", 0o600);
 			try {
 				fs.writeFileSync(fd, fs.readFileSync(init.file));
@@ -193,7 +221,13 @@ export async function restoreRecovery(transport, recordingId, destination) {
 				for (const part of fragmentParts) {
 					if (end != null && part.byteStart !== end)
 						throw new Error("Recovery audio fragments are not contiguous");
-					fs.writeFileSync(fd, fs.readFileSync(part.file));
+					const bytes = fs.readFileSync(part.file);
+					if (
+						part.initHash !== init.sha256 ||
+						sha256(bytes.subarray(0, part.headerSize)) !== init.sha256
+					)
+						throw new Error("Recovery audio initialization identity changed");
+					fs.writeFileSync(fd, bytes.subarray(part.headerSize));
 					end = part.byteEnd;
 				}
 				fs.fsyncSync(fd);
@@ -203,7 +237,7 @@ export async function restoreRecovery(transport, recordingId, destination) {
 			audio.push({ source, relative });
 		}
 		for (const part of parts.filter((part) => part.encoding === "standalone")) {
-			const relative = `recovered-${safeSource}-${part.sha256.slice(0, 12)}.m4a`;
+			const relative = `recovered-${safeSource}-${part.sha256.slice(0, 12)}.${part.container === "wav" ? "wav" : "m4a"}`;
 			durableWrite(
 				path.join(destination, relative),
 				fs.readFileSync(part.file),
@@ -244,7 +278,12 @@ export async function restoreRecovery(transport, recordingId, destination) {
 		chunks: words,
 		speakerIdentity: "Source and chunk labels are provisional across requests",
 	});
-	const notes = journal.events
+	const notes = [
+		...journal.events,
+		...(clockData.noteDraft
+			? [{ text: `Unsubmitted note draft: ${clockData.noteDraft}` }]
+			: []),
+	]
 		.map((event) => `<li>${escape(event.text)}</li>`)
 		.join("");
 	const speech = words

@@ -5,7 +5,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { projectBrowserEvidence, safeBrowserUrl } from "./browser-evidence.mjs";
+import { reuseCheckpointTranscript } from "./checkpoint-transcript.mjs";
 import { clipNativeAudio, prepareNativeAudio } from "./native-audio.mjs";
+import { RecoveryTransport } from "./recovery-transport.mjs";
+import { restoreRecovery } from "./restore-checkpoint.mjs";
 
 const local = new URL("./src/cap.mjs", import.meta.url);
 const engine = fs.existsSync(local)
@@ -407,9 +410,24 @@ export async function finishNativeWalk(file, cfg, dependencies = {}) {
 		};
 		const earlyRows = chapters(journal.durationMs);
 		const earlyResults = new Map();
+		let liveCacheHandled = false;
 		const audio = (async () => {
 			if (cfg.transcriber === "none") {
 				progress("processing", null, { transcript: "disabled" });
+				return;
+			}
+			const cached = await reuseCheckpointTranscript(
+				directory,
+				earlyRows,
+				journal.startedAtMs,
+			);
+			if (cached.handled) {
+				liveCacheHandled = true;
+				for (const [name, summary] of cached.results)
+					earlyResults.set(name, summary);
+				progress("processing", null, {
+					transcript: cached.error ? "partial" : "saved live jobs",
+				});
 				return;
 			}
 			const source = await (dependencies.prepareAudio ?? prepareNativeAudio)(
@@ -511,6 +529,15 @@ export async function finishNativeWalk(file, cfg, dependencies = {}) {
 			Math.round(info.durationS * 1000),
 		);
 		const rows = chapters(durationMs);
+		if (liveCacheHandled) {
+			const cached = await reuseCheckpointTranscript(
+				directory,
+				rows,
+				journal.startedAtMs,
+			);
+			for (const [name, summary] of cached.results)
+				earlyResults.set(name, summary);
+		}
 		for (const row of rows) {
 			const chapterDir = path.join(directory, row.dir);
 			const startS = (row.startMs - journal.startedAtMs) / 1000;
@@ -538,9 +565,12 @@ export async function finishNativeWalk(file, cfg, dependencies = {}) {
 				const early = earlyResults.get(row.dir);
 				const summary = await processChapter(
 					chapterDir,
-					early?.transcriptError ? { ...cfg, transcriber: "none" } : cfg,
+					liveCacheHandled || early?.transcriptError
+						? { ...cfg, transcriber: "none" }
+						: cfg,
 					{
 						brief: cfg.brief === true && !early?.transcriptError,
+						...(liveCacheHandled ? { speakers: [] } : {}),
 						log: () => {},
 					},
 				);
@@ -685,6 +715,36 @@ if (isMainModule()) {
 		else if (command === "process") {
 			const { loadConfig } = await import(new URL("config.mjs", engine));
 			await finishNativeWalk(file, loadConfig());
+		} else if (command === "recovery-list") {
+			const initial = new RecoveryTransport("");
+			const settings = await initial.status();
+			const transport = new RecoveryTransport(settings.server);
+			const recordings = [];
+			let cursor;
+			do {
+				const page = await transport.request(
+					"GET",
+					`/api/v1/recovery${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,
+				);
+				recordings.push(...page.recordings);
+				cursor = page.cursor;
+				if (recordings.length > 100000)
+					throw new Error("Recovery list exceeds supported limit");
+			} while (cursor);
+			console.log(JSON.stringify({ server: settings.server, recordings }));
+		} else if (command === "recovery-restore") {
+			const request = JSON.parse(fs.readFileSync(file, "utf8"));
+			console.log(
+				await restoreRecovery(
+					new RecoveryTransport(request.origin),
+					request.recordingId,
+					request.destination,
+				),
+			);
+		} else if (command === "checkpoint-resume") {
+			const { loadConfig } = await import(new URL("config.mjs", engine));
+			const { runCheckpointWorker } = await import("./checkpoint-worker.mjs");
+			await runCheckpointWorker(file, loadConfig());
 		} else if (command === "prepare-edit") {
 			const { prepareCapEdit } = await import(new URL("cap.mjs", engine));
 			console.log(JSON.stringify(prepareCapEdit(snapshotNativeWalk(file))));

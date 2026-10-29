@@ -3,29 +3,50 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { CheckpointStore, durableJson } from "./checkpoint-store.mjs";
 import { CheckpointJobs } from "./checkpoint-jobs.mjs";
+import { CheckpointStore, durableJson } from "./checkpoint-store.mjs";
 
 test("successful silent jobs complete once and ambiguous submissions require explicit retry", async (t) => {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "ux-walk-jobs-"));
 	t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-	const store = new CheckpointStore(root, { recordingId: "11111111-1111-4111-8111-111111111111", generation: "22222222-2222-4222-8222-222222222222", endpoint: "" });
+	const store = new CheckpointStore(root, {
+		recordingId: "11111111-1111-4111-8111-111111111111",
+		generation: "22222222-2222-4222-8222-222222222222",
+		endpoint: "",
+	});
 	let calls = 0;
-	const jobs = new CheckpointJobs(store, { transcriber: "elevenlabs" }, { words: async () => { calls++; return []; }, materialize: async () => "synthetic.wav" });
+	const jobs = new CheckpointJobs(
+		store,
+		{ transcriber: "elevenlabs" },
+		{
+			words: async () => {
+				calls++;
+				return [];
+			},
+			materialize: async () => "synthetic.wav",
+		},
+	);
 	const job = jobs.prepare("segment-0:microphone", [], 0, 300000);
 	await jobs.runNext();
 	await jobs.runNext();
 	assert.equal(calls, 1);
 	assert.equal(jobs.read(job.jobId).state, "complete");
 	const next = jobs.prepare("segment-0:microphone", [], 300000, 600000);
-	jobs.words = async () => { calls++; throw new Error("response lost"); };
+	jobs.words = async () => {
+		calls++;
+		throw new Error("response lost");
+	};
 	await jobs.runNext();
 	await jobs.runNext();
 	assert.equal(calls, 2);
 	assert.equal(jobs.read(next.jobId).state, "ambiguous");
 	const lost = jobs.prepare("segment-0:microphone", [], 600000, 900000);
 	durableJson(jobs.jobPath(lost.jobId), { ...lost, state: "submitted" });
-	const resumed = new CheckpointJobs(store, { transcriber: "elevenlabs" }, { words: jobs.words, materialize: jobs.materialize });
+	const resumed = new CheckpointJobs(
+		store,
+		{ transcriber: "elevenlabs" },
+		{ words: jobs.words, materialize: jobs.materialize },
+	);
 	await resumed.runNext();
 	assert.equal(calls, 2);
 	assert.equal(resumed.read(lost.jobId).state, "ambiguous");

@@ -88,6 +88,7 @@ export function completeJsonlPrefix(file, start = 0, limit = MAX_OBJECT_BYTES) {
 function validClock(clock) {
 	return (
 		Number.isSafeInteger(clock?.wallMs) &&
+		clock.wallMs >= 0 &&
 		Number.isSafeInteger(clock.activeElapsedMs) &&
 		clock.activeElapsedMs >= 0 &&
 		typeof clock.paused === "boolean"
@@ -166,7 +167,7 @@ export class CheckpointStore {
 		if (!fs.existsSync(file)) durableWrite(file, bytes);
 		if (sha256(fs.readFileSync(file)) !== hash)
 			throw new Error("Checkpoint object integrity checksum failed");
-		return { kind, sha256: hash, size: bytes.length, ...range };
+		return { ...range, kind, sha256: hash, size: bytes.length };
 	}
 	verify(object) {
 		if (
@@ -176,7 +177,13 @@ export class CheckpointStore {
 			object.size > MAX_OBJECT_BYTES
 		)
 			throw new Error("Invalid checkpoint object integrity metadata");
-		const bytes = fs.readFileSync(this.objectPath(object.sha256));
+		const file = this.objectPath(object.sha256);
+		if (
+			fs.lstatSync(file).isSymbolicLink() ||
+			fs.statSync(file).size !== object.size
+		)
+			throw new Error("Checkpoint object integrity size changed");
+		const bytes = fs.readFileSync(file);
 		if (bytes.length !== object.size || sha256(bytes) !== object.sha256)
 			throw new Error("Checkpoint object integrity checksum failed");
 		return bytes;
