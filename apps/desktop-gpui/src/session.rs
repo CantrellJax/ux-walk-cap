@@ -986,6 +986,13 @@ impl RecordingSession {
                         _ => None,
                     });
                     if let Err(error) = crate::ux_walk_browser::begin(&journal, window_id) {
+                        if error.starts_with("Companion ownership conflict:") {
+                            self.error = Some(error);
+                            self.pipeline_failed = true;
+                            self.walk = Some(journal);
+                            self.stop(cx);
+                            return;
+                        }
                         self.walk_notice = format!(
                             "Recording and notes are saving. Browser evidence is unavailable: {error}"
                         );

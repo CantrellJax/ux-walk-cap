@@ -32,6 +32,23 @@ export const processAlive = (pid) => {
 		return false;
 	}
 };
+export function assertCompanionAvailable(configDir) {
+	for (const name of ["companion-session.json", "active.json"]) {
+		let owner;
+		try {
+			owner = JSON.parse(fs.readFileSync(path.join(configDir, name)));
+		} catch (error) {
+			if (error.code === "ENOENT") continue;
+			throw error;
+		}
+		need(
+			!processAlive(owner?.pid) ||
+				(name === "companion-session.json" &&
+					!processAlive(owner?.recorderPid)),
+			"Companion ownership conflict: another recording is active. Stop it before starting a new recording.",
+		);
+	}
+}
 export function durableCompanionJson(file, value) {
 	fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
 	const temporary = `${file}.${process.pid}.tmp`,
@@ -363,6 +380,7 @@ export async function startCompanionServer({
 }) {
 	const descriptorFile = path.join(configDir, "companion-session.json");
 	fs.mkdirSync(configDir, { recursive: true, mode: 0o700 });
+	assertCompanionAvailable(configDir);
 	const token = randomBytes(32).toString("hex");
 	const port =
 		20000 +
@@ -463,7 +481,7 @@ export async function startCompanionServer({
 		server.close();
 		if (error.code === "EADDRINUSE")
 			throw new Error(
-				"An active companion owner or another local application already holds this configuration's evidence port.",
+				"Companion ownership conflict: an active owner or another local application holds this configuration's evidence port.",
 			);
 		throw error;
 	}

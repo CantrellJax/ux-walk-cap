@@ -22,7 +22,7 @@ import { emit, readCommands, createIpcAsker } from './ipc.mjs';
 import { transcriberProblem } from './transcribe.mjs';
 import { isRisky, label, writeKind, writeLabel } from './timeline.mjs';
 import { chapterName, handoffLine, pad, createSessionDir } from './naming.mjs';
-import { CompanionSession, durableCompanionJson, startCompanionServer } from './companion.mjs';
+import { assertCompanionAvailable, CompanionSession, durableCompanionJson, startCompanionServer } from './companion.mjs';
 
 const tty = process.stdout.isTTY;
 const paint = (code, s) => (tty ? `\x1b[${code}m${s}\x1b[0m` : s);
@@ -79,6 +79,7 @@ export async function record(cfg, { topic, url, app, title, windowId, display, b
   if (windowId != null && !noBrowser) throw new Error('--window-id requires --no-browser so telemetry cannot refer to a different browser');
   if (windowId != null && (!/^\d+$/.test(String(windowId)) || Number(windowId) <= 0)) throw new Error('--window-id must be a positive numeric window ID');
   fs.mkdirSync(CONFIG_DIR, { recursive: true });
+  assertCompanionAvailable(CONFIG_DIR);
   const interactive = !ipc && process.stdin.isTTY && process.stdout.isTTY;
   // Before recording: who is talking, and which glossaries apply (when there is a choice).
   let speakers = String(cfg.speakers || '').split(',').map((x) => x.trim()).filter(Boolean);
@@ -104,10 +105,7 @@ export async function record(cfg, { topic, url, app, title, windowId, display, b
   let sendState = () => {};
   const saveSession = () => { fs.writeFileSync(path.join(dir, 'session.json'), JSON.stringify(session, null, 2)); sendState(); };
   saveSession();
-  // The Meet extension's host files captions into this walk only while this file names a live recorder.
   const activeFile = path.join(CONFIG_DIR, 'active.json');
-  fs.writeFileSync(activeFile, JSON.stringify({ dir, pid: process.pid, startedAt: session.startedAt }));
-  process.on('exit', () => { try { if (JSON.parse(fs.readFileSync(activeFile, 'utf8')).pid === process.pid) fs.unlinkSync(activeFile); } catch {} });
   const log = fs.createWriteStream(path.join(dir, 'actions.jsonl'), { flags: 'a' });
   // Say now, not after the walk, when the chapters would get no transcript; the walk still records.
   const noTranscript = cfg.evidenceOnly ? null : transcriberProblem(cfg);
@@ -192,7 +190,17 @@ export async function record(cfg, { topic, url, app, title, windowId, display, b
     flush: async () => { await new Promise(resolve => log.write('', resolve)); fs.fsyncSync(log.fd); },
     persist: async () => durableCompanionJson(path.join(dir, 'companion.json'), companionMetadata),
   });
-  const companionServer = await startCompanionServer({ configDir: CONFIG_DIR, session: companion });
+  let companionServer;
+  try {
+    companionServer = await startCompanionServer({ configDir: CONFIG_DIR, session: companion });
+    durableCompanionJson(activeFile, { dir, pid: process.pid, startedAt: session.startedAt });
+  } catch (error) {
+    await companionServer?.close();
+    await browser?.close().catch(() => {});
+    await new Promise(resolve => log.end(resolve));
+    died(error);
+  }
+  process.on('exit', () => { try { const active = JSON.parse(fs.readFileSync(activeFile, 'utf8')); if (active.pid === process.pid && active.dir === dir && active.startedAt === session.startedAt) fs.unlinkSync(activeFile); } catch {} });
   process.on('exit', companionServer.cleanup);
   setTimeout(() => {
     if (finishing || !companionMetadata.meet?.participantCount || companionMetadata.meet.lastCaptionAt) return;
