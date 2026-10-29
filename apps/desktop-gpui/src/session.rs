@@ -1065,82 +1065,92 @@ impl RecordingSession {
         let generation = self.recording_generation;
         self.walk_note_draft.clear();
         self.walk_checkpoint_notice = "Starting evidence checkpoints…".into();
-        self.checkpoint_monitor = Some(cx.spawn(async move |this, cx| {
-            let mut started = false;
-            loop {
-                let snapshot = this
-                    .update(cx, |this, _| {
-                        if this.recording_generation != generation
-                            || this.walk.as_ref().is_none_or(|walk| walk.file() != file)
-                        {
-                            return None;
-                        }
-                        let journal = this.walk.as_ref().unwrap().clone();
-                        let elapsed = this.elapsed().as_millis() as u64;
-                        let paused =
-                            this.is_paused() || this.phase != (Phase::Recording { paused: false });
-                        let microphone = this
-                            .last_config
-                            .as_ref()
-                            .is_some_and(|config| config.microphone.is_some());
-                        let system_audio = this
-                            .last_config
-                            .as_ref()
-                            .is_some_and(|config| config.system_audio);
-                        Some((
+        self.checkpoint_monitor =
+            Some(
+                cx.spawn(async move |this, cx| {
+                    let mut started = false;
+                    loop {
+                        let snapshot = this
+                            .update(cx, |this, _| {
+                                if this.recording_generation != generation
+                                    || this.walk.as_ref().is_none_or(|walk| walk.file() != file)
+                                {
+                                    return None;
+                                }
+                                let journal = this.walk.as_ref().unwrap().clone();
+                                let elapsed = this.elapsed().as_millis() as u64;
+                                let paused = this.is_paused()
+                                    || this.phase != (Phase::Recording { paused: false });
+                                let microphone = this
+                                    .last_config
+                                    .as_ref()
+                                    .is_some_and(|config| config.microphone.is_some());
+                                let system_audio = this
+                                    .last_config
+                                    .as_ref()
+                                    .is_some_and(|config| config.system_audio);
+                                Some((
+                                    journal,
+                                    elapsed,
+                                    paused,
+                                    this.walk_note_draft.clone(),
+                                    microphone,
+                                    system_audio,
+                                    this.phase == Phase::Idle,
+                                ))
+                            })
+                            .ok()
+                            .flatten();
+                        let Some((
                             journal,
                             elapsed,
                             paused,
-                            this.walk_note_draft.clone(),
-                            microphone,
-                            system_audio,
-                            this.phase == Phase::Idle,
-                        ))
-                    })
-                    .ok()
-                    .flatten();
-                let Some((journal, elapsed, paused, draft, microphone, system_audio, terminal)) =
-                    snapshot
-                else {
-                    return;
-                };
-                let status = cx
-                    .background_executor()
-                    .spawn(async move {
-                        crate::ux_walk_checkpoints::heartbeat(
-                            &journal,
-                            generation,
-                            elapsed,
-                            paused,
-                            &draft,
+                            draft,
                             microphone,
                             system_audio,
                             terminal,
-                        )?;
-                        if !started {
-                            crate::ux_walk_checkpoints::start(&journal)?;
-                        }
-                        Ok::<String, String>(crate::ux_walk_checkpoints::notice(
-                            &journal.request.directory,
-                        ))
-                    })
-                    .await;
-                started = status.is_ok();
-                let _ = this.update(cx, |this, cx| {
-                    if this.recording_generation != generation {
-                        return;
-                    }
-                    this.walk_checkpoint_notice = status.unwrap_or_else(|error| {
+                        )) = snapshot
+                        else {
+                            return;
+                        };
+                        let status = cx
+                            .background_executor()
+                            .spawn(async move {
+                                crate::ux_walk_checkpoints::heartbeat(
+                                    &journal,
+                                    generation,
+                                    elapsed,
+                                    paused,
+                                    &draft,
+                                    microphone,
+                                    system_audio,
+                                    terminal,
+                                )?;
+                                if !started {
+                                    crate::ux_walk_checkpoints::start(&journal)?;
+                                }
+                                Ok::<String, String>(crate::ux_walk_checkpoints::notice(
+                                    &journal.request.directory,
+                                ))
+                            })
+                            .await;
+                        started = status.is_ok();
+                        let _ = this.update(cx, |this, cx| {
+                            if this.recording_generation != generation {
+                                return;
+                            }
+                            this.walk_checkpoint_notice = status.unwrap_or_else(|error| {
                         format!("Checkpoint saving needs attention: {error}. Recording continues.")
                     });
-                    cx.notify();
-                });
-                if terminal {
-                    return;
-                }
-                cx.background_executor().timer(Duration::from_secs(1)).await;
-            }
-        }));
+                            cx.notify();
+                        });
+                        if terminal {
+                            return;
+                        }
+                        cx.background_executor().timer(Duration::from_secs(1)).await;
+                    }
+                }),
+            );
     }
 
     fn monitor_storage(&mut self, project_dir: std::path::PathBuf, cx: &mut Context<Self>) {

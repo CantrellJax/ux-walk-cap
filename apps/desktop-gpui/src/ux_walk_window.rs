@@ -487,7 +487,14 @@ impl WalkWindow {
                 .background_executor()
                 .spawn(async move {
                     crate::ux_walk_library::reprocess_allowed(&file)?;
-                    crate::ux_walk::run_engine(if full_transcription { "process-full-transcript" } else { "process" }, &file)
+                    crate::ux_walk::run_engine(
+                        if full_transcription {
+                            "process-full-transcript"
+                        } else {
+                            "process"
+                        },
+                        &file,
+                    )
                 })
                 .await;
             this.update_in(cx, |this, window, cx| {
@@ -876,7 +883,31 @@ impl Render for WalkWindow {
                                 )),
                             )
                         })
-                        .when(saved_view && walk.state == "complete" && has_checkpoints, |this| this.child(ui::Button::plain(&theme, "walk-full-transcript", ui::ButtonVariant::Gray, ui::ButtonSize::Sm).label("Transcribe full audio again (provider charges)").disabled(retry_disabled).on_click(cx.listener(move |this, _, window, cx| this.reprocess_saved(full_retry.clone(), true, window, cx)))))
+                        .when(
+                            saved_view && walk.state == "complete" && has_checkpoints,
+                            |this| {
+                                this.child(
+                                    ui::Button::plain(
+                                        &theme,
+                                        "walk-full-transcript",
+                                        ui::ButtonVariant::Gray,
+                                        ui::ButtonSize::Sm,
+                                    )
+                                    .label("Transcribe full audio again (provider charges)")
+                                    .disabled(retry_disabled)
+                                    .on_click(cx.listener(
+                                        move |this, _, window, cx| {
+                                            this.reprocess_saved(
+                                                full_retry.clone(),
+                                                true,
+                                                window,
+                                                cx,
+                                            )
+                                        },
+                                    )),
+                                )
+                            },
+                        )
                         .when(saved_view && walk.state == "complete", |this| {
                             this.child(
                                 ui::Button::plain(
