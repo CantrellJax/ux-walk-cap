@@ -144,3 +144,30 @@ test("edited timelines and muted microphone use the rendered-audio fallback", as
 		);
 	}
 });
+
+test("present clip configuration defaults omitted audio offsets to zero", async (t) => {
+	const f = fixture(t);
+	delete f.segments[0].mic;
+	f.segments[0].mic = { path: "opening.m4a", start_time: 0 };
+	f.segments[0].camera = { path: "display.mp4", start_time: 0.2 };
+	f.config.clips[0].offsets = {};
+	execFileSync("ffmpeg", [
+		"-v",
+		"error",
+		"-f",
+		"lavfi",
+		"-i",
+		"sine=frequency=440:duration=0.1",
+		"-af",
+		"apad,atrim=duration=1",
+		"-c:a",
+		"aac",
+		path.join(f.project, "opening.m4a"),
+	]);
+	f.save();
+	const result = await prepareNativeAudio(f.project, f.directory);
+	assert.ok(
+		rms(result.path, 0.02) > 0.01,
+		"opening speech must not be trimmed by an omitted offset field",
+	);
+});

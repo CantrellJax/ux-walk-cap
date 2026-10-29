@@ -601,3 +601,90 @@ test("a shorter final export bounds chapter captions and keeps the full source t
 		/Outside/,
 	);
 });
+
+test("early provider rejection stays visible in final summary and index without a second upload or brief", async (t) => {
+	const f = fixture(t);
+	f.journal.durationMs = 1000;
+	f.journal.events = [];
+	f.save();
+	const media = spawnSync(
+		"ffmpeg",
+		[
+			"-v",
+			"error",
+			"-y",
+			"-f",
+			"lavfi",
+			"-i",
+			"color=size=32x32:rate=10:duration=1",
+			"-f",
+			"lavfi",
+			"-i",
+			"sine=frequency=440:duration=1",
+			"-c:v",
+			"libx264",
+			"-threads",
+			"1",
+			"-c:a",
+			"aac",
+			"-shortest",
+			path.join(f.source, "source.mp4"),
+		],
+		{ encoding: "utf8" },
+	);
+	assert.equal(media.status, 0, media.stderr);
+	fs.writeFileSync(
+		path.join(f.source, "recording-meta.json"),
+		JSON.stringify({
+			status: { status: "Complete" },
+			segments: [
+				{
+					display: { path: "source.mp4", start_time: 0 },
+					mic: { path: "source.mp4", start_time: 0 },
+				},
+			],
+		}),
+	);
+	const old = process.env.ELEVENLABS_API_KEY;
+	process.env.ELEVENLABS_API_KEY = "synthetic-test-key";
+	t.after(() => {
+		if (old === undefined) delete process.env.ELEVENLABS_API_KEY;
+		else process.env.ELEVENLABS_API_KEY = old;
+	});
+	let uploads = 0;
+	t.mock.method(globalThis, "fetch", async () => {
+		uploads++;
+		return new Response("Synthetic invalid key", { status: 401 });
+	});
+	const { processChapter } = await import(
+		"../../../vendor/ux-walk/src/process.mjs"
+	);
+	let finalOptions;
+	await finishNativeWalk(
+		f.file,
+		{ transcriber: "elevenlabs", glossary: "", brief: true, sections: false },
+		{
+			client: {
+				export: async (_project, output) => {
+					fs.copyFileSync(path.join(f.source, "source.mp4"), output);
+					return { durationS: 1 };
+				},
+			},
+			processChapter: (directory, cfg, options) => {
+				if (!options.transcriptOnly) finalOptions = options;
+				return processChapter(directory, cfg, options);
+			},
+			writeReport: () => {},
+		},
+	);
+	const summary = JSON.parse(
+		fs.readFileSync(path.join(f.directory, "01-walkthrough/summary.json")),
+	);
+	assert.match(summary.transcriptError, /ElevenLabs 401/);
+	assert.match(
+		fs.readFileSync(path.join(f.directory, "index.md"), "utf8"),
+		/no transcript/,
+	);
+	assert.equal(finalOptions.brief, false);
+	assert.equal(uploads, 1);
+});
