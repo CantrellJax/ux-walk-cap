@@ -52,7 +52,46 @@ jobs:
           node-version: '22'
       - run: npm ci --ignore-scripts --prefix apps/cloud
       - run: npm run check --prefix apps/cloud
+  library-contract:
+    if: github.repository == 'CantrellJax/ux-walk-cap'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          components: rustfmt
+      - name: Exercise existing journal and library contracts without desktop dependencies
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib, shutil, tomllib
+          root = pathlib.Path.cwd()
+          out = pathlib.Path(os.environ['RUNNER_TEMP']) / 'ux-walk-library-contract'
+          (out / 'src').mkdir(parents=True)
+          (out / 'tests').mkdir()
+          versions = {item['name']: item['version'] for item in tomllib.loads((root / 'Cargo.lock').read_text())['package']}
+          manifest = '[package]\nname = "cap-walk-library-contract"\nversion = "0.0.0"\nedition = "2024"\n\n[dependencies]\n'
+          manifest += 'serde = { version = ' + json.dumps('=' + versions['serde']) + ', features = ["derive"] }\n'
+          manifest += 'serde_json = ' + json.dumps('=' + versions['serde_json']) + '\n'
+          manifest += 'libc = ' + json.dumps('=' + versions['libc']) + '\n'
+          (out / 'Cargo.toml').write_text(manifest)
+          (out / 'src/lib.rs').write_text('')
+          for name in ['ux_walk_library.rs', 'ux_walk_journal.rs']:
+              shutil.copyfile(root / 'apps/desktop-gpui/src' / name, out / 'src' / name)
+          shutil.copyfile(root / 'apps/desktop-gpui/tests/ux_walk_library_contract.rs', out / 'tests/ux_walk_library_contract.rs')
+          PY
+          cargo test --manifest-path "$RUNNER_TEMP/ux-walk-library-contract/Cargo.toml" --test ux_walk_library_contract -- --test-threads=1
+      - name: Format advisory ownership surfaces
+        run: |
+          rustfmt +1.95.0 --edition 2024 --config skip_children=true apps/desktop-gpui/src/ux_walk_library.rs apps/desktop-gpui/src/ux_walk_window.rs apps/desktop-gpui/tests/ux_walk_library_contract.rs
+          git diff > "$RUNNER_TEMP/library-rustfmt.patch"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: library-rustfmt-corrections
+          path: ${{ runner.temp }}/library-rustfmt.patch
+      - run: git diff --exit-code
   native:
+    needs: library-contract
     if: github.repository == 'CantrellJax/ux-walk-cap'
     runs-on: macos-15
     timeout-minutes: 90
@@ -82,7 +121,7 @@ jobs:
             apps/desktop-gpui -> target
       - name: Format changed Rust surfaces
         run: |
-          rustfmt +1.95.0 --edition 2024 --config skip_children=true apps/desktop-gpui/src/main.rs apps/desktop-gpui/src/assets.rs apps/desktop-gpui/src/platform.rs apps/desktop-gpui/src/permission_guide.rs apps/desktop-gpui/src/camera_window.rs apps/desktop-gpui/src/target_overlay.rs apps/desktop-gpui/src/ux_walk_browser.rs apps/desktop-gpui/src/ux_walk_browser_target.rs apps/desktop-gpui/tests/ux_walk_browser_contract.rs apps/desktop-gpui/src/tray.rs apps/desktop-gpui/src/updates.rs apps/desktop-gpui/src/installer.rs apps/desktop-gpui/src/ux_walk.rs apps/desktop-gpui/src/ux_walk_journal.rs apps/desktop-gpui/src/ux_walk_library.rs apps/desktop-gpui/src/library.rs apps/desktop-gpui/tests/ux_walk_library_contract.rs apps/desktop-gpui/src/ux_walk_window.rs apps/desktop-gpui/src/session.rs apps/desktop-gpui/src/controls_window.rs apps/desktop-gpui/src/recording.rs apps/desktop-gpui/src/deeplink.rs apps/desktop-gpui/src/menus.rs apps/desktop-gpui/src/hotkeys.rs apps/desktop-gpui/tests/ux_walk_journal_contract.rs apps/desktop-gpui/src/ux_walk_preferences.rs apps/desktop-gpui/src/settings_ux_walk.rs apps/desktop-gpui/src/settings_window.rs apps/desktop-gpui/src/settings_pages.rs apps/desktop-gpui/src/store.rs apps/desktop-gpui/src/diagnostics.rs apps/desktop-gpui/src/transcription.rs apps/desktop-gpui/src/mode_choice.rs apps/desktop-gpui/src/mode_select_window.rs apps/desktop-gpui/src/main_window.rs apps/desktop-gpui/src/onboarding_window.rs apps/desktop-gpui/src/onboarding_doodles.rs apps/desktop-gpui/src/app_windows.rs apps/cli/src/credentials.rs apps/cli/src/automation.rs apps/cli/src/recordings.rs apps/cli/src/update.rs apps/cli/src/upload.rs apps/cli/src/sharing.rs apps/cli/src/main.rs apps/cli/src/guide.rs apps/cli/src/agents.rs apps/desktop-gpui/src/settings_sharing.rs apps/desktop-gpui/src/auth.rs apps/desktop-gpui/src/sign_in.rs apps/desktop-gpui/src/upload.rs apps/desktop-gpui/src/upload/queue.rs apps/desktop-gpui/src/editor_export.rs apps/desktop-gpui/src/editor_window/frame.rs apps/desktop-gpui/src/screenshot_editor.rs crates/cloud-sharing/src/lib.rs
+          rustfmt +1.95.0 --edition 2024 --config skip_children=true apps/desktop-gpui/src/main.rs apps/desktop-gpui/src/ux_walk_checkpoints.rs apps/cli/src/recovery.rs crates/cloud-sharing/src/recovery.rs apps/desktop-gpui/src/assets.rs apps/desktop-gpui/src/platform.rs apps/desktop-gpui/src/permission_guide.rs apps/desktop-gpui/src/camera_window.rs apps/desktop-gpui/src/target_overlay.rs apps/desktop-gpui/src/ux_walk_browser.rs apps/desktop-gpui/src/ux_walk_browser_target.rs apps/desktop-gpui/tests/ux_walk_browser_contract.rs apps/desktop-gpui/src/tray.rs apps/desktop-gpui/src/updates.rs apps/desktop-gpui/src/installer.rs apps/desktop-gpui/src/ux_walk.rs apps/desktop-gpui/src/ux_walk_journal.rs apps/desktop-gpui/src/ux_walk_library.rs apps/desktop-gpui/src/library.rs apps/desktop-gpui/tests/ux_walk_library_contract.rs apps/desktop-gpui/src/ux_walk_window.rs apps/desktop-gpui/src/session.rs apps/desktop-gpui/src/controls_window.rs apps/desktop-gpui/src/recording.rs apps/desktop-gpui/src/deeplink.rs apps/desktop-gpui/src/menus.rs apps/desktop-gpui/src/hotkeys.rs apps/desktop-gpui/tests/ux_walk_journal_contract.rs apps/desktop-gpui/src/ux_walk_preferences.rs apps/desktop-gpui/src/settings_ux_walk.rs apps/desktop-gpui/src/settings_window.rs apps/desktop-gpui/src/settings_pages.rs apps/desktop-gpui/src/store.rs apps/desktop-gpui/src/diagnostics.rs apps/desktop-gpui/src/transcription.rs apps/desktop-gpui/src/mode_choice.rs apps/desktop-gpui/src/mode_select_window.rs apps/desktop-gpui/src/main_window.rs apps/desktop-gpui/src/onboarding_window.rs apps/desktop-gpui/src/onboarding_doodles.rs apps/desktop-gpui/src/app_windows.rs apps/cli/src/credentials.rs apps/cli/src/automation.rs apps/cli/src/recordings.rs apps/cli/src/update.rs apps/cli/src/upload.rs apps/cli/src/sharing.rs apps/cli/src/main.rs apps/cli/src/guide.rs apps/cli/src/agents.rs apps/desktop-gpui/src/settings_sharing.rs apps/desktop-gpui/src/auth.rs apps/desktop-gpui/src/sign_in.rs apps/desktop-gpui/src/upload.rs apps/desktop-gpui/src/upload/queue.rs apps/desktop-gpui/src/editor_export.rs apps/desktop-gpui/src/editor_window/frame.rs apps/desktop-gpui/src/screenshot_editor.rs crates/cloud-sharing/src/lib.rs
           rustfmt +1.95.0 --edition 2024 --config skip_children=true crates/recording/src/sources/screen_capture/mod.rs crates/recording/src/sources/screen_capture/macos.rs crates/recording/src/sources/screen_capture/window_target.rs crates/recording/src/studio_recording.rs crates/recording/src/instant_recording.rs crates/recording/tests/macos_window_target_contract.rs
           rustfmt +1.95.0 --edition 2024 --config skip_children=true apps/desktop-gpui/src/onboarding_window/stage.rs apps/desktop-gpui/src/permissions.rs
           rustfmt +1.95.0 --edition 2024 --config skip_children=true apps/cli/src/agents.rs
@@ -93,6 +132,8 @@ jobs:
         with:
           name: rustfmt-corrections
           path: ${{ runner.temp }}/rustfmt.patch
+      - name: Verify Rust formatting before native build
+        run: git diff --exit-code
       - name: Prepare native dependencies
         run: |
           node scripts/setup.js
@@ -106,7 +147,7 @@ jobs:
       - name: Exercise the native walk processor
         run: |
           command -v ffmpeg >/dev/null || brew install ffmpeg
-          node --test apps/desktop-gpui/ux-walk/browser-evidence.test.mjs apps/desktop-gpui/ux-walk/native-walk.test.mjs apps/desktop-gpui/ux-walk/native-audio.test.mjs vendor/ux-walk/test/unit/transcript-only.test.mjs
+          node --test apps/desktop-gpui/ux-walk/browser-evidence.test.mjs apps/desktop-gpui/ux-walk/native-walk.test.mjs apps/desktop-gpui/ux-walk/native-audio.test.mjs apps/desktop-gpui/ux-walk/checkpoint-*.test.mjs apps/desktop-gpui/ux-walk/fragmented-audio.test.mjs apps/desktop-gpui/ux-walk/restore-checkpoint.test.mjs vendor/ux-walk/test/unit/transcript-only.test.mjs vendor/ux-walk/test/unit/transcript-words.test.mjs
       - name: Exercise portable production projects
         run: node --test apps/cli/skill/cap-demo/lib/production.test.mjs
       - name: Exercise isolated window selection

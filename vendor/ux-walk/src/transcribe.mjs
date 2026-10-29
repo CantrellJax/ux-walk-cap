@@ -64,9 +64,9 @@ export function wordsToSrt(words, firstVoices = []) {
   return cues.map((c, i) => `${i + 1}\n${ts(c.start)} --> ${ts(c.end)}\n${c.speaker != null ? `Speaker ${order.indexOf(c.speaker) + 1}: ` : ''}${c.text}\n`).join('\n');
 }
 
-async function elevenlabs(audio, { key, terms, cfg, log }) {
+async function elevenlabs(audio, { key, terms, cfg, log, signal }) {
   const form = new FormData();
-  form.append('file', await fs.openAsBlob(audio, { type: 'audio/mp4' }), path.basename(audio));
+  form.append('file', await fs.openAsBlob(audio, { type: path.extname(audio).toLowerCase() === '.wav' ? 'audio/wav' : 'audio/mp4' }), path.basename(audio));
   form.append('model_id', cfg.elevenlabsModel || 'scribe_v2');
   form.append('diarize', 'true');
   form.append('timestamps_granularity', 'word');
@@ -74,17 +74,17 @@ async function elevenlabs(audio, { key, terms, cfg, log }) {
   form.append('language_code', cfg.language || 'en');
   for (const t of hints(terms, 5)) form.append('keyterms', t);
   log(`uploading to ElevenLabs (${(fs.statSync(audio).size / 1e6).toFixed(1)} MB)`);
-  const r = await fetch('https://api.elevenlabs.io/v1/speech-to-text', { method: 'POST', headers: { 'xi-api-key': key }, body: form });
+  const r = await fetch('https://api.elevenlabs.io/v1/speech-to-text', { method: 'POST', headers: { 'xi-api-key': key }, body: form, signal });
   const text = await r.text();
   if (!r.ok) throw new Error(`ElevenLabs ${r.status}: ${text.slice(0, 300)}`);
   const res = JSON.parse(text);
   return (res.words || []).filter((w) => w.type === 'word').map((w) => ({ text: w.text, start: w.start, end: w.end, speaker: w.speaker_id }));
 }
 
-async function assemblyai(audio, { key, terms, cfg, log }) {
+async function assemblyai(audio, { key, terms, cfg, log, signal }) {
   const API = 'https://api.assemblyai.com/v2';
   const call = async (method, url, body, type = 'application/json') => {
-    const r = await fetch(url, { method, headers: { authorization: key, 'content-type': type }, body, ...(body instanceof fs.ReadStream ? { duplex: 'half' } : {}) });
+    const r = await fetch(url, { method, headers: { authorization: key, 'content-type': type }, body, ...(body instanceof fs.ReadStream ? { duplex: 'half' } : {}), signal });
     const text = await r.text();
     if (!r.ok) throw new Error(`AssemblyAI ${method} ${url.replace(API, '')} -> ${r.status}: ${text.slice(0, 300)}`);
     return JSON.parse(text);
@@ -105,18 +105,25 @@ async function assemblyai(audio, { key, terms, cfg, log }) {
   throw new Error(`AssemblyAI job ${job.id} still running after an hour`);
 }
 
-async function words(audio, cfg, { terms, log }) {
+async function words(audio, cfg, { terms, log, retry = true, signal }) {
   const id = cfg.transcriber;
   const key = providerKey(cfg, id);
   const fn = id === 'elevenlabs' ? elevenlabs : assemblyai;
+  if (!retry) return fn(audio, { key, terms, cfg, log, signal });
   // One retry: a dropped connection on a long upload is the usual failure.
-  try { return await fn(audio, { key, terms, cfg, log }); }
+  try { return await fn(audio, { key, terms, cfg, log, signal }); }
   catch (e) {
     if (/\b4\d\d:/.test(e.message)) throw e; // a bad key or request fails the same way twice
     log(`${PROVIDERS[id].name} failed (${e.message}); retrying once`);
     await sleep(5000);
-    return fn(audio, { key, terms, cfg, log });
+    return fn(audio, { key, terms, cfg, log, signal });
   }
+}
+
+export async function transcribeWords(audio, cfg, { terms = [], log = console.log, signal } = {}) {
+  if (cfg.transcriber === 'none') return [];
+  if (!['elevenlabs', 'assemblyai'].includes(cfg.transcriber)) throw new Error('Live word transcription is supported by ElevenLabs and AssemblyAI only');
+  return words(audio, cfg, { terms, log, retry: false, signal });
 }
 
 // Writes transcript.srt next to the audio and returns its path.

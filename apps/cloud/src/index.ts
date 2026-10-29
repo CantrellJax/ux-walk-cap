@@ -1,3 +1,5 @@
+import { recovery } from "./recovery";
+
 type RuntimeEnv = Env & { UPLOAD_TOKEN?: string };
 
 interface Share {
@@ -248,6 +250,11 @@ async function media(
 
 async function route(request: Request, env: RuntimeEnv): Promise<Response> {
 	const url = new URL(request.url);
+	if (
+		url.pathname === "/api/v1/recovery" ||
+		url.pathname.startsWith("/api/v1/recovery/")
+	)
+		return recovery(request, env.MEDIA, await owner(request, env));
 	if (url.pathname === "/healthz")
 		return response({ product: "capux", protocol: 1 });
 	if (url.pathname === "/api/v1/shares" && request.method === "POST")

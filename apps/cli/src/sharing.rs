@@ -25,6 +25,10 @@ enum SharingCommand {
         expires_in_days: Option<u32>,
         #[arg(long)]
         token_stdin: bool,
+        #[arg(long, conflicts_with = "disable_backup")]
+        enable_backup: bool,
+        #[arg(long)]
+        disable_backup: bool,
     },
     Revoke {
         id: String,
@@ -37,7 +41,7 @@ impl SharingArgs {
             SharingCommand::Status => {
                 let settings = cap_cloud_sharing::load()?;
                 write_json(
-                    &json!({ "enabled": settings.enabled, "server": settings.endpoint, "expiresInDays": settings.expires_in_days }),
+                    &json!({ "enabled": settings.enabled, "server": settings.endpoint, "expiresInDays": settings.expires_in_days, "backupEnabled": settings.backup_enabled }),
                 )
             }
             SharingCommand::Configure {
@@ -46,6 +50,8 @@ impl SharingArgs {
                 disable,
                 expires_in_days,
                 token_stdin,
+                enable_backup,
+                disable_backup,
             } => {
                 let mut settings = cap_cloud_sharing::load()?;
                 if let Some(server) = server {
@@ -58,6 +64,12 @@ impl SharingArgs {
                 }
                 if disable {
                     settings.enabled = false;
+                }
+                if enable_backup {
+                    settings.backup_enabled = true;
+                }
+                if disable_backup {
+                    settings.backup_enabled = false;
                 }
                 if let Some(days) = expires_in_days {
                     settings.expires_in_days = days;

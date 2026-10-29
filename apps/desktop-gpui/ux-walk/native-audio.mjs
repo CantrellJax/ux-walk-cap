@@ -13,22 +13,15 @@ function mediaPath(project, relative) {
 	return file;
 }
 
-export async function prepareNativeAudio(project, directory) {
-	const meta = JSON.parse(
-		fs.readFileSync(path.join(project, "recording-meta.json"), "utf8"),
-	);
-	if (!Array.isArray(meta.segments) || !meta.segments.length) return null;
-	const configFile = path.join(project, "project-config.json");
-	const config = fs.existsSync(configFile)
-		? JSON.parse(fs.readFileSync(configFile, "utf8"))
-		: {};
+export function sourceAudioProblem(project, config = {}) {
 	if (
+		project &&
 		!config.clips?.length &&
 		fs.existsSync(
 			path.join(path.dirname(path.dirname(project)), "sync_calibrations.json"),
 		)
 	)
-		return null;
+		return "Calibration offsets require rendered-audio alignment";
 	const timeline = config.timeline;
 	if (
 		config.audio?.mute ||
@@ -40,9 +33,31 @@ export async function prepareNativeAudio(project, directory) {
 				segment.enabled &&
 				segment.layout === "fullscreen" &&
 				segment.end > segment.start,
+		) ||
+		timeline?.segments?.some(
+			(span, index) =>
+				span.recordingSegment !== index ||
+				span.start !== 0 ||
+				span.timescale !== 1 ||
+				(span.volume ?? 1) !== 1 ||
+				span.speedAudioMode != null,
 		)
 	)
-		return null;
+		return "Unsupported edited or muted audio layout requires rendered-audio alignment";
+	return null;
+}
+
+export async function prepareNativeAudio(project, directory) {
+	const meta = JSON.parse(
+		fs.readFileSync(path.join(project, "recording-meta.json"), "utf8"),
+	);
+	if (!Array.isArray(meta.segments) || !meta.segments.length) return null;
+	const configFile = path.join(project, "project-config.json");
+	const config = fs.existsSync(configFile)
+		? JSON.parse(fs.readFileSync(configFile, "utf8"))
+		: {};
+	if (sourceAudioProblem(project, config)) return null;
+	const timeline = config.timeline;
 	const segments = [];
 	for (const [index, segment] of meta.segments.entries()) {
 		if (!segment.display?.path) return null;

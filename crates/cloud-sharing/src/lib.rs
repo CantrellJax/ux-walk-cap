@@ -1,3 +1,5 @@
+pub mod recovery;
+
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
@@ -15,6 +17,7 @@ const MAX_SIZE: u64 = 20 * 1024 * 1024 * 1024;
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
     pub enabled: bool,
+    pub backup_enabled: bool,
     pub endpoint: String,
     pub expires_in_days: u32,
 }
@@ -23,6 +26,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             enabled: false,
+            backup_enabled: false,
             endpoint: String::new(),
             expires_in_days: 7,
         }
@@ -93,7 +97,7 @@ pub fn validate_configured_link(link: &str) -> Result<(), String> {
 }
 
 pub fn save(settings: &Settings) -> Result<(), String> {
-    if settings.enabled || !settings.endpoint.trim().is_empty() {
+    if settings.enabled || settings.backup_enabled || !settings.endpoint.trim().is_empty() {
         endpoint(&settings.endpoint)?;
     }
     if !(1..=30).contains(&settings.expires_in_days) {
@@ -486,6 +490,7 @@ mod tests {
         let client = SharingClient::with_credentials(
             Settings {
                 enabled: true,
+                backup_enabled: false,
                 endpoint: server,
                 expires_in_days: 7,
             },
@@ -526,6 +531,7 @@ mod tests {
         let client = SharingClient::with_credentials(
             Settings {
                 enabled: true,
+                backup_enabled: false,
                 endpoint: server,
                 expires_in_days: 7,
             },

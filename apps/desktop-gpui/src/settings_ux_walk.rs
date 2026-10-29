@@ -328,6 +328,7 @@ impl SettingsWindow {
                     .into_any_element(),
                 ),
             );
+            rows.push(self.ux_walk_toggle("liveTranscription", "Transcribe while recording", "Send audio to the selected provider in roughly five-minute chunks, then finish the short remaining tail after Stop. Speaker labels may change between chunks. Descript and unsupported live audio finish after recording stops.", cx));
             rows.push(self.ux_walk_field(3, cx));
             rows.push(self.ux_walk_field(4, cx));
             rows.push(self.ux_walk_toggle(

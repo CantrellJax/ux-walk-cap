@@ -58,6 +58,15 @@ fn reset_live(cx: &mut App) {
     }
 }
 
+pub fn open_recovery(cx: &mut App) {
+    if ensure(true, cx).is_err() {
+        return;
+    }
+    if let Some(handle) = cx.global::<WalkWindows>().0 {
+        let _ = handle.update(cx, |view, window, cx| view.load_recoveries(window, cx));
+    }
+}
+
 pub fn open_saved(file: std::path::PathBuf, cx: &mut App) {
     if let Err(error) = ensure(true, cx) {
         tracing::error!(%error, "opening saved walk notes");
@@ -181,6 +190,9 @@ struct WalkWindow {
     summary: Option<crate::ux_walk_library::WalkSummary>,
     poll: Option<gpui::Task<()>>,
     action_revision: u64,
+    recoveries: Vec<(String, String)>,
+    recovery_origin: String,
+    recovery_loading: bool,
     reprocessing: std::collections::BTreeSet<std::path::PathBuf>,
     notice: Option<String>,
     error: Option<String>,
@@ -208,6 +220,11 @@ impl WalkWindow {
             input
         });
         cx.subscribe(&input, |this, _, event, cx| {
+            if matches!(event, ui::TextInputEvent::Changed) {
+                let text = this.input.read(cx).text().to_string();
+                this.session
+                    .update(cx, |session, _| session.walk_note_draft = text);
+            }
             if matches!(event, ui::TextInputEvent::Confirmed) {
                 this.add("note", cx);
             }
@@ -226,6 +243,9 @@ impl WalkWindow {
             summary: None,
             poll: None,
             action_revision: 0,
+            recoveries: Vec::new(),
+            recovery_origin: String::new(),
+            recovery_loading: false,
             reprocessing: Default::default(),
             notice: None,
             error: None,
@@ -355,6 +375,70 @@ impl WalkWindow {
         .detach();
     }
 
+    fn load_recoveries(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.recovery_loading {
+            return;
+        }
+        self.recovery_loading = true;
+        self.notice = Some("Loading private walk backups…".into());
+        cx.notify();
+        cx.spawn_in(window, async move |this, cx| {
+            let result = cx.background_executor().spawn(async move {
+                let output = crate::ux_walk::run_engine("recovery-list", std::path::Path::new("-"))?;
+                serde_json::from_str::<serde_json::Value>(&output).map_err(|error| error.to_string())
+            }).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.recovery_loading = false;
+                match result {
+                    Ok(value) => {
+                        this.recovery_origin = value["server"].as_str().unwrap_or_default().to_string();
+                        this.recoveries = value["recordings"].as_array().into_iter().flatten().filter_map(|record| Some((record["recordingId"].as_str()?.to_string(), record["title"].as_str()?.to_string()))).collect();
+                        this.notice = Some(if this.recoveries.is_empty() { "No private walk backups are available on this server.".into() } else { "Choose a backup, then a folder for a new recovered copy. Recovered captures remain marked interrupted; a complete video may not exist.".into() });
+                    }
+                    Err(error) => this.error = Some(error),
+                }
+                cx.notify(); window.refresh();
+            });
+        }).detach();
+    }
+
+    fn restore_backup(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        if self.session.read(cx).phase != Phase::Idle || self.recovery_loading {
+            return;
+        }
+        let origin = self.recovery_origin.clone();
+        let paths = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: None,
+        });
+        self.recovery_loading = true;
+        self.notice = Some("Choose a folder for recovered evidence.".into());
+        cx.notify();
+        cx.spawn_in(window, async move |this, cx| {
+            let selection = paths.await;
+            let Ok(Ok(Some(paths))) = selection else { let _ = this.update_in(cx, |this, _, cx| { this.recovery_loading = false; cx.notify(); }); return; };
+            let Some(parent) = paths.into_iter().next() else { let _ = this.update_in(cx, |this, _, cx| { this.recovery_loading = false; cx.notify(); }); return; };
+            let result = cx.background_executor().spawn(async move {
+                let destination = parent.join(format!("Recovered-walk-{}", crate::store::new_uuid_v4()));
+                let request_file = std::env::temp_dir().join(format!("cap-ux-restore-{}.json", crate::store::new_uuid_v4()));
+                let value = serde_json::json!({ "recordingId": id, "origin": origin, "destination": destination });
+                std::fs::write(&request_file, serde_json::to_vec(&value).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
+                let result = crate::ux_walk::run_engine("recovery-restore", &request_file);
+                let _ = std::fs::remove_file(request_file);
+                result?;
+                crate::ux_walk_library::remember_journal(&destination.join("native-walk.json"))?;
+                Ok::<std::path::PathBuf, String>(destination.join("native-walk.json"))
+            }).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.recovery_loading = false;
+                match result { Ok(file) => { this.recoveries.clear(); this.selection.choose(Some(file.clone())); this.load_saved(file, window, cx); this.notice = Some("Recovered interrupted evidence. Open the report to read notes, speech and click/error logs.".into()); }, Err(error) => this.error = Some(error) }
+                cx.notify(); window.refresh();
+            });
+        }).detach();
+    }
+
     fn add(&mut self, kind: &str, cx: &mut Context<Self>) {
         if self.selection.file.is_some() {
             return;
@@ -376,6 +460,7 @@ impl WalkWindow {
     fn reprocess_saved(
         &mut self,
         file: std::path::PathBuf,
+        full_transcription: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -402,7 +487,14 @@ impl WalkWindow {
                 .background_executor()
                 .spawn(async move {
                     crate::ux_walk_library::reprocess_allowed(&file)?;
-                    crate::ux_walk::run_engine("process", &file)
+                    crate::ux_walk::run_engine(
+                        if full_transcription {
+                            "process-full-transcript"
+                        } else {
+                            "process"
+                        },
+                        &file,
+                    )
                 })
                 .await;
             this.update_in(cx, |this, window, cx| {
@@ -442,7 +534,9 @@ impl WalkWindow {
         let revision = self.action_revision;
         let selection = self.selection.file.clone();
         self.notice = Some(
-            if command == "prompt" {
+            if command == "checkpoint-resume" {
+                "Resuming saved evidence and pending transcript jobs…"
+            } else if command == "prompt" {
                 "Preparing agent prompt…"
             } else {
                 "Opening Claude in cmux…"
@@ -475,6 +569,7 @@ impl WalkWindow {
                         cx.write_to_clipboard(gpui::ClipboardItem::new_string(output));
                         "Agent prompt copied".into()
                     }
+                    Ok(_) if command == "checkpoint-resume" => "Evidence sync attempted. Saved source data and ambiguous jobs remain retained; inspect checkpoint status in Show files.".into(),
                     Ok(_) => "Opened Claude in cmux with this walk’s prompt.".into(),
                     Err(error) => format!("Could not complete the action: {error}"),
                 });
@@ -565,6 +660,41 @@ impl Render for WalkWindow {
                     .text_color(theme.gray_10)
                     .child(notice),
             )
+            .when(!saved_view, |this| {
+                this.child(
+                    div()
+                        .text_size(px(12.))
+                        .line_height(px(18.))
+                        .text_color(theme.gray_10)
+                        .child(session.walk_checkpoint_notice.clone()),
+                )
+            })
+            .when(!capture_active, |this| {
+                this.child(
+                    ui::Button::plain(
+                        &theme,
+                        "walk-recover-private",
+                        ui::ButtonVariant::Gray,
+                        ui::ButtonSize::Sm,
+                    )
+                    .label("Recover private backup")
+                    .disabled(self.recovery_loading)
+                    .on_click(cx.listener(|this, _, window, cx| this.load_recoveries(window, cx))),
+                )
+            })
+            .children(self.recoveries.clone().into_iter().map(|(id, title)| {
+                ui::Button::plain(
+                    &theme,
+                    gpui::SharedString::from(format!("recover-walk-{id}")),
+                    ui::ButtonVariant::Gray,
+                    ui::ButtonSize::Sm,
+                )
+                .label(title)
+                .disabled(capture_active || self.recovery_loading)
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.restore_backup(id.clone(), window, cx)
+                }))
+            }))
             .when(live, |this| {
                 this.child(ui::TextInput::settings(
                     &theme,
@@ -638,25 +768,23 @@ impl Render for WalkWindow {
                 let file = walk.file();
                 let folder = walk.request.directory.clone();
                 let report = folder.join("report.html");
-                let ready = if saved_view {
-                    self.summary
-                        .as_ref()
-                        .is_some_and(crate::ux_walk_library::WalkSummary::report_ready)
-                } else {
-                    !processing
-                        && crate::ux_walk_library::processing_status(&walk.request.directory)
-                            == crate::ux_walk_library::WalkStatus::Ready
-                };
+                let ready = (folder.join("recovery-ready.json").is_file() && report.is_file())
+                    || if saved_view {
+                        self.summary
+                            .as_ref()
+                            .is_some_and(crate::ux_walk_library::WalkSummary::report_ready)
+                    } else {
+                        !processing
+                            && crate::ux_walk_library::processing_status(&walk.request.directory)
+                                == crate::ux_walk_library::WalkStatus::Ready
+                    };
                 let saved_retry = file.clone();
+                let full_retry = file.clone();
+                let checkpoint_file = file.clone();
+                let has_checkpoints = folder.join("checkpoints/identity.json").is_file();
                 let retry_disabled = capture_active
-                    || processing
-                    || self.reprocessing.contains(&file)
-                    || self.summary.as_ref().is_some_and(|summary| {
-                        matches!(
-                            summary.status,
-                            crate::ux_walk_library::WalkStatus::OwnerUnknown(_)
-                        )
-                    });
+                    || (!saved_view && processing)
+                    || self.reprocessing.contains(&file);
                 let prompt_file = file.clone();
                 let handoff_file = file.clone();
                 let cmux = crate::ux_walk::load()
@@ -728,6 +856,52 @@ impl Render for WalkWindow {
                                 )),
                             )
                         })
+                        .when(saved_view && has_checkpoints, |this| {
+                            this.child(
+                                ui::Button::plain(
+                                    &theme,
+                                    "walk-resume-checkpoints",
+                                    ui::ButtonVariant::Gray,
+                                    ui::ButtonSize::Sm,
+                                )
+                                .label("Resume evidence sync")
+                                .disabled(capture_active)
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| {
+                                        this.action(
+                                            "checkpoint-resume",
+                                            checkpoint_file.clone(),
+                                            cx,
+                                        )
+                                    },
+                                )),
+                            )
+                        })
+                        .when(
+                            saved_view && walk.state == "complete" && has_checkpoints,
+                            |this| {
+                                this.child(
+                                    ui::Button::plain(
+                                        &theme,
+                                        "walk-full-transcript",
+                                        ui::ButtonVariant::Gray,
+                                        ui::ButtonSize::Sm,
+                                    )
+                                    .label("Transcribe full audio again (provider charges)")
+                                    .disabled(retry_disabled)
+                                    .on_click(cx.listener(
+                                        move |this, _, window, cx| {
+                                            this.reprocess_saved(
+                                                full_retry.clone(),
+                                                true,
+                                                window,
+                                                cx,
+                                            )
+                                        },
+                                    )),
+                                )
+                            },
+                        )
                         .when(saved_view && walk.state == "complete", |this| {
                             this.child(
                                 ui::Button::plain(
@@ -740,7 +914,7 @@ impl Render for WalkWindow {
                                 .disabled(retry_disabled)
                                 .on_click(cx.listener(
                                     move |this, _, window, cx| {
-                                        this.reprocess_saved(saved_retry.clone(), window, cx)
+                                        this.reprocess_saved(saved_retry.clone(), false, window, cx)
                                     },
                                 )),
                             )

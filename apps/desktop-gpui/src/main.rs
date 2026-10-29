@@ -92,6 +92,7 @@ mod upload;
 mod ux_walk;
 mod ux_walk_browser;
 mod ux_walk_browser_target;
+mod ux_walk_checkpoints;
 mod ux_walk_journal;
 mod ux_walk_library;
 mod ux_walk_preferences;

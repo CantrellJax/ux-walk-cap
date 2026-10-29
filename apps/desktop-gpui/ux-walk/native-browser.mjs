@@ -7,6 +7,7 @@ import {
 	redactBrowserText,
 	sanitizeBrowserEvent,
 } from "./browser-evidence.mjs";
+import { durableJson } from "./checkpoint-store.mjs";
 
 const local = new URL("./src/config.mjs", import.meta.url);
 const engine = fs.existsSync(local)
@@ -14,11 +15,7 @@ const engine = fs.existsSync(local)
 	: new URL("../../../vendor/ux-walk/src/", import.meta.url);
 
 function save(file, value) {
-	const temporary = `${file}.${process.pid}.tmp`;
-	fs.writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, {
-		mode: 0o600,
-	});
-	fs.renameSync(temporary, file);
+	durableJson(file, value);
 }
 
 export class NativeBrowserEvidence {
@@ -32,6 +29,18 @@ export class NativeBrowserEvidence {
 		this.preRollBytes = 0;
 		this.bytes = 0;
 		this.active = null;
+		this.flushTimer = setInterval(() => {
+			try {
+				this.flush();
+			} catch (error) {
+				if (this.active)
+					this.active.metadata.durabilityError = String(error.message).slice(
+						0,
+						200,
+					);
+			}
+		}, 1000);
+		this.flushTimer.unref();
 		fs.mkdirSync(path.join(workDir, "notes"), { recursive: true, mode: 0o700 });
 	}
 
@@ -162,6 +171,20 @@ export class NativeBrowserEvidence {
 			);
 	}
 
+	flush() {
+		if (!this.active) return;
+		const fd = fs.openSync(
+			path.join(this.active.directory, "browser-evidence.jsonl"),
+			"r",
+		);
+		try {
+			fs.fsyncSync(fd);
+		} finally {
+			fs.closeSync(fd);
+		}
+		this.save();
+	}
+
 	finish(file, state = "complete", reason) {
 		const { metadata, directory } = this.owned(file);
 		metadata.state = state;
@@ -175,6 +198,7 @@ export class NativeBrowserEvidence {
 		this.save();
 		this.active = null;
 		this.mode = "stopped";
+		clearInterval(this.flushTimer);
 	}
 }
 
