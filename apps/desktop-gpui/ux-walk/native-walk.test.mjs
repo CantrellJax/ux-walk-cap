@@ -336,3 +336,70 @@ test("copying an agent prompt describes recording, aborted and unprocessed walks
 	f.save();
 	assert.match(nativeWalkPrompt(f.file), /not started|not prepared/);
 });
+
+test("transcript is saved while export is blocked and reused after export failure", async (t) => {
+	const f = fixture(t);
+	f.journal.events = [];
+	f.save();
+	let failExport;
+	let enteredExport;
+	const entered = new Promise((resolve) => { enteredExport = resolve; });
+	let ready;
+	const transcriptReady = new Promise((resolve) => { ready = resolve; });
+	let uploads = 0;
+	const transcript = path.join(f.directory, "01-walkthrough/transcript.srt");
+	const deps = {
+		prepareAudio: async () => ({ path: path.join(f.directory, "source.m4a"), durationS: 10 }),
+		clipAudio: async (_input, output) => fs.writeFileSync(output, "audio"),
+		client: { export: async () => {
+			enteredExport();
+			return new Promise((_resolve, reject) => { failExport = reject; });
+		} },
+		processChapter: async (directory, _cfg, options) => {
+			if (options.transcriptOnly && !fs.existsSync(transcript)) {
+				uploads++;
+				fs.writeFileSync(path.join(directory, "transcript.srt"), "1\n00:00:00,000 --> 00:00:01,000\nSpeaker 1: Saved.\n");
+				ready();
+			}
+			return { transcript: true };
+		},
+		writeIndex: () => {},
+		writeReport: () => {},
+	};
+	const running = finishNativeWalk(f.file, { transcriber: "elevenlabs" }, deps);
+	const rejected = assert.rejects(running, /Export unavailable/);
+	await entered;
+	const observed = await Promise.race([
+		transcriptReady.then(() => true),
+		new Promise((resolve) => setTimeout(() => resolve(false), 250)),
+	]);
+	failExport(new Error("Export unavailable"));
+	await rejected;
+	assert.equal(observed, true, "transcription must finish while export is unresolved");
+	assert.match(fs.readFileSync(transcript, "utf8"), /Saved/);
+	deps.client.export = async (_project, output) => {
+		fs.writeFileSync(output, "verified export");
+		return { durationS: 10 };
+	};
+	deps.clip = async () => { throw new Error("full-session video must be reused"); };
+	await finishNativeWalk(f.file, { transcriber: "elevenlabs" }, deps);
+	assert.equal(uploads, 1);
+	assert.equal(fs.readFileSync(path.join(f.directory, "01-walkthrough/video.mp4"), "utf8"), "verified export");
+});
+
+test("one chapter reuses a full export but still trims a longer export", async (t) => {
+	for (const exportedS of [10, 15]) {
+		const f = fixture(t);
+		f.journal.events = [];
+		f.save();
+		const spans = [];
+		await finishNativeWalk(f.file, { transcriber: "none" }, {
+			client: { export: async (_project, output) => { fs.writeFileSync(output, "export"); return { durationS: exportedS }; } },
+			clip: async (_input, output, start, duration) => { spans.push([start, duration]); fs.writeFileSync(output, "clipped"); },
+			processChapter: async () => ({}),
+			writeIndex: () => {},
+			writeReport: () => {},
+		});
+		assert.deepEqual(spans, exportedS === 10 ? [] : [[0, 10]]);
+	}
+});
