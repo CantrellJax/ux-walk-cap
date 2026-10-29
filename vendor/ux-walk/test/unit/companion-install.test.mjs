@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
@@ -11,7 +12,7 @@ test("setup stages the exact extension and fixed host identity in an isolated ho
 	fs.mkdirSync(path.join(root, "Library/Application Support/Google/Chrome"), {
 		recursive: true,
 	});
-	const configDir = path.join(root, "config"),
+	const configDir = path.join(root, "config space's"),
 		engineDirectory = fileURLToPath(new URL("../..", import.meta.url));
 	const result = registerCompanion({
 		homeDirectory: root,
@@ -30,6 +31,11 @@ test("setup stages the exact extension and fixed host identity in an isolated ho
 		"chrome-extension://lcdckhfbhjchfjnnnkmcbjnefdnapelh/",
 	]);
 	assert.match(fs.readFileSync(manifest.path, "utf8"), /"\$@"/);
+	assert.match(
+		fs.readFileSync(manifest.path, "utf8"),
+		/export CAP_UX_WALK_CONFIG_DIR=/,
+	);
+	assert.equal(spawnSync("sh", ["-n", manifest.path]).status, 0);
 	assert.equal(
 		fs.readFileSync(path.join(result.extensionDirectory, "foot.svg"), "utf8"),
 		fs.readFileSync(path.join(engineDirectory, "assets/foot.svg"), "utf8"),

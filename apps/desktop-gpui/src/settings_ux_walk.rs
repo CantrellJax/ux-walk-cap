@@ -349,7 +349,9 @@ impl SettingsWindow {
     }
 
     fn ux_walk_setup_companion(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.ux_walk.companion_busy { return; }
+        if self.ux_walk.companion_busy {
+            return;
+        }
         self.ux_walk.companion_busy = true;
         cx.notify();
         cx.spawn_in(window, async move |this, cx| {

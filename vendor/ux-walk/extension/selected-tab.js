@@ -1,7 +1,7 @@
 // Injected only after the user selects this HTTP(S) tab through the extension action.
 (() => {
-  if (globalThis.__uxwSelectedTab) return;
-  globalThis.__uxwSelectedTab = true;
+  if (globalThis.__capUXSelectedTab?.runtime === chrome.runtime) return;
+  globalThis.__capUXSelectedTab = { runtime: chrome.runtime };
   let bindingId = null;
   let observeClicks = true;
   let clockEpoch = 0;
@@ -40,7 +40,7 @@
   chrome.runtime.onMessage.addListener((m, _sender, reply) => {
     if (m.type === 'companion-tab-state') { bindingId = m.recording ? m.binding?.bindingId : null; clockEpoch = m.clockEpoch; observeClicks = m.observeClicks !== false; reply({ ok: true }); return; }
     if (m.type === 'uxw-tab-stop') { bindingId = null; reply({ ok: true }); return; }
-    if (m.type !== 'uxw-tab-start' && m.type !== 'uxw-tab-checkpoint') return;
+    if (m.type !== 'uxw-tab-start' && m.type !== 'uxw-tab-checkpoint' && m.type !== 'companion-tab-checkpoint') return;
     try {
       if (m.type === 'uxw-tab-start') { bindingId = m.bindingId; observeClicks = m.observeClicks !== false; }
       if (!bindingId || bindingId !== m.bindingId) throw new Error('Tab is not selected.');

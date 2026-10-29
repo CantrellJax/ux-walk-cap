@@ -185,7 +185,7 @@ export function createCompanionController({
 					if (!binding) throw new Error("Select the walkthrough tab first.");
 					const reply = await api.tabs.sendMessage(
 						binding.tabId,
-						{ type: "uxw-tab-checkpoint", bindingId: binding.bindingId },
+						{ type: "companion-tab-checkpoint", bindingId: binding.bindingId },
 						{ documentId: binding.documentId },
 					);
 					if (!reply?.ok)
@@ -244,7 +244,7 @@ export function createCompanionController({
 					const ready = await api.tabs.sendMessage(
 						tab.id,
 						{
-							type: "uxw-tab-start",
+							type: "companion-tab-checkpoint",
 							bindingId: binding.bindingId,
 							observeClicks: status.browserMode !== "owned",
 						},

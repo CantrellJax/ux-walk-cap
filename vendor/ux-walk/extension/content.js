@@ -1,6 +1,6 @@
 (() => {
-	if (globalThis.__capUXMeetCompanion) return;
-	globalThis.__capUXMeetCompanion = true;
+	if (globalThis.__capUXMeetCompanion?.runtime === chrome.runtime) return;
+	globalThis.__capUXMeetCompanion = { runtime: chrome.runtime };
 	let binding = null,
 		recording = false,
 		epoch = null,

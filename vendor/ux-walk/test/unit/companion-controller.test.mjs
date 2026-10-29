@@ -138,6 +138,10 @@ test("only explicit role tabs/documents observe; another Meet never contributes 
 		f.injected.map((item) => item.target.tabId),
 		[1, 2],
 	);
+	assert.equal(
+		f.sent.some((item) => item.m.type === "uxw-tab-start"),
+		false,
+	);
 	const binding = f.status.roles.meet.bindingId;
 	for (const change of [
 		{ tab: { id: 99 } },

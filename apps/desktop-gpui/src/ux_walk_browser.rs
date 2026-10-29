@@ -248,11 +248,17 @@ mod owned {
         let mut browsers = browsers()
             .lock()
             .map_err(|_| "Browser ownership is unavailable.")?;
-        let index = match browsers.iter().position(|browser| browser.window_id == window_id && window_id.is_some()) {
+        let index = match browsers
+            .iter()
+            .position(|browser| browser.window_id == window_id && window_id.is_some())
+        {
             Some(index) => index,
             None => {
                 let mut collector = spawn(true)?;
-                collector.command(json!({ "op": "bind-external", "windowId": window_id }), Duration::from_secs(3))?;
+                collector.command(
+                    json!({ "op": "bind-external", "windowId": window_id }),
+                    Duration::from_secs(3),
+                )?;
                 collector.window_id = window_id.clone();
                 browsers.push(collector);
                 browsers.len() - 1
@@ -321,9 +327,19 @@ mod owned {
     }
 
     pub fn stopping(journal: &crate::ux_walk_journal::Journal, offset_ms: u64) {
-        let Ok(mut browsers) = browsers().lock() else { return; };
-        let Some(browser) = browsers.iter_mut().find(|browser| browser.journal.as_ref() == Some(&journal.file())) else { return; };
-        let wall_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
+        let Ok(mut browsers) = browsers().lock() else {
+            return;
+        };
+        let Some(browser) = browsers
+            .iter_mut()
+            .find(|browser| browser.journal.as_ref() == Some(&journal.file()))
+        else {
+            return;
+        };
+        let wall_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
         if let Err(error) = browser.command(json!({ "op": "finishing", "file": journal.file(), "wallMs": wall_ms, "offsetMs": offset_ms }), Duration::from_secs(2)) {
             drop(browser.input.take());
             unavailable(journal, &error);

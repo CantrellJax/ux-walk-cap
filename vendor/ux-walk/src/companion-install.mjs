@@ -71,7 +71,7 @@ export function registerCompanion({
 	const launcher = path.join(configDir, "uxw-meet-host.sh");
 	fs.writeFileSync(
 		launcher,
-		`#!/bin/sh\nexec ${quote(nodeBinary)} ${quote(path.join(engineDirectory, "bin/uxw-meet-host"))} "$@"\n`,
+		`#!/bin/sh\nexport CAP_UX_WALK_CONFIG_DIR=${quote(configDir)}\nexec ${quote(nodeBinary)} ${quote(path.join(engineDirectory, "bin/uxw-meet-host"))} "$@"\n`,
 		{ mode: 0o700 },
 	);
 	fs.chmodSync(launcher, 0o700);
