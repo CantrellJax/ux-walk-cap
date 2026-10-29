@@ -82,6 +82,7 @@ export class ChapterAttribution {
 				this.prior.set(entry.name, {
 					metadata,
 					key: this.archive(directory, metadata),
+					legacy: this.legacyIdentity(directory, metadata),
 				});
 			else if (
 				/^[a-f0-9]{64}$/.test(metadata.pendingSpeakerAttribution ?? "")
@@ -102,7 +103,14 @@ export class ChapterAttribution {
 						),
 					) === key
 				)
-					this.prior.set(entry.name, { metadata: saved.metadata, key });
+					this.prior.set(entry.name, {
+						metadata: saved.metadata,
+						key,
+						legacy: {
+							capture: metadata.nativeCaptureIdentity,
+							transcript: metadata.transcriptSourceIdentity,
+						},
+					});
 			}
 		}
 	}
@@ -111,7 +119,7 @@ export class ChapterAttribution {
 			Buffer.from(
 				JSON.stringify({
 					journal: this.file,
-					source: fs.realpathSync(this.journal.sourceProject),
+					source: path.resolve(this.journal.sourceProject),
 					startedAtMs: this.journal.startedAtMs,
 					project: fs.realpathSync(this.project),
 					metadata: hashFile(path.join(this.project, "recording-meta.json")),
@@ -120,6 +128,58 @@ export class ChapterAttribution {
 				}),
 			),
 		);
+	}
+	legacyIdentity(directory, metadata) {
+		if (
+			this.replace ||
+			metadata.nativeCaptureIdentity != null ||
+			metadata.transcriptSourceIdentity != null
+		)
+			return null;
+		const map = fields(metadata).speakerMap;
+		const transcript = this.transcriptIdentity(directory);
+		if (!map || !Object.keys(map).length || !transcript) return null;
+		const srt = fs.readFileSync(path.join(directory, "transcript.srt"), "utf8");
+		const labels = new Set(
+			[...srt.matchAll(/\b(Speaker(?: \d+)?):\s/g)].map((match) =>
+				match[1] === "Speaker" ? "Speaker 1" : match[1],
+			),
+		);
+		if (!labels.size && srt.includes("-->")) labels.add("Speaker 1");
+		if (
+			Object.keys(map).some(
+				(label) => !labels.has(label === "Speaker" ? "Speaker 1" : label),
+			)
+		)
+			return null;
+		const notes = read(path.join(this.directory, "walk-notes.json"));
+		const session = read(path.join(this.directory, "session.json"));
+		const media = path.join(this.directory, "media");
+		const manifest = read(path.join(media, "media.json"));
+		try {
+			if (
+				fs.realpathSync(notes?.journal) !== this.file ||
+				path.resolve(notes.sourceProject) !==
+					path.resolve(this.journal.sourceProject) ||
+				Date.parse(session?.startedAt) !== this.journal.startedAtMs ||
+				fs.realpathSync(path.resolve(directory, metadata.sourceProject)) !==
+					fs.realpathSync(this.project) ||
+				fs.realpathSync(path.resolve(media, manifest?.project)) !==
+					fs.realpathSync(this.project) ||
+				!Array.isArray(manifest.assets)
+			)
+				return null;
+			for (const name of ["recording-meta.json", "project-config.json"]) {
+				const file = path.join(this.project, name);
+				const asset = manifest.assets.find(
+					(item) => path.resolve(media, item.path) === path.resolve(file),
+				);
+				if (hashFile(file) !== (asset?.sha256 ?? null)) return null;
+			}
+		} catch {
+			return null;
+		}
+		return { capture: this.captureIdentity(), transcript };
 	}
 	transcriptIdentity(directory) {
 		const srt = hashFile(path.join(directory, "transcript.srt"));
@@ -174,9 +234,14 @@ export class ChapterAttribution {
 		const transcript = this.transcriptIdentity(directory);
 		const matchedSource =
 			!this.replace &&
-			previous?.metadata.nativeCaptureIdentity === capture &&
+			(previous?.legacy?.capture ??
+				previous?.metadata.nativeCaptureIdentity) === capture &&
 			transcript != null &&
-			sameTranscript(previous.metadata.transcriptSourceIdentity, transcript);
+			sameTranscript(
+				previous.legacy?.transcript ??
+					previous.metadata.transcriptSourceIdentity,
+				transcript,
+			);
 		const matched = matchedSource && sameChapter(previous.metadata, base);
 		const metadata = {
 			...base,
