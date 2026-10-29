@@ -610,11 +610,15 @@ export async function finishNativeWalk(file, cfg, dependencies = {}) {
 			...(stages.transcript === "disabled"
 				? {}
 				: {
-						transcript: transcriptsReady
-							? "ready"
-							: rows.some((row) => row.status === "no transcript")
-								? "failed"
-								: "unavailable",
+						transcript:
+							liveCacheHandled &&
+							rows.some((row) => row.status === "no transcript")
+								? "partial"
+								: transcriptsReady
+									? "ready"
+									: rows.some((row) => row.status === "no transcript")
+										? "failed"
+										: "unavailable",
 					}),
 			reportReadyAt: new Date().toISOString(),
 		});
