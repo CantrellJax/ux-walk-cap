@@ -24,6 +24,7 @@ const included = [
 	"test/unit/start-link.test.mjs",
 	"test/unit/cap-editor-handoff.test.mjs",
 	"test/unit/transcript-only.test.mjs",
+	"test/unit/transcript-words.test.mjs",
 ];
 
 export async function verifyUxWalkSource(directory = engineDirectory) {

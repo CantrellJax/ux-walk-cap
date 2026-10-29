@@ -20,6 +20,7 @@ mod organizations;
 mod project;
 mod record;
 mod recordings;
+mod recovery;
 mod screenshot;
 mod selftest;
 mod session;
@@ -216,6 +217,7 @@ enum Commands {
     Upload(upload::UploadArgs),
     /// Configure your Cap UX sharing server or revoke a link
     Sharing(sharing::SharingArgs),
+    Recovery(recovery::RecoveryArgs),
     /// Update Cap Desktop and the bundled CLI
     Update(FormatArgs),
     /// Show how `cap upload` will authenticate (env key or Cap Desktop login)
@@ -653,6 +655,7 @@ async fn run(cli: Cli) -> Result<(), String> {
         Commands::Recordings(args) => args.run(json),
         Commands::Upload(args) => args.run(json).await,
         Commands::Sharing(args) => args.run().await,
+        Commands::Recovery(args) => args.run().await,
         Commands::Update(args) => {
             let format = resolve_format(json, args.format);
             finish_json(format, update::run(format))
