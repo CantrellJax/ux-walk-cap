@@ -125,3 +125,8 @@ test("corrupt downloaded evidence is rejected before any ready recovery receipt"
 		false,
 	);
 });
+
+test("restore refuses missing bytes between valid event chunks before issuing a ready receipt",async(t)=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),"uxw-gap-"));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));const recordingId="11111111-1111-4111-8111-111111111111",generation="22222222-2222-4222-8222-222222222222";const store=new CheckpointStore(path.join(root,"original"),{recordingId,generation,endpoint:""});let start=0;for(const text of ['{"ev":"click"}\n','{"ev":"error"}\n']){const bytes=Buffer.from(text);store.commit([store.put("events",bytes,{activeStartMs:0,activeEndMs:1000,byteStart:start,byteEnd:start+bytes.length})],{wallMs:1000,activeElapsedMs:1000,paused:false});start+=bytes.length+500;}
+ const transport={request:async(_method,resource,options)=>{if(options?.output){fs.writeFileSync(options.output,fs.readFileSync(store.objectPath(resource.split("/").at(-1))));return{};}return{recordingId,writerGeneration:generation,checkpoints:store.descriptors()};}};const destination=path.join(root,"restored");await assert.rejects(restoreRecovery(transport,recordingId,destination),/event.*(gap|contigu|byte)/i);assert.equal(fs.existsSync(path.join(destination,"recovery-ready.json")),false);
+});

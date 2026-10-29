@@ -169,3 +169,11 @@ test("local complete audio and log checkpoints advance while network is held; ac
 	assert.equal(resumed.store.state.remoteSequence, 1);
 	assert.equal(resumed.sources["segment-0:microphone"].sourceEndMs, firstEnd);
 });
+
+test("mismatched registration, object or checkpoint receipts never advance acknowledged coverage", async(t)=>{
+ for(const failedStage of ["registration","object","checkpoint"]){
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),"uxw-receipt-"));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));const file=path.join(root,"native-walk.json");const project=path.join(root,"source.cap");fs.mkdirSync(project);durableJson(file,{state:"recording",request:{directory:root,topic:"Test"},sourceProject:project,startedAtMs:1});durableJson(path.join(root,"checkpoint-heartbeat.json"),{wallMs:1000,activeElapsedMs:1000,paused:false,parentPid:process.pid,generation:1});
+  const settings={backupEnabled:true,server:"https://backup.example"};const transport={status:async()=>settings,request:async(_method,resource,{input})=>{const bytes=fs.readFileSync(input);const {sha256}=await import("./checkpoint-store.mjs");if(resource.includes("/objects/"))return failedStage==="object"?{sha256:"0".repeat(64),size:-1}:{sha256:sha256(bytes),size:bytes.length};if(resource.includes("/checkpoints/"))return{acknowledged:failedStage!=="checkpoint",sequence:JSON.parse(bytes).sequence,sha256:sha256(bytes)};return failedStage==="registration"?{recordingId:"wrong"}:{...JSON.parse(bytes),expiresAt:Date.now()+100000,requestHash:sha256(Buffer.from(JSON.stringify(JSON.parse(bytes))))};}};
+  const worker=new CheckpointWorker(file,{transcriber:"none"},settings,{transport});await worker.checkpoint({force:true});await worker.uploadNext();assert.equal(worker.store.state.remoteSequence,0,failedStage);assert.match(worker.error,/acknowledg|identity|receipt|integrity/i);
+ }
+});
