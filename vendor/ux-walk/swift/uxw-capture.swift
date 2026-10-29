@@ -80,6 +80,16 @@ func epochMs(of pts: CMTime) -> Double {
 
 func hostNow() -> CMTime { CMClockGetTime(CMClockGetHostTimeClock()) }
 
+// Keep useful native failure identity without serializing arbitrary NSError userInfo.
+func nativeErrorFields(_ error: Error) -> [String: Any] {
+  let e = error as NSError
+  var result: [String: Any] = ["domain": e.domain, "code": e.code, "description": e.localizedDescription]
+  if let cause = e.userInfo[NSUnderlyingErrorKey] as? NSError {
+    result["underlying"] = ["domain": cause.domain, "code": cause.code, "description": cause.localizedDescription]
+  }
+  return result
+}
+
 final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate {
   let queue = DispatchQueue(label: "uxw.samples")
   let width: Int, height: Int, bitrate: Int, withMic: Bool
@@ -94,6 +104,36 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate {
   var lastVideo: CMSampleBuffer?    // latest frame, reused when the window is still
   var path: String
   var stopRequested = false
+  var targetIdentity: [String: Any] = [:]
+  var targetWindowID: CGWindowID?
+  var targetPID: pid_t?
+  var boundarySequence = 0
+
+  // Called on queue. Native observation/callback time is separate from Node receipt/finalization.
+  func boundary(_ phase: String, error: Error? = nil, callbackAt: Double? = nil) {
+    boundarySequence += 1
+    var event: [String: Any] = ["ev": "capture-boundary", "phase": phase, "sequence": boundarySequence,
+      "epochMs": nowEpochMs(), "target": targetIdentity, "stopRequested": stopRequested, "path": path]
+    if let error { event["nativeError"] = nativeErrorFields(error) }
+    if let callbackAt { event["callbackAt"] = callbackAt }
+    if let id = targetWindowID {
+      let info = CGWindowListCopyWindowInfo([.optionIncludingWindow], id) as? [[String: Any]]
+      let window = info?.first
+      var state: [String: Any] = ["observedAt": nowEpochMs(), "windowLookupAvailable": info != nil, "exists": window != nil]
+      if let window {
+        state["boundsPoints"] = window[kCGWindowBounds as String]
+        state["onScreen"] = window[kCGWindowIsOnscreen as String]
+        state["ownerPID"] = window[kCGWindowOwnerPID as String]
+      }
+      if let pid = targetPID {
+        let app = NSRunningApplication(processIdentifier: pid)
+        state["appLookupAvailable"] = app != nil
+        if let app { state["appTerminated"] = app.isTerminated; state["appHidden"] = app.isHidden }
+      }
+      event["targetState"] = state
+    }
+    emit(event)
+  }
 
   init(path: String, width: Int, height: Int, bitrate: Int, withMic: Bool) {
     self.path = path; self.width = width; self.height = height; self.bitrate = bitrate; self.withMic = withMic
@@ -206,7 +246,14 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate {
   }
 
   func stream(_ stream: SCStream, didStopWithError error: Error) {
-    queue.async { self.finishCurrent { emit(["ev": "error", "message": "stream stopped: \(error.localizedDescription)"]); exit(2) } }
+    let callbackAt = nowEpochMs()
+    queue.async {
+      self.boundary("stream-failed", error: error, callbackAt: callbackAt)
+      self.finishCurrent {
+        emit(["ev": "error", "message": "stream stopped: \(error.localizedDescription)", "nativeError": nativeErrorFields(error)])
+        exit(2)
+      }
+    }
   }
 
   func appendCall(_ sb: CMSampleBuffer) {
@@ -584,14 +631,29 @@ Task {
   }
 
   let rec = Recorder(path: out, width: width, height: height, bitrate: Int(opts["bitrate"] ?? "2500000") ?? 2_500_000, withMic: withMic)
+  rec.targetWindowID = window?.windowID
+  rec.targetPID = window?.owningApplication?.processID
+  rec.targetIdentity = ["kind": window == nil ? "display" : "window", "windowId": window?.windowID ?? 0,
+    "pid": window?.owningApplication?.processID ?? 0,
+    "bundleId": window?.owningApplication?.bundleIdentifier ?? "",
+    "boundsPoints": ["x": frame.minX, "y": frame.minY, "width": frame.width, "height": frame.height],
+    "videoPixels": ["width": width, "height": height]]
+  if let displayTarget { rec.targetIdentity["displayId"] = displayTarget.displayID }
+  rec.queue.sync { rec.boundary("target-selected") }
   rec.withCall = flags.contains("call-audio") || opts["call-app"] != nil
   do { try rec.makeWriter(out) } catch { fail("cannot open \(out): \(error)") }
   let stream = SCStream(filter: filter, configuration: cfg, delegate: rec)
   do {
     try stream.addStreamOutput(rec, type: .screen, sampleHandlerQueue: rec.queue)
     if withMic { try stream.addStreamOutput(rec, type: .microphone, sampleHandlerQueue: rec.queue) }
+    rec.queue.sync { rec.boundary("start-requested") }
     try await stream.startCapture()
-  } catch { fail("cannot start capture: \(error.localizedDescription)") }
+    rec.queue.sync { rec.boundary("stream-started") }
+  } catch {
+    rec.queue.sync { rec.boundary("start-failed", error: error) }
+    emit(["ev": "error", "message": "cannot start capture: \(error.localizedDescription)", "nativeError": nativeErrorFields(error)])
+    exit(1)
+  }
   // Follow the window as it moves: the crop is in display coordinates, so it is updated from the window's bounds.
   if let d = bubbleDisplay, let win = window {
     var last = win.frame
@@ -657,7 +719,7 @@ Task {
     }
   }
   emit(["ev": "ready", "windowId": window?.windowID ?? 0, "app": window?.owningApplication?.applicationName ?? "Display",
-        "title": window?.title ?? displayTarget.map { "display \($0.displayID)" } ?? "", "width": width, "height": height, "fps": fps])
+        "title": window?.title ?? displayTarget.map { "display \($0.displayID)" } ?? "", "width": width, "height": height, "fps": fps, "target": rec.targetIdentity])
 
   // Each checkpoint asks SCK for a new image. Never reuse Recorder.lastVideo (a static-window cache).
   let snapshot: ([String: Any]) async -> Void = { request in
@@ -720,6 +782,7 @@ Task {
   let stop: () -> Void = {
     rec.queue.async {
       rec.stopRequested = true
+      rec.boundary("stop-requested")
       rec.finishCurrent {
         processTap?.stop()
         Task { try? await callStream?.stopCapture(); try? await stream.stopCapture(); exit(0) }
@@ -742,9 +805,9 @@ Task {
           Task { await snapshot(request) }
         } else { emit(["ev": "error", "message": "invalid snapshot JSON"]) }
       case "rotate" where parts.count == 2:
-        rec.queue.async { rec.rotate(to: parts[1]) }
+        rec.queue.async { rec.boundary("rotate-requested"); rec.rotate(to: parts[1]) }
       case "pause":
-        rec.queue.async { rec.finishCurrent {} }  // "rotate <file>" resumes into a new file
+        rec.queue.async { rec.boundary("pause-requested"); rec.finishCurrent {} }  // "rotate <file>" resumes into a new file
       case "stop":
         stop(); return
       default:

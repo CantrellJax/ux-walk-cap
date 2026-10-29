@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { projectBrowserEvidence, safeBrowserUrl } from "./browser-evidence.mjs";
+import { clipNativeAudio, prepareNativeAudio } from "./native-audio.mjs";
 
 const local = new URL("./src/cap.mjs", import.meta.url);
 const engine = fs.existsSync(local)
@@ -113,6 +114,51 @@ async function clip(input, output, start, duration) {
 		"aac",
 		output,
 	]);
+}
+
+function trimChapterTranscript(directory, durationS) {
+	const file = path.join(directory, "transcript.srt");
+	if (!fs.existsSync(file)) return;
+	const original = fs.readFileSync(file, "utf8");
+	const milliseconds = (stamp) => {
+		const [hours, minutes, seconds, fraction] = stamp
+			.split(/[:,.]/)
+			.map(Number);
+		return ((hours * 60 + minutes) * 60 + seconds) * 1000 + fraction;
+	};
+	const stamp = (value) => {
+		const ms = Math.max(0, Math.round(value));
+		return `${String(Math.floor(ms / 3600000)).padStart(2, "0")}:${String(Math.floor(ms / 60000) % 60).padStart(2, "0")}:${String(Math.floor(ms / 1000) % 60).padStart(2, "0")},${String(ms % 1000).padStart(3, "0")}`;
+	};
+	const limit = Math.round(durationS * 1000);
+	let changed = false;
+	const cues = original
+		.trim()
+		.split(/\r?\n\s*\r?\n/)
+		.flatMap((cue) => {
+			const match = cue.match(
+				/^\d+\r?\n(\d{2,}:\d{2}:\d{2}[,.]\d{3}) --> (\d{2,}:\d{2}:\d{2}[,.]\d{3})([\s\S]*)$/,
+			);
+			if (!match) return [cue];
+			const start = milliseconds(match[1]);
+			const end = milliseconds(match[2]);
+			if (start >= limit) {
+				changed = true;
+				return [];
+			}
+			if (end <= limit) return [cue];
+			changed = true;
+			return [`0\n${stamp(start)} --> ${stamp(limit)}${match[3]}`];
+		});
+	if (!changed) return;
+	const source = path.join(directory, "transcript-source.srt");
+	if (!fs.existsSync(source)) fs.copyFileSync(file, source);
+	const trimmed = cues
+		.map((cue, index) => cue.replace(/^\d+/, String(index + 1)))
+		.join("\n\n");
+	const temporary = `${file}.tmp`;
+	fs.writeFileSync(temporary, trimmed ? `${trimmed}\n` : "", { mode: 0o600 });
+	fs.renameSync(temporary, file);
 }
 
 const escapeHTML = (value) =>
@@ -256,53 +302,25 @@ export async function finishNativeWalk(file, cfg, dependencies = {}) {
 	fs.writeFileSync(owner, JSON.stringify({ pid: process.pid }), {
 		mode: 0o600,
 	});
-	const progress = (state, error) =>
+	const stages = {};
+	const progress = (state, error, changes = {}) => {
+		Object.assign(stages, changes);
 		save(path.join(directory, "processing.json"), {
 			state,
+			...stages,
 			...(error ? { error } : {}),
 		});
+	};
 	try {
-		progress("processing");
+		progress("processing", null, {
+			transcript: "waiting",
+			video: "exporting",
+			startedAt: new Date().toISOString(),
+		});
 		const project = snapshotNativeWalk(file);
 		const video = path.join(directory, "media/video.mp4");
 		const exportInfo = path.join(directory, "media/export.json");
 		const client = dependencies.client ?? new CapClient();
-		let info;
-		if (fs.existsSync(exportInfo) && fs.existsSync(video))
-			info = JSON.parse(fs.readFileSync(exportInfo, "utf8"));
-		else {
-			const temporary = path.join(
-				directory,
-				`media/export-${randomUUID()}.mp4`,
-			);
-			info = await client.export(project, temporary);
-			fs.renameSync(temporary, video);
-			if (!(info.durationS > 0))
-				throw new Error("Cap export has no positive duration");
-			await capManifest(project, video, info, {
-				source: "Cap native elapsed clock; excludes pauses",
-				exactFirstFrame: false,
-			});
-			save(exportInfo, info);
-		}
-		const durationMs = Math.min(
-			journal.durationMs,
-			Math.round(info.durationS * 1000),
-		);
-		const boundaries = [
-			{ text: "Walkthrough", offsetMs: 0 },
-			...journal.events.filter(
-				(event) =>
-					event.kind === "chapter" &&
-					event.offsetMs > 0 &&
-					event.offsetMs < durationMs,
-			),
-		];
-		const unique = boundaries.filter(
-			(event, index) =>
-				index === boundaries.length - 1 ||
-				event.offsetMs !== boundaries[index + 1].offsetMs,
-		);
 		const { resolveGlossaries } = await import(new URL("glossary.mjs", engine));
 		const glossaries = resolveGlossaries(cfg.glossary || "");
 		const browser = projectBrowserEvidence(file, journal);
@@ -321,16 +339,18 @@ export async function finishNativeWalk(file, cfg, dependencies = {}) {
 				...browser.coverage,
 			},
 		};
-		const notes = journal.events
-			.filter((event) => event.kind === "note")
-			.map((event, index) => ({
-				ev: "note",
-				id: `walk-${index + 1}`,
-				mode: "walk",
-				t: journal.startedAtMs + event.offsetMs,
-				text: event.text,
-			}));
-		const actions = [...notes, ...browser.events].sort((a, b) => a.t - b.t);
+		const actions = [
+			...journal.events
+				.filter((event) => event.kind === "note")
+				.map((event, index) => ({
+					ev: "note",
+					id: `walk-${index + 1}`,
+					mode: "walk",
+					t: journal.startedAtMs + event.offsetMs,
+					text: event.text,
+				})),
+			...browser.events,
+		].sort((a, b) => a.t - b.t);
 		fs.writeFileSync(
 			path.join(directory, "actions.jsonl"),
 			actions.map((event) => JSON.stringify(event)).join("\n") +
@@ -338,49 +358,201 @@ export async function finishNativeWalk(file, cfg, dependencies = {}) {
 			{ mode: 0o600 },
 		);
 		const processing = await import(new URL("process.mjs", engine));
+		const processChapter =
+			dependencies.processChapter ?? processing.processChapter;
 		const { writeReport } = await import(new URL("report.mjs", engine));
-		for (const [index, boundary] of unique.entries()) {
-			const end = unique[index + 1]?.offsetMs ?? durationMs;
-			const name = chapterName(index + 1, boundary.text);
-			const chapterDir = path.join(directory, name);
-			fs.mkdirSync(chapterDir, { recursive: true });
-			const row = {
-				n: index + 1,
-				name: boundary.text,
-				dir: name,
-				startMs: journal.startedAtMs + boundary.offsetMs,
-				endMs: journal.startedAtMs + end,
-				status: "processing",
-			};
-			session.chapters.push(row);
-			save(path.join(directory, "session.json"), session);
-			save(path.join(chapterDir, "chapter.json"), {
-				...row,
-				topic: session.topic,
-				url: session.url,
-				kind: session.kind,
-				speakers: session.speakers,
-				glossaries,
-				actions: "../actions.jsonl",
-				sourceProject: "../media/source.cap",
-				sourceRange: { startS: boundary.offsetMs / 1000, endS: end / 1000 },
+		const chapters = (durationMs) => {
+			const boundaries = [
+				{ text: "Walkthrough", offsetMs: 0 },
+				...journal.events.filter(
+					(event) =>
+						event.kind === "chapter" &&
+						event.offsetMs > 0 &&
+						event.offsetMs < durationMs,
+				),
+			];
+			const unique = boundaries.filter(
+				(event, index) =>
+					index === boundaries.length - 1 ||
+					event.offsetMs !== boundaries[index + 1].offsetMs,
+			);
+			session.chapters = unique.map((boundary, index) => {
+				const end = unique[index + 1]?.offsetMs ?? durationMs;
+				const name = chapterName(index + 1, boundary.text);
+				const chapterDir = path.join(directory, name);
+				fs.mkdirSync(chapterDir, { recursive: true });
+				const row = {
+					n: index + 1,
+					name: boundary.text,
+					dir: name,
+					startMs: journal.startedAtMs + boundary.offsetMs,
+					endMs: journal.startedAtMs + end,
+					status: "processing",
+				};
+				save(path.join(chapterDir, "chapter.json"), {
+					...row,
+					topic: session.topic,
+					url: session.url,
+					kind: session.kind,
+					speakers: session.speakers,
+					glossaries,
+					actions: "../actions.jsonl",
+					sourceProject: "../media/source.cap",
+					sourceRange: { startS: boundary.offsetMs / 1000, endS: end / 1000 },
+				});
+				return row;
 			});
+			save(path.join(directory, "session.json"), session);
+			return session.chapters;
+		};
+		const earlyRows = chapters(journal.durationMs);
+		const earlyResults = new Map();
+		const audio = (async () => {
+			if (cfg.transcriber === "none") {
+				progress("processing", null, { transcript: "disabled" });
+				return;
+			}
+			const source = await (dependencies.prepareAudio ?? prepareNativeAudio)(
+				project,
+				directory,
+			);
+			if (!source) {
+				progress("processing", null, { transcript: "waiting for video" });
+				return;
+			}
+			progress("processing", null, {
+				transcript: "transcribing",
+				audioReadyAt: new Date().toISOString(),
+			});
+			for (const row of earlyRows) {
+				const chapterDir = path.join(directory, row.dir);
+				const media = path.join(chapterDir, "source-audio.m4a");
+				const start = (row.startMs - journal.startedAtMs) / 1000;
+				const duration = Math.min(
+					(row.endMs - row.startMs) / 1000,
+					source.durationS - start,
+				);
+				if (!(duration > 0)) continue;
+				if (!fs.existsSync(media)) {
+					const temporary = path.join(chapterDir, "source-audio.tmp.m4a");
+					try {
+						await (dependencies.clipAudio ?? clipNativeAudio)(
+							source.path,
+							temporary,
+							start,
+							duration,
+						);
+						fs.renameSync(temporary, media);
+					} finally {
+						fs.rmSync(temporary, { force: true });
+					}
+				}
+				const summary = await processChapter(chapterDir, cfg, {
+					transcriptOnly: true,
+					media,
+					brief: false,
+					log: () => {},
+				});
+				earlyResults.set(row.dir, summary);
+			}
+			const results = [...earlyResults.values()];
+			const ready =
+				results.length > 0 && results.every((result) => result?.transcript);
+			progress("processing", null, {
+				transcript: results.some((result) => result?.transcriptError)
+					? "failed"
+					: ready
+						? "ready"
+						: "unavailable",
+				...(ready ? { transcriptReadyAt: new Date().toISOString() } : {}),
+			});
+		})().catch((error) => {
+			progress("processing", null, {
+				transcript: "waiting for video",
+				audioError: error.message,
+			});
+		});
+		const exportVideo = (async () => {
+			if (fs.existsSync(exportInfo) && fs.existsSync(video)) {
+				progress("processing", null, { video: "ready" });
+				return JSON.parse(fs.readFileSync(exportInfo, "utf8"));
+			}
+			const temporary = path.join(
+				directory,
+				`media/export-${randomUUID()}.mp4`,
+			);
+			try {
+				const info = await client.export(project, temporary);
+				if (!(info.durationS > 0))
+					throw new Error("Cap export has no positive duration");
+				fs.renameSync(temporary, video);
+				await capManifest(project, video, info, {
+					source: "Cap native elapsed clock; excludes pauses",
+					exactFirstFrame: false,
+				});
+				save(exportInfo, info);
+				progress("processing", null, {
+					video: "ready",
+					videoReadyAt: new Date().toISOString(),
+				});
+				return info;
+			} finally {
+				fs.rmSync(temporary, { force: true });
+			}
+		})();
+		const [videoResult] = await Promise.allSettled([exportVideo, audio]);
+		if (videoResult.status === "rejected") {
+			stages.video = "failed";
+			throw videoResult.reason;
+		}
+		const info = videoResult.value;
+		const durationMs = Math.min(
+			journal.durationMs,
+			Math.round(info.durationS * 1000),
+		);
+		const rows = chapters(durationMs);
+		for (const row of rows) {
+			const chapterDir = path.join(directory, row.dir);
+			const startS = (row.startMs - journal.startedAtMs) / 1000;
+			const durationS = (row.endMs - row.startMs) / 1000;
 			const output = path.join(chapterDir, "video.mp4");
 			if (!fs.existsSync(output)) {
 				const temporary = path.join(chapterDir, "video.tmp.mp4");
-				await (dependencies.clip ?? clip)(
-					video,
-					temporary,
-					boundary.offsetMs / 1000,
-					(end - boundary.offsetMs) / 1000,
-				);
+				if (
+					rows.length === 1 &&
+					startS === 0 &&
+					Math.abs(durationS - info.durationS) <= 0.02
+				)
+					fs.copyFileSync(video, temporary, fs.constants.COPYFILE_FICLONE);
+				else
+					await (dependencies.clip ?? clip)(
+						video,
+						temporary,
+						startS,
+						durationS,
+					);
 				fs.renameSync(temporary, output);
 			}
+			trimChapterTranscript(chapterDir, durationS);
 			try {
-				const summary = await (
-					dependencies.processChapter ?? processing.processChapter
-				)(chapterDir, cfg, { brief: cfg.brief === true, log: () => {} });
-				row.status = summary?.transcriptError ? "no transcript" : "ready";
+				const early = earlyResults.get(row.dir);
+				const summary = await processChapter(
+					chapterDir,
+					early?.transcriptError ? { ...cfg, transcriber: "none" } : cfg,
+					{
+						brief: cfg.brief === true && !early?.transcriptError,
+						log: () => {},
+					},
+				);
+				if (early?.transcriptError)
+					save(path.join(chapterDir, "summary.json"), {
+						...summary,
+						transcriptError: early.transcriptError,
+					});
+				row.status =
+					early?.transcriptError || summary?.transcriptError
+						? "no transcript"
+						: "ready";
 			} catch (error) {
 				row.status = "failed";
 				save(path.join(directory, "session.json"), session);
@@ -396,7 +568,26 @@ export async function finishNativeWalk(file, cfg, dependencies = {}) {
 			`${nativeWalkPrompt(file, { prepared: true })}\n`,
 			{ mode: 0o600 },
 		);
-		progress("ready");
+		const transcriptFiles = rows.map((row) =>
+			path.join(directory, row.dir, "transcript.srt"),
+		);
+		const transcriptsReady =
+			transcriptFiles.length > 0 &&
+			transcriptFiles.every(
+				(file) => fs.existsSync(file) && fs.statSync(file).size > 0,
+			);
+		progress("ready", null, {
+			...(stages.transcript === "disabled"
+				? {}
+				: {
+						transcript: transcriptsReady
+							? "ready"
+							: rows.some((row) => row.status === "no transcript")
+								? "failed"
+								: "unavailable",
+					}),
+			reportReadyAt: new Date().toISOString(),
+		});
 		return directory;
 	} catch (error) {
 		progress("failed", error.message);

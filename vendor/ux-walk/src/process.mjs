@@ -160,8 +160,12 @@ async function grabShots(video, times, outDir) {
   await Promise.all([worker(), worker(), worker(), worker()]);
 }
 
-export async function processChapter(dir, cfg, { force = [], speakers, glossary, brief, quiet, log = console.log } = {}) {
+export async function processChapter(dir, cfg, { force = [], speakers, glossary, brief, quiet, transcriptOnly = false, media, log = console.log } = {}) {
   const ch = readChapter(dir);
+  if (media != null) {
+    if (!transcriptOnly) throw new Error('An alternate media input is only supported for transcript-only processing');
+    ch.video = path.resolve(media);
+  }
   const t0 = Date.now();
   // process.log (quiet) gets the time of each step, so a slow one shows.
   const step = (s) => log(`${quiet ? `[${new Date().toTimeString().slice(0, 8)}] ` : ''}[${ch.name}] ${s}`);
@@ -198,6 +202,7 @@ export async function processChapter(dir, cfg, { force = [], speakers, glossary,
   // 2. Screenshots and the transcript run side by side.
   const shotsDir = path.join(dir, 'shots');
   const shots = (async () => {
+    if (transcriptOnly) return;
     if (force.includes('shots')) fs.rmSync(shotsDir, { recursive: true, force: true });
     if (fs.existsSync(shotsDir) && fs.readdirSync(shotsDir).length) return;
     if (!hasVideo) return; // a voice memo
@@ -247,6 +252,10 @@ export async function processChapter(dir, cfg, { force = [], speakers, glossary,
   if (s1.status === 'rejected') step(`screenshots failed: ${s1.reason.message}`);
   const transcriptError = s2.status === 'rejected' ? s2.reason : null;
   if (transcriptError) step(`transcript failed: ${transcriptError.message}`);
+  if (transcriptOnly) return {
+    transcript: fs.existsSync(path.join(dir, 'transcript.srt')),
+    ...(transcriptError ? { transcriptError: transcriptError.message } : {}),
+  };
 
   // 3. Timelines.
   const srtFile = path.join(dir, 'transcript.srt');
