@@ -22,6 +22,13 @@ export async function prepareNativeAudio(project, directory) {
 	const config = fs.existsSync(configFile)
 		? JSON.parse(fs.readFileSync(configFile, "utf8"))
 		: {};
+	if (
+		!config.clips?.length &&
+		fs.existsSync(
+			path.join(path.dirname(path.dirname(project)), "sync_calibrations.json"),
+		)
+	)
+		return null;
 	const timeline = config.timeline;
 	if (
 		config.audio?.mute ||
@@ -73,17 +80,18 @@ export async function prepareNativeAudio(project, directory) {
 		const latest = tracks.every((track) => Number.isFinite(track.start_time))
 			? Math.max(...tracks.map((track) => track.start_time))
 			: null;
-		const clip = config.clips?.find((item) => item.index === index);
+		const configuredClips = config.clips?.length > 0;
+		const clip = config.clips?.find((item) => (item.index ?? 0) === index);
 		segments.push({
 			segment,
 			durationS: span?.end ?? durationS,
 			offsets: Object.fromEntries(
 				["mic", "system_audio"].map((side) => {
-					const offset =
-						clip?.offsets?.[side] ??
-						(latest == null
+					const offset = configuredClips
+						? (clip?.offsets?.[side] ?? 0)
+						: latest == null
 							? 0
-							: latest - (segment[side]?.start_time ?? latest));
+							: latest - (segment[side]?.start_time ?? latest);
 					return [side, offset];
 				}),
 			),
@@ -102,7 +110,7 @@ export async function prepareNativeAudio(project, directory) {
 	if (Object.values(gain).some((value) => !Number.isFinite(value))) return null;
 	const sides = ["mic", "system_audio"].filter(
 		(side) =>
-			gain[side] > -30 && segments.some(({ segment }) => segment[side]?.path),
+			gain[side] >= -30 && segments.some(({ segment }) => segment[side]?.path),
 	);
 	if (!sides.length) return null;
 	if (sides.includes("system_audio") && !sides.includes("mic"))
@@ -166,7 +174,7 @@ export async function prepareNativeAudio(project, directory) {
 	for (const [index, { segment, durationS, offsets }] of segments.entries()) {
 		for (const side of sides) {
 			const label = `${side}${index}`;
-			if (gain[side] > -30 && segment[side]?.path) {
+			if (gain[side] >= -30 && segment[side]?.path) {
 				args.push("-i", mediaPath(project, segment[side].path));
 				const offset = offsets[side];
 				filters.push(

@@ -539,8 +539,16 @@ export async function finishNativeWalk(file, cfg, dependencies = {}) {
 				const summary = await processChapter(
 					chapterDir,
 					early?.transcriptError ? { ...cfg, transcriber: "none" } : cfg,
-					{ brief: cfg.brief === true, log: () => {} },
+					{
+						brief: cfg.brief === true && !early?.transcriptError,
+						log: () => {},
+					},
 				);
+				if (early?.transcriptError)
+					save(path.join(chapterDir, "summary.json"), {
+						...summary,
+						transcriptError: early.transcriptError,
+					});
 				row.status =
 					early?.transcriptError || summary?.transcriptError
 						? "no transcript"
