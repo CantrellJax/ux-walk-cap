@@ -108,7 +108,9 @@ pub fn notice(directory: &Path) -> String {
     };
     let clock = |value: u64| format!("{}:{:02}", value / 60000, value / 1000 % 60);
     let local = status["localClockThroughMs"].as_u64().unwrap_or(0);
-    let remote = status["remoteClockThroughMs"].as_u64().filter(|value| *value > 0);
+    let remote = status["remoteClockThroughMs"]
+        .as_u64()
+        .filter(|value| *value > 0);
     let sources = status["sources"]
         .as_object()
         .map_or(0, |sources| sources.len());
