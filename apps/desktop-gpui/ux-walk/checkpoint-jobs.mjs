@@ -106,6 +106,28 @@ export class CheckpointJobs {
 		durableJson(this.jobPath(jobId), job);
 		return job;
 	}
+	retry(id) {
+		if (this.running)
+			throw new Error(
+				"Wait for the active transcription request before retrying",
+			);
+		const job = this.read(id);
+		if (!["failed", "ambiguous"].includes(job.state))
+			throw new Error(
+				"Only failed or ambiguous jobs can be explicitly retried",
+			);
+		if ((job.manualRetries ?? 0) >= 3)
+			throw new Error(
+				"This job reached its three manual retry limit; retained source audio can be processed separately",
+			);
+		durableJson(this.jobPath(id), {
+			...job,
+			state: "prepared",
+			manualRetries: (job.manualRetries ?? 0) + 1,
+			retryAcknowledgedAt: Date.now(),
+			priorError: job.error,
+		});
+	}
 	async audio(job) {
 		const output = path.join(this.store.root, "jobs", `${job.jobId}.wav`);
 		if (fs.existsSync(output)) return output;

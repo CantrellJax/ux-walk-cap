@@ -719,6 +719,7 @@ export async function runCheckpointWorker(file, cfg, dependencies = {}) {
 			sessionGeneration: initial.generation,
 			transport: dependencies.transport,
 		});
+		if (dependencies.retryJobId) worker.jobs.retry(dependencies.retryJobId);
 		let terminalAt = null;
 		let previousPaused = null;
 		for (;;) {
@@ -788,7 +789,9 @@ if (
 	path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
 	const { loadConfig } = await import(new URL("config.mjs", engine));
-	runCheckpointWorker(process.argv[2], loadConfig()).catch((error) => {
+	runCheckpointWorker(process.argv[2], loadConfig(), {
+		retryJobId: process.argv[3] === "--retry-job" ? process.argv[4] : undefined,
+	}).catch((error) => {
 		console.error(error.message);
 		process.exitCode = 1;
 	});
