@@ -131,7 +131,7 @@ test("edited timelines and muted microphone use the rendered-audio fallback", as
 			config.audio = { mute: true };
 		},
 		(config) => {
-			config.audio = { micVolumeDb: -30 };
+			config.audio = { micVolumeDb: -31 };
 		},
 	]) {
 		const f = fixture(t);
@@ -150,7 +150,7 @@ test("present clip configuration defaults omitted audio offsets to zero", async 
 	delete f.segments[0].mic;
 	f.segments[0].mic = { path: "opening.m4a", start_time: 0 };
 	f.segments[0].camera = { path: "display.mp4", start_time: 0.2 };
-	f.config.clips[0].offsets = {};
+	f.config.clips[0] = { offsets: {} };
 	execFileSync("ffmpeg", [
 		"-v",
 		"error",
@@ -170,4 +170,17 @@ test("present clip configuration defaults omitted audio offsets to zero", async 
 		rms(result.path, 0.02) > 0.01,
 		"opening speech must not be trimmed by an omitted offset field",
 	);
+});
+
+test("exactly minus thirty decibels remains audible like the renderer", async (t) => {
+	const f = fixture(t);
+	f.config.audio = { micVolumeDb: -30 };
+	f.save();
+	const result = await prepareNativeAudio(f.project, f.directory);
+	assert.ok(
+		result,
+		"the renderer only suppresses gains strictly below minus thirty decibels",
+	);
+	const level = rms(result.path, 0.02);
+	assert.ok(level > 0.0001 && level < 0.005);
 });
