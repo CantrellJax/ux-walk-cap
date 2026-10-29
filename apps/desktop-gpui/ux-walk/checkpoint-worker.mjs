@@ -910,6 +910,27 @@ export async function runCheckpointWorker(file, cfg, dependencies = {}) {
 			await lease.release();
 		}
 	}
+	if (
+		worker?.phase === "stopped" &&
+		readJson(file).state === "complete" &&
+		fs.existsSync(path.join(directory, "processing.json"))
+	) {
+		try {
+			const reconcile =
+				dependencies.reconcileReport ??
+				(await import("./native-walk.mjs")).finishNativeWalk;
+			await reconcile(file, cfg, {
+				reconcileStopTail: true,
+				reconcileWaitMs: dependencies.reconcileWaitMs,
+			});
+		} catch (error) {
+			durableJson(path.join(directory, `report-refresh-${randomUUID()}.json`), {
+				schemaVersion: 1,
+				error: String(error.message).slice(0, 500),
+				attemptedAt: Date.now(),
+			});
+		}
+	}
 }
 
 if (
