@@ -1395,7 +1395,7 @@ impl RecordingSession {
         }
         self.stopped_elapsed = Some(self.elapsed());
         if let Some(walk) = self.walk.as_ref() {
-            crate::ux_walk_browser::clock(walk, self.elapsed().as_millis() as u64, true);
+            crate::ux_walk_browser::stopping(walk, self.elapsed().as_millis() as u64);
         }
         self.pause_control.cancel_for_stop();
         self.phase = Phase::Stopping;

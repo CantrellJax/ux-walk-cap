@@ -18,6 +18,7 @@ const included = [
 	"prompts",
 	"swift",
 	"skills",
+	"extension",
 	"assets/foot.svg",
 	"assets/ux-walk.icns",
 	"test/unit/embedded-config.test.mjs",
@@ -25,6 +26,11 @@ const included = [
 	"test/unit/cap-editor-handoff.test.mjs",
 	"test/unit/transcript-only.test.mjs",
 	"test/unit/transcript-words.test.mjs",
+	"test/unit/companion.test.mjs",
+	"test/unit/companion-owner-race.test.mjs",
+	"test/unit/companion-controller.test.mjs",
+	"test/unit/companion-install.test.mjs",
+	"test/unit/meet-attribution.test.mjs",
 ];
 
 export async function verifyUxWalkSource(directory = engineDirectory) {

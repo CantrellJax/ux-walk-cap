@@ -41,6 +41,19 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  companion:
+    if: github.repository == 'CantrellJax/ux-walk-cap'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify pinned companion source
+        run: node --input-type=module -e 'import { verifyUxWalkSource } from "./scripts/sync-ux-walk.mjs"; await verifyUxWalkSource();'
+      - name: Exercise owner, native-host protocol, recovery and role guards
+        run: node --test --test-concurrency=1 apps/desktop-gpui/ux-walk/companion-*.test.mjs apps/desktop-gpui/ux-walk/browser-evidence.test.mjs vendor/ux-walk/test/unit/companion*.test.mjs vendor/ux-walk/test/unit/meet-attribution.test.mjs
   cloud:
     if: github.repository == 'CantrellJax/ux-walk-cap'
     runs-on: ubuntu-latest

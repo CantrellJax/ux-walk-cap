@@ -1,8 +1,9 @@
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import readline from "node:readline";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
 	redactBrowserText,
 	sanitizeBrowserEvent,
@@ -10,9 +11,14 @@ import {
 import { durableJson } from "./checkpoint-store.mjs";
 
 const local = new URL("./src/config.mjs", import.meta.url);
-const engine = fs.existsSync(local)
-	? new URL("./src/", import.meta.url)
-	: new URL("../../../vendor/ux-walk/src/", import.meta.url);
+const engine = process.env.CAP_UX_TEST_ENGINE_DIR
+	? pathToFileURL(`${path.resolve(process.env.CAP_UX_TEST_ENGINE_DIR)}/src/`)
+	: fs.existsSync(local)
+		? new URL("./src/", import.meta.url)
+		: new URL("../../../vendor/ux-walk/src/", import.meta.url);
+const { CompanionSession, startCompanionServer } = await import(
+	new URL("companion.mjs", engine)
+);
 
 function save(file, value) {
 	durableJson(file, value);
@@ -23,6 +29,9 @@ export class NativeBrowserEvidence {
 		this.captureId = captureId;
 		this.workDir = workDir;
 		this.clock = clock;
+		this.monotonic = clock === Date.now ? () => performance.now() : clock;
+		this.anchorMonotonic = this.monotonic();
+		this.clockEpoch = 0;
 		this.windowId = null;
 		this.mode = "prepared";
 		this.preRoll = [];
@@ -48,32 +57,62 @@ export class NativeBrowserEvidence {
 		return path.join(this.active?.directory ?? this.workDir, "notes");
 	}
 
-	write(raw, receivedAt = this.clock()) {
-		if (!["prepared", "recording"].includes(this.mode)) return;
+	write(raw, receivedAt = this.clock(), companion = false) {
+		if (
+			!["prepared", "recording"].includes(this.mode) ||
+			(!companion &&
+				(raw?.source === "chrome-extension" ||
+					String(raw?.ev).startsWith("meet-")))
+		)
+			return false;
 		const event = sanitizeBrowserEvent(raw, receivedAt);
-		if (!event) return;
-		const line = `${JSON.stringify(event)}\n`;
+		if (!event) return false;
 		if (this.mode === "prepared") {
+			const line = `${JSON.stringify(event)}\n`;
 			this.preRoll.push(line);
 			this.preRollBytes += Buffer.byteLength(line);
 			while (this.preRollBytes > 2 * 1024 * 1024)
 				this.preRollBytes -= Buffer.byteLength(this.preRoll.shift());
-			return;
+			return false;
 		}
-		if (event.observedAt < this.active.metadata.startedAtMs) {
+		const latest = this.active.metadata.anchors.at(-1);
+		if (latest.paused || this.active.metadata.state !== "recording")
+			return false;
+		if (
+			companion &&
+			this.active.metadata.browserMode !== "external" &&
+			event.companion.role === "walkthrough" &&
+			event.ev === "click"
+		)
+			return false;
+		event.nativeOffsetMs = Math.round(
+			Math.max(
+				latest.offsetMs,
+				latest.offsetMs +
+					this.monotonic() -
+					this.anchorMonotonic -
+					(event.timingUncertain
+						? 0
+						: Math.max(0, Math.min(30000, receivedAt - event.observedAt))),
+			),
+		);
+		event.receivedAt = receivedAt;
+		event.clockEpoch = this.clockEpoch;
+		const line = `${JSON.stringify(event)}\n`;
+		if (event.observedAt < this.active.metadata.startedAtMs && !companion) {
 			const file = path.join(this.active.directory, "browser-preroll.jsonl");
 			if (fs.statSync(file).size + Buffer.byteLength(line) <= 2 * 1024 * 1024)
 				fs.appendFileSync(file, line, { mode: 0o600 });
 			else this.active.metadata.dropped++;
-			return;
+			return false;
 		}
 		const anchor = this.active.metadata.anchors.findLast(
 			(entry) => entry.wallMs <= event.observedAt,
 		);
-		if (!anchor || anchor.paused) return;
+		if ((!anchor || anchor.paused) && !companion) return false;
 		if (this.bytes + Buffer.byteLength(line) > 100 * 1024 * 1024) {
 			this.active.metadata.dropped++;
-			return;
+			return false;
 		}
 		this.bytes += Buffer.byteLength(line);
 		fs.appendFileSync(
@@ -81,9 +120,10 @@ export class NativeBrowserEvidence {
 			line,
 			{ mode: 0o600 },
 		);
+		return true;
 	}
 
-	start(file, windowId) {
+	start(file, windowId, { mode = "owned" } = {}) {
 		if (this.active || !this.windowId || windowId !== this.windowId)
 			throw new Error("Browser window does not match the recording target");
 		const journal = JSON.parse(fs.readFileSync(file, "utf8"));
@@ -101,9 +141,12 @@ export class NativeBrowserEvidence {
 		const metadata = {
 			schemaVersion: 1,
 			captureId: this.captureId,
+			recordingId: randomUUID(),
+			generation: randomUUID(),
 			journal: fs.realpathSync(file),
 			sourceProject: fs.realpathSync(journal.sourceProject),
 			windowId,
+			browserMode: mode,
 			state: "recording",
 			startedAtMs: journal.startedAtMs,
 			dropped: 0,
@@ -134,8 +177,57 @@ export class NativeBrowserEvidence {
 		this.preRoll = [];
 		this.preRollBytes = 0;
 		this.mode = "recording";
+		this.anchorMonotonic = this.monotonic();
+		this.clockEpoch = 0;
 		this.save();
 		return metadata;
+	}
+
+	companion() {
+		if (!this.active) throw new Error("Native recording has not started");
+		const { metadata, directory } = this.active;
+		metadata.companion ??= {};
+		return new CompanionSession({
+			recordingId: metadata.recordingId,
+			generation: metadata.generation,
+			backend: "cap",
+			mode: metadata.browserMode,
+			metadata: metadata.companion,
+			clock: this.clock,
+			epoch: () => this.clockEpoch,
+			state: () =>
+				!this.active ||
+				this.mode !== "recording" ||
+				metadata.state !== "recording"
+					? "finishing"
+					: metadata.anchors.at(-1).paused
+						? "paused"
+						: "recording",
+			write: async (event) => this.write(event, this.clock(), true),
+			flush: async () => this.flush(),
+			persist: async () => this.save(),
+			details: () => {
+				let backup = {};
+				try {
+					const status = JSON.parse(
+						fs.readFileSync(path.join(directory, "checkpoint-status.json")),
+					);
+					backup = {
+						enabled: status.backupEnabled,
+						clockThroughMs: status.remoteClockThroughMs,
+						events: status.events,
+						updatedAt: status.updatedAt,
+					};
+				} catch {}
+				return {
+					audio: {
+						scope:
+							"All computer audio, separately from microphone; meeting video is off",
+					},
+					backup,
+				};
+			},
+		});
 	}
 
 	owned(file) {
@@ -154,12 +246,14 @@ export class NativeBrowserEvidence {
 		if (
 			!Number.isSafeInteger(wallMs) ||
 			!Number.isSafeInteger(offsetMs) ||
-			wallMs < previous.wallMs ||
+			wallMs < 0 ||
 			offsetMs < previous.offsetMs ||
 			typeof paused !== "boolean"
 		)
 			throw new Error("Invalid native recording clock anchor");
 		metadata.anchors.push({ wallMs, offsetMs, paused });
+		if (paused !== previous.paused) this.clockEpoch++;
+		this.anchorMonotonic = this.monotonic();
 		this.save();
 	}
 
@@ -198,7 +292,6 @@ export class NativeBrowserEvidence {
 		this.save();
 		this.active = null;
 		this.mode = "stopped";
-		clearInterval(this.flushTimer);
 	}
 }
 
@@ -269,7 +362,7 @@ export async function flushNativeNotes(browser, evidence, events, throughMs) {
 	await events.flush();
 }
 
-export async function runNativeBrowser(captureId, workDir) {
+export async function runNativeBrowser(captureId, workDir, external = false) {
 	if (
 		!/^[a-f\d-]{36}$/i.test(captureId) ||
 		!path.isAbsolute(workDir) ||
@@ -277,8 +370,12 @@ export async function runNativeBrowser(captureId, workDir) {
 		path.basename(path.dirname(workDir)) !== "walk-browser"
 	)
 		throw new Error("Invalid browser owner");
-	const { loadConfig } = await import(new URL("config.mjs", engine));
-	const { openBrowser } = await import(new URL("browser.mjs", engine));
+	const { loadConfig, CONFIG_DIR } = await import(
+		new URL("config.mjs", engine)
+	);
+	const openBrowser = external
+		? null
+		: (await import(new URL("browser.mjs", engine))).openBrowser;
 	const cfg = loadConfig();
 	const evidence = new NativeBrowserEvidence(captureId, workDir);
 	const events = new OwnedWindowEvents(evidence);
@@ -297,36 +394,46 @@ export async function runNativeBrowser(captureId, workDir) {
 			`<!doctype html><title>${marker}</title><body style="font:18px system-ui;padding:48px">Opening your UX Walk…`,
 		);
 	});
-	await new Promise((resolve) => bootstrap.listen(0, "127.0.0.1", resolve));
-	const browser = await openBrowser({
-		url: `http://127.0.0.1:${bootstrap.address().port}/walk/${captureId}`,
-		metadataOnly: false,
-		authFile: cfg.authFile,
-		windowSize: cfg.windowSize,
-		trace: false,
-		ignoreWrites: cfg.ignoreWrites,
-		write: (event, page) => events.write(event, page),
-		notesDir: () => evidence.notesDir(),
-		contextSelectors: cfg.contextSelectors,
-		canCapturePage: (page) => events.canCapturePage(page),
-		genericTestids: cfg.genericTestids,
-		onCommand: () =>
-			"Use Cap UX recording controls for notes, chapters and pause.",
-	}).catch((error) => {
-		bootstrap.closeAllConnections();
-		bootstrap.close();
-		throw error;
-	});
+	if (!external)
+		await new Promise((resolve) => bootstrap.listen(0, "127.0.0.1", resolve));
+	const browser = external
+		? {
+				saveAuth: async () => {},
+				close: async () => {},
+				browser: { once: () => {} },
+			}
+		: await openBrowser({
+				url: `http://127.0.0.1:${bootstrap.address().port}/walk/${captureId}`,
+				metadataOnly: false,
+				authFile: cfg.authFile,
+				windowSize: cfg.windowSize,
+				trace: false,
+				ignoreWrites: cfg.ignoreWrites,
+				write: (event, page) => events.write(event, page),
+				notesDir: () => evidence.notesDir(),
+				contextSelectors: cfg.contextSelectors,
+				canCapturePage: (page) => events.canCapturePage(page),
+				genericTestids: cfg.genericTestids,
+				onCommand: () =>
+					"Use Cap UX recording controls for notes, chapters and pause.",
+			}).catch((error) => {
+				bootstrap.closeAllConnections();
+				bootstrap.close();
+				throw error;
+			});
 	const saveAuth = browser.saveAuth.bind(browser);
 	browser.saveAuth = () =>
 		evidence.active && evidence.mode === "recording"
 			? saveAuth()
 			: Promise.resolve();
 	let closing = false;
+	let companionServer = null;
 	const close = async () => {
 		if (closing) return;
 		closing = true;
 		evidence.mode = "closing";
+		if (companionServer) await companionServer.close();
+		clearInterval(evidence.flushTimer);
 		try {
 			if (evidence.active) {
 				await saveAuth();
@@ -341,7 +448,7 @@ export async function runNativeBrowser(captureId, workDir) {
 				await browser.close();
 			} finally {
 				bootstrap.closeAllConnections();
-				bootstrap.close();
+				if (bootstrap.listening) bootstrap.close();
 				fs.rmSync(workDir, { recursive: true, force: true });
 			}
 		}
@@ -360,12 +467,23 @@ export async function runNativeBrowser(captureId, workDir) {
 					if (message.captureId !== captureId)
 						throw new Error("Browser owner mismatch");
 					switch (message.op) {
+						case "bind-external":
+							if (!external || evidence.windowId)
+								throw new Error(
+									"External evidence owner is already bound or unavailable",
+								);
+							evidence.windowId = message.windowId || "external";
+							break;
 						case "bind":
 							if (evidence.windowId || !/^\d+$/.test(message.windowId))
 								throw new Error("Browser window is already bound or invalid");
 							evidence.windowId = message.windowId;
 							break;
 						case "navigate": {
+							if (external)
+								throw new Error(
+									"External evidence collection does not control a browser",
+								);
 							if (!evidence.windowId)
 								throw new Error("Select the browser window before navigation");
 							const url = new URL(message.url);
@@ -385,7 +503,31 @@ export async function runNativeBrowser(captureId, workDir) {
 							break;
 						}
 						case "start":
-							evidence.start(message.file, message.windowId);
+							evidence.start(message.file, message.windowId || "external", {
+								mode: external ? "external" : "owned",
+							});
+							companionServer = await startCompanionServer({
+								configDir: CONFIG_DIR,
+								session: evidence.companion(),
+								recorderPid: process.ppid,
+								dispatch: (request) => {
+									const result = commands.then(() =>
+										evidence.companion().handle(request),
+									);
+									commands = result.catch(() => {});
+									return result;
+								},
+							});
+							break;
+						case "finishing":
+							evidence.anchor(
+								message.file,
+								message.wallMs,
+								message.offsetMs,
+								true,
+							);
+							evidence.active.metadata.state = "finishing";
+							evidence.save();
 							break;
 						case "clock": {
 							const wasPaused = evidence
@@ -397,7 +539,7 @@ export async function runNativeBrowser(captureId, workDir) {
 								message.offsetMs,
 								message.paused,
 							);
-							if (message.paused && !wasPaused) {
+							if (message.paused && !wasPaused && !external) {
 								noteFlush = noteFlush
 									.then(() =>
 										flushNativeNotes(browser, evidence, events, message.wallMs),
@@ -415,12 +557,21 @@ export async function runNativeBrowser(captureId, workDir) {
 						case "stop":
 							evidence.owned(message.file);
 							await noteFlush;
-							await new Promise((resolve) => setTimeout(resolve, 3200));
+							if (!external)
+								await new Promise((resolve) => setTimeout(resolve, 3200));
 							await events.flush();
 							await browser.saveAuth();
+							if (companionServer) {
+								await companionServer.close();
+								companionServer = null;
+							}
 							evidence.finish(message.file);
 							break;
 						case "abort":
+							if (companionServer) {
+								await companionServer.close();
+								companionServer = null;
+							}
 							evidence.finish(
 								message.file,
 								"failed",
@@ -461,7 +612,7 @@ export async function runNativeBrowser(captureId, workDir) {
 	for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"])
 		process.once(signal, () => input.close());
 	await events.flush();
-	if (!events.initial) {
+	if (!events.initial && !external) {
 		await close();
 		throw new Error(
 			"The bundled browser engine cannot identify the recorded page",
@@ -482,7 +633,11 @@ function isMainModule() {
 }
 
 if (isMainModule()) {
-	runNativeBrowser(process.argv[2], process.argv[3]).catch((error) => {
+	runNativeBrowser(
+		process.argv[2],
+		process.argv[3],
+		process.argv[4] === "--external",
+	).catch((error) => {
 		process.stdout.write(
 			`${JSON.stringify({ ready: false, error: redactBrowserText(error.message, 500) })}\n`,
 		);

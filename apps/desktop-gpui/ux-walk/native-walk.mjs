@@ -4,7 +4,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { projectBrowserEvidence, safeBrowserUrl } from "./browser-evidence.mjs";
+import {
+	projectBrowserEvidence,
+	projectMeetCaptions,
+	safeBrowserUrl,
+} from "./browser-evidence.mjs";
 import {
 	durableJson,
 	durableWrite,
@@ -259,6 +263,10 @@ function writeNativeReport(directory, session, journal, browser) {
 		.join("");
 	const browserLinks = [
 		'<a href="actions.jsonl">Timestamped actions and errors</a>',
+		fs.existsSync(path.join(directory, "meet.jsonl")) &&
+		fs.statSync(path.join(directory, "meet.jsonl")).size
+			? '<a href="meet.jsonl">Meet caption/name evidence (unconfirmed)</a>'
+			: "",
 		fs.existsSync(path.join(directory, "evidence.html"))
 			? '<a href="evidence.html">Detailed evidence</a>'
 			: "",
@@ -338,6 +346,30 @@ export async function finishNativeWalk(file, cfg, dependencies = {}) {
 		const { resolveGlossaries } = await import(new URL("glossary.mjs", engine));
 		const glossaries = resolveGlossaries(cfg.glossary || "");
 		const browser = projectBrowserEvidence(file, journal);
+		let meetingEvents = browser.events;
+		try {
+			meetingEvents = fs
+				.readFileSync(path.join(directory, "browser-evidence.jsonl"), "utf8")
+				.split("\n")
+				.filter(Boolean)
+				.flatMap((line) => {
+					try {
+						return [JSON.parse(line)];
+					} catch {
+						return [];
+					}
+				});
+		} catch {}
+		const meet = projectMeetCaptions(
+			meetingEvents,
+			journal.startedAtMs,
+			journal.durationMs,
+		);
+		durableWrite(
+			path.join(directory, "meet.jsonl"),
+			meet.map((event) => JSON.stringify(event)).join("\n") +
+				(meet.length ? "\n" : ""),
+		);
 		const session = {
 			topic: journal.request.topic,
 			url: safeBrowserUrl(journal.request.url),
@@ -975,6 +1007,13 @@ if (isMainModule()) {
 			const { loadConfig } = await import(new URL("config.mjs", engine));
 			const { runCheckpointWorker } = await import("./checkpoint-worker.mjs");
 			await runCheckpointWorker(file, loadConfig());
+		} else if (command === "companion-setup") {
+			const { registerCompanion } = await import(
+				new URL("companion-install.mjs", engine)
+			);
+			const result = registerCompanion();
+			await run("open", [result.extensionDirectory]);
+			console.log(JSON.stringify(result));
 		} else if (command === "prepare-edit") {
 			const { prepareCapEdit } = await import(new URL("cap.mjs", engine));
 			console.log(JSON.stringify(prepareCapEdit(snapshotNativeWalk(file))));

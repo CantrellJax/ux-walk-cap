@@ -22,6 +22,7 @@ pub(crate) struct UxWalkSettings {
     notice: Option<String>,
     key_status: &'static str,
     key_busy: bool,
+    companion_busy: bool,
     _subscriptions: Vec<gpui::Subscription>,
 }
 
@@ -57,6 +58,7 @@ impl UxWalkSettings {
             notice,
             key_status: "Checking Keychain…",
             key_busy: false,
+            companion_busy: false,
             _subscriptions: subscriptions,
         }
     }
@@ -278,7 +280,7 @@ impl SettingsWindow {
                         cx,
                     ),
                     self.ux_walk_field(6, cx),
-                    self.setting_row("Browser evidence", Some("Walks in the browser opened by Cap UX include clicks, page errors and failed requests alongside your video and notes. Other capture sources keep video and notes; each walk’s report shows the evidence available."), div().into_any_element()),
+                    self.setting_row("Browser evidence", Some("The Cap UX browser includes clicks, errors and failed requests. The companion adds selected-tab text/clicks and a separately selected Meet tab’s unconfirmed speaker captions to the same recording and private recovery log. Native computer audio includes other apps/tabs; use headphones. Meeting video is off."), self.button("ux-walk-companion", (ui::ButtonVariant::Gray, None), "Set up browser companion", self.ux_walk.companion_busy || !cfg!(target_os = "macos"), cx, |this, window, cx| this.ux_walk_setup_companion(window, cx)).into_any_element()),
                 ])
                 .into_any_element(),
                 self.ux_walk_notice(),
@@ -344,6 +346,23 @@ impl SettingsWindow {
             None,
             vec![self.rows(rows).into_any_element(), self.ux_walk_notice()],
         ).into_any_element()
+    }
+
+    fn ux_walk_setup_companion(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.ux_walk.companion_busy { return; }
+        self.ux_walk.companion_busy = true;
+        cx.notify();
+        cx.spawn_in(window, async move |this, cx| {
+            let result = cx.background_executor().spawn(async move { ux_walk::run_engine("companion-setup", &ux_walk::config_path()) }).await;
+            this.update_in(cx, |this, _, cx| {
+                this.ux_walk.companion_busy = false;
+                this.ux_walk.notice = Some(match result {
+                    Ok(_) => "Companion folder opened. In chrome://extensions enable Developer mode, choose Load unpacked, and select that folder. Reload an existing companion only after recording stops.".into(),
+                    Err(error) => error,
+                });
+                cx.notify();
+            }).ok();
+        }).detach();
     }
 
     fn ux_walk_edit_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
