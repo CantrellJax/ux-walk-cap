@@ -198,3 +198,21 @@ test("a descriptor never acknowledges missing data and tombstones forbid later p
 		404,
 	);
 });
+
+test("checkpoint coverage rejects reversed or future ranges and active clock regression", async () => {
+	for (const range of [{ activeStartMs: -1, activeEndMs: 1000 }, { activeStartMs: 1000, activeEndMs: 0 }, { activeStartMs: 0, activeEndMs: 1001 }, { activeStartMs: "0", activeEndMs: 1000 }]) {
+		const registration = await register();
+		const id = registration.recordingId;
+		const bytes = Buffer.from("synthetic");
+		const hash = digest(bytes);
+		await request(`/${id}/objects/${hash}`, { method: "PUT", headers, body: bytes });
+		const checkpoint = { schemaVersion: 1, recordingId: id, writerGeneration: registration.writerGeneration, sequence: 1, previousSequence: 0, activeThroughMs: 1000, clock: { wallMs: 2000, activeElapsedMs: 1000, paused: false }, objects: [{ kind: "events", sha256: hash, size: bytes.length, ...range }] };
+		assert.equal((await request(`/${id}/checkpoints/1`, { method: "PUT", headers, body: JSON.stringify(checkpoint) })).status, 400);
+	}
+	const registration = await register();
+	const id = registration.recordingId;
+	const checkpoint = { schemaVersion: 1, recordingId: id, writerGeneration: registration.writerGeneration, sequence: 1, previousSequence: 0, activeThroughMs: 1000, clock: { wallMs: 2000, activeElapsedMs: 1000, paused: false }, objects: [] };
+	assert.equal((await request(`/${id}/checkpoints/1`, { method: "PUT", headers, body: JSON.stringify(checkpoint) })).status, 200);
+	assert.equal((await request(`/${id}/checkpoints/2`, { method: "PUT", headers, body: JSON.stringify({ ...checkpoint, sequence: 2, previousSequence: 1, activeThroughMs: 999, clock: { ...checkpoint.clock, activeElapsedMs: 999 } }) })).status, 400);
+	assert.equal((await request(`/${id}/checkpoints/2`, { method: "PUT", headers, body: JSON.stringify({ ...checkpoint, sequence: 2, previousSequence: 1, clock: { ...checkpoint.clock, wallMs: 1999 } }) })).status, 200);
+});
