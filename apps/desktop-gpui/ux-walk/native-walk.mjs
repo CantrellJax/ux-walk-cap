@@ -288,6 +288,7 @@ export async function finishNativeWalk(file, cfg, dependencies = {}) {
 			: 0,
 	});
 	const stages = {};
+	let processingOwned = true;
 	let fullLease = null;
 	const progress = (state, error, changes = {}) => {
 		Object.assign(stages, changes);
@@ -698,6 +699,7 @@ export async function finishNativeWalk(file, cfg, dependencies = {}) {
 			!fs.existsSync(fullReceipt) &&
 			sealedUnsupportedFallback(directory, cfg)
 		) {
+			processingOwned = false;
 			await processingLease.release();
 			// This lease no longer owns status writes; let the new guarded attempt handle its own errors.
 			return finishNativeWalk(file, cfg, {
@@ -850,7 +852,7 @@ export async function finishNativeWalk(file, cfg, dependencies = {}) {
 		});
 		return directory;
 	} catch (error) {
-		progress("failed", error.message);
+		if (processingOwned) progress("failed", error.message);
 		throw error;
 	} finally {
 		try {
