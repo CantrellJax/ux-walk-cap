@@ -86,6 +86,56 @@ test(
 		await ready;
 		await command("bind-external", { windowId: "55" });
 		await command("start", { file, windowId: "55" });
+		const descriptorFile = path.join(configDir, "companion-session.json"),
+			ownerBefore = fs.readFileSync(descriptorFile, "utf8"),
+			secondId = randomUUID(),
+			secondDirectory = path.join(root, "second-walk"),
+			secondFile = path.join(secondDirectory, "native-walk.json");
+		fs.mkdirSync(secondDirectory);
+		fs.writeFileSync(
+			secondFile,
+			JSON.stringify({
+				...JSON.parse(fs.readFileSync(file)),
+				request: {
+					directory: secondDirectory,
+					topic: "Rejected second walk",
+					speakers: [],
+				},
+			}),
+		);
+		const rejected = spawnSync(
+			process.execPath,
+			[
+				fileURLToPath(new URL("./native-browser.mjs", import.meta.url)),
+				secondId,
+				path.join(root, "walk-browser", secondId),
+				"--external",
+			],
+			{
+				env,
+				timeout: 5000,
+				input: [
+					{ id: "second-bind", op: "bind-external", windowId: "66" },
+					{ id: "second-start", op: "start", windowId: "66", file: secondFile },
+					{ id: "second-close", op: "close" },
+				]
+					.map(
+						(message) =>
+							`${JSON.stringify({ ...message, captureId: secondId })}\n`,
+					)
+					.join(""),
+			},
+		);
+		assert.equal(rejected.status, 0, rejected.stderr.toString());
+		const rejection = rejected.stdout
+			.toString()
+			.trim()
+			.split("\n")
+			.map((line) => JSON.parse(line))
+			.find((message) => message.id === "second-start");
+		assert.equal(rejection.ok, false);
+		assert.match(rejection.error, /^Companion ownership conflict:/);
+		assert.equal(fs.readFileSync(descriptorFile, "utf8"), ownerBefore);
 		const engine =
 			process.env.CAP_UX_TEST_ENGINE_DIR ||
 			fileURLToPath(new URL("../../../vendor/ux-walk/", import.meta.url));
