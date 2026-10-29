@@ -6,7 +6,6 @@ import { NativeBrowserEvidence } from "./native-browser.mjs";
 
 test("companion status distinguishes selected audio and acknowledged notes, events and audio", async (t) => {
 	const root = fs.mkdtempSync("/tmp/cap-companion-status-");
-	t.after(() => fs.rmSync(root, { recursive: true, force: true }));
 	const directory = path.join(root, "walk"),
 		sourceProject = path.join(root, "source.cap"),
 		file = path.join(directory, "native-walk.json");
@@ -31,7 +30,11 @@ test("companion status distinguishes selected audio and acknowledged notes, even
 	);
 	evidence.windowId = "55";
 	evidence.start(file, "55", { mode: "external" });
-	t.after(() => evidence.finish(file, "failed"));
+	t.after(() => {
+		evidence.finish(file, "failed");
+		clearInterval(evidence.flushTimer);
+		fs.rmSync(root, { recursive: true, force: true });
+	});
 	const identity = {
 		recordingId: "backup-recording",
 		generation: "backup-generation",

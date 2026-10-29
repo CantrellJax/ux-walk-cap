@@ -24,6 +24,135 @@ function save(file, value) {
 	durableJson(file, value);
 }
 
+const recent = (timestamp, now) =>
+	Number.isSafeInteger(timestamp) &&
+	timestamp >= 0 &&
+	now - timestamp >= -1000 &&
+	now - timestamp <= 15000;
+function readOptional(file) {
+	try {
+		return JSON.parse(fs.readFileSync(file, "utf8"));
+	} catch {
+		return null;
+	}
+}
+function audioBackupState(status, expected) {
+	const kinds = ["microphone", "systemAudio"];
+	if (!expected || kinds.some((kind) => typeof expected[kind] !== "boolean"))
+		return "unconfirmed";
+	if (
+		!status.sources ||
+		typeof status.sources !== "object" ||
+		Array.isArray(status.sources) ||
+		!Array.isArray(status.waitingSources) ||
+		!status.sourceErrors ||
+		typeof status.sourceErrors !== "object" ||
+		Array.isArray(status.sourceErrors)
+	)
+		return "unconfirmed";
+	const selected = kinds.filter((kind) => expected[kind]);
+	if (!selected.length) return "not-selected";
+	for (const kind of selected) {
+		const sources = Object.entries(status.sources ?? {}).filter(([source]) =>
+			source.endsWith(`:${kind}`),
+		);
+		if (
+			Object.keys(status.sourceErrors ?? {}).some((source) =>
+				source.endsWith(`:${kind}`),
+			) ||
+			sources.some(([, source]) => source?.unsupported)
+		)
+			return "attention";
+		if (!sources.length || status.waitingSources?.includes(kind))
+			return "waiting";
+		for (const [, source] of sources) {
+			if (
+				![source?.durableSourceMs, source?.remoteSourceMs].every(
+					(value) => Number.isFinite(value) && value >= 0,
+				) ||
+				source.remoteSourceMs > source.durableSourceMs
+			)
+				return "unconfirmed";
+			if (
+				source.durableSourceMs === 0 ||
+				source.remoteSourceMs < source.durableSourceMs
+			)
+				return "waiting";
+		}
+	}
+	return "current";
+}
+
+function captureStatus(directory, now) {
+	const heartbeat = readOptional(
+		path.join(directory, "checkpoint-heartbeat.json"),
+	);
+	const validHeartbeat =
+		heartbeat?.schemaVersion === 1 &&
+		heartbeat.parentPid === process.ppid &&
+		recent(heartbeat.wallMs, now);
+	const selected = validHeartbeat ? heartbeat.expectedAudio : null;
+	const choice = (kind) =>
+		typeof selected?.[kind] === "boolean"
+			? selected[kind]
+				? "on"
+				: "off"
+			: "unconfirmed";
+	const audio = {
+		microphone: choice("microphone"),
+		systemAudio: choice("systemAudio"),
+		updatedAt: validHeartbeat ? heartbeat.wallMs : undefined,
+		scope:
+			"All computer audio, separately from microphone; meeting video is off",
+	};
+	const status = readOptional(path.join(directory, "checkpoint-status.json"));
+	const identity = readOptional(
+		path.join(directory, "checkpoints/identity.json"),
+	);
+	const backup = { eventState: "unconfirmed", audioState: "unconfirmed" };
+	if (
+		status?.schemaVersion !== 1 ||
+		!identity ||
+		typeof identity.recordingId !== "string" ||
+		!identity.recordingId ||
+		typeof identity.generation !== "string" ||
+		!identity.generation ||
+		status.recordingId !== identity.recordingId ||
+		status.generation !== identity.generation ||
+		typeof status.backupEnabled !== "boolean" ||
+		!recent(status.updatedAt, now)
+	)
+		return { audio, backup };
+	Object.assign(backup, {
+		enabled: status.backupEnabled,
+		updatedAt: status.updatedAt,
+		needsAttention: !!status.error,
+	});
+	if (!status.backupEnabled) return { audio, backup };
+	if (
+		Number.isSafeInteger(status.remoteClockThroughMs) &&
+		status.remoteClockThroughMs > 0
+	)
+		backup.journalThroughMs = status.remoteClockThroughMs;
+	const events = status.events;
+	if (
+		events &&
+		[events.readableBytes, events.durableBytes, events.remoteBytes].every(
+			(value) => Number.isSafeInteger(value) && value >= 0,
+		) &&
+		events.remoteBytes <= events.durableBytes &&
+		events.durableBytes <= events.readableBytes
+	)
+		backup.eventState =
+			events.readableBytes === 0
+				? "none"
+				: events.remoteBytes === events.readableBytes
+					? "current"
+					: "waiting";
+	backup.audioState = audioBackupState(status, selected);
+	return { audio, backup };
+}
+
 export class NativeBrowserEvidence {
 	constructor(captureId, workDir, clock = Date.now) {
 		this.captureId = captureId;
@@ -206,27 +335,7 @@ export class NativeBrowserEvidence {
 			write: async (event) => this.write(event, this.clock(), true),
 			flush: async () => this.flush(),
 			persist: async () => this.save(),
-			details: () => {
-				let backup = {};
-				try {
-					const status = JSON.parse(
-						fs.readFileSync(path.join(directory, "checkpoint-status.json")),
-					);
-					backup = {
-						enabled: status.backupEnabled,
-						clockThroughMs: status.remoteClockThroughMs,
-						events: status.events,
-						updatedAt: status.updatedAt,
-					};
-				} catch {}
-				return {
-					audio: {
-						scope:
-							"All computer audio, separately from microphone; meeting video is off",
-					},
-					backup,
-				};
-			},
+			details: () => captureStatus(directory, this.clock()),
 		});
 	}
 
