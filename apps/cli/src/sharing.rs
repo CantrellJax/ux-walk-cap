@@ -65,8 +65,12 @@ impl SharingArgs {
                 if disable {
                     settings.enabled = false;
                 }
-                if enable_backup { settings.backup_enabled = true; }
-                if disable_backup { settings.backup_enabled = false; }
+                if enable_backup {
+                    settings.backup_enabled = true;
+                }
+                if disable_backup {
+                    settings.backup_enabled = false;
+                }
                 if let Some(days) = expires_in_days {
                     settings.expires_in_days = days;
                 }

@@ -116,7 +116,9 @@ fn validate(key: &str, value: &Value) -> Result<(), String> {
         "agent" => value
             .as_str()
             .is_some_and(|id| HANDOFFS.iter().any(|(value, _)| *value == id)),
-        "askSpeakers" | "brief" | "screenNames" | "trace" | "liveTranscription" => value.is_boolean(),
+        "askSpeakers" | "brief" | "screenNames" | "trace" | "liveTranscription" => {
+            value.is_boolean()
+        }
         "me" | "url" | "outDir" | "sourceRoot" | "speakers" | "glossary" | "language" => {
             value.as_str().is_some_and(|text| !text.contains('\0'))
         }

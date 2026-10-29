@@ -59,8 +59,12 @@ fn reset_live(cx: &mut App) {
 }
 
 pub fn open_recovery(cx: &mut App) {
-    if ensure(true, cx).is_err() { return; }
-    if let Some(handle) = cx.global::<WalkWindows>().0 { let _ = handle.update(cx, |view, window, cx| view.load_recoveries(window, cx)); }
+    if ensure(true, cx).is_err() {
+        return;
+    }
+    if let Some(handle) = cx.global::<WalkWindows>().0 {
+        let _ = handle.update(cx, |view, window, cx| view.load_recoveries(window, cx));
+    }
 }
 
 pub fn open_saved(file: std::path::PathBuf, cx: &mut App) {
@@ -218,7 +222,8 @@ impl WalkWindow {
         cx.subscribe(&input, |this, _, event, cx| {
             if matches!(event, ui::TextInputEvent::Changed) {
                 let text = this.input.read(cx).text().to_string();
-                this.session.update(cx, |session, _| session.walk_note_draft = text);
+                this.session
+                    .update(cx, |session, _| session.walk_note_draft = text);
             }
             if matches!(event, ui::TextInputEvent::Confirmed) {
                 this.add("note", cx);
@@ -371,7 +376,9 @@ impl WalkWindow {
     }
 
     fn load_recoveries(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.recovery_loading { return; }
+        if self.recovery_loading {
+            return;
+        }
         self.recovery_loading = true;
         self.notice = Some("Loading private walk backups…".into());
         cx.notify();
@@ -396,9 +403,16 @@ impl WalkWindow {
     }
 
     fn restore_backup(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
-        if self.session.read(cx).phase != Phase::Idle || self.recovery_loading { return; }
+        if self.session.read(cx).phase != Phase::Idle || self.recovery_loading {
+            return;
+        }
         let origin = self.recovery_origin.clone();
-        let paths = cx.prompt_for_paths(gpui::PathPromptOptions { files: false, directories: true, multiple: false, prompt: None });
+        let paths = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: None,
+        });
         self.recovery_loading = true;
         self.notice = Some("Choose a folder for recovered evidence.".into());
         cx.notify();
@@ -512,7 +526,9 @@ impl WalkWindow {
         let revision = self.action_revision;
         let selection = self.selection.file.clone();
         self.notice = Some(
-            if command == "checkpoint-resume" { "Resuming saved evidence and pending transcript jobs…" } else if command == "prompt" {
+            if command == "checkpoint-resume" {
+                "Resuming saved evidence and pending transcript jobs…"
+            } else if command == "prompt" {
                 "Preparing agent prompt…"
             } else {
                 "Opening Claude in cmux…"
@@ -636,9 +652,41 @@ impl Render for WalkWindow {
                     .text_color(theme.gray_10)
                     .child(notice),
             )
-            .when(!saved_view, |this| this.child(div().text_size(px(12.)).line_height(px(18.)).text_color(theme.gray_10).child(session.walk_checkpoint_notice.clone())))
-            .when(!capture_active, |this| this.child(ui::Button::plain(&theme, "walk-recover-private", ui::ButtonVariant::Gray, ui::ButtonSize::Sm).label("Recover private backup").disabled(self.recovery_loading).on_click(cx.listener(|this, _, window, cx| this.load_recoveries(window, cx)))))
-            .children(self.recoveries.clone().into_iter().map(|(id, title)| ui::Button::plain(&theme, gpui::SharedString::from(format!("recover-walk-{id}")), ui::ButtonVariant::Gray, ui::ButtonSize::Sm).label(title).disabled(capture_active || self.recovery_loading).on_click(cx.listener(move |this, _, window, cx| this.restore_backup(id.clone(), window, cx)))))
+            .when(!saved_view, |this| {
+                this.child(
+                    div()
+                        .text_size(px(12.))
+                        .line_height(px(18.))
+                        .text_color(theme.gray_10)
+                        .child(session.walk_checkpoint_notice.clone()),
+                )
+            })
+            .when(!capture_active, |this| {
+                this.child(
+                    ui::Button::plain(
+                        &theme,
+                        "walk-recover-private",
+                        ui::ButtonVariant::Gray,
+                        ui::ButtonSize::Sm,
+                    )
+                    .label("Recover private backup")
+                    .disabled(self.recovery_loading)
+                    .on_click(cx.listener(|this, _, window, cx| this.load_recoveries(window, cx))),
+                )
+            })
+            .children(self.recoveries.clone().into_iter().map(|(id, title)| {
+                ui::Button::plain(
+                    &theme,
+                    gpui::SharedString::from(format!("recover-walk-{id}")),
+                    ui::ButtonVariant::Gray,
+                    ui::ButtonSize::Sm,
+                )
+                .label(title)
+                .disabled(capture_active || self.recovery_loading)
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.restore_backup(id.clone(), window, cx)
+                }))
+            }))
             .when(live, |this| {
                 this.child(ui::TextInput::settings(
                     &theme,
@@ -712,15 +760,16 @@ impl Render for WalkWindow {
                 let file = walk.file();
                 let folder = walk.request.directory.clone();
                 let report = folder.join("report.html");
-                let ready = (folder.join("recovery-ready.json").is_file() && report.is_file()) || if saved_view {
-                    self.summary
-                        .as_ref()
-                        .is_some_and(crate::ux_walk_library::WalkSummary::report_ready)
-                } else {
-                    !processing
-                        && crate::ux_walk_library::processing_status(&walk.request.directory)
-                            == crate::ux_walk_library::WalkStatus::Ready
-                };
+                let ready = (folder.join("recovery-ready.json").is_file() && report.is_file())
+                    || if saved_view {
+                        self.summary
+                            .as_ref()
+                            .is_some_and(crate::ux_walk_library::WalkSummary::report_ready)
+                    } else {
+                        !processing
+                            && crate::ux_walk_library::processing_status(&walk.request.directory)
+                                == crate::ux_walk_library::WalkStatus::Ready
+                    };
                 let saved_retry = file.clone();
                 let checkpoint_file = file.clone();
                 let has_checkpoints = folder.join("checkpoints/identity.json").is_file();
@@ -804,7 +853,27 @@ impl Render for WalkWindow {
                                 )),
                             )
                         })
-                        .when(saved_view && has_checkpoints, |this| this.child(ui::Button::plain(&theme, "walk-resume-checkpoints", ui::ButtonVariant::Gray, ui::ButtonSize::Sm).label("Resume evidence sync").disabled(capture_active).on_click(cx.listener(move |this, _, _, cx| this.action("checkpoint-resume", checkpoint_file.clone(), cx)))))
+                        .when(saved_view && has_checkpoints, |this| {
+                            this.child(
+                                ui::Button::plain(
+                                    &theme,
+                                    "walk-resume-checkpoints",
+                                    ui::ButtonVariant::Gray,
+                                    ui::ButtonSize::Sm,
+                                )
+                                .label("Resume evidence sync")
+                                .disabled(capture_active)
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| {
+                                        this.action(
+                                            "checkpoint-resume",
+                                            checkpoint_file.clone(),
+                                            cx,
+                                        )
+                                    },
+                                )),
+                            )
+                        })
                         .when(saved_view && walk.state == "complete", |this| {
                             this.child(
                                 ui::Button::plain(
