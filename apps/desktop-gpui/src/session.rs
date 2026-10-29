@@ -419,6 +419,9 @@ pub struct RecordingSession {
     pub walk: Option<crate::ux_walk_journal::Journal>,
     pub walk_processing: bool,
     pub walk_notice: String,
+    pub walk_checkpoint_notice: String,
+    pub walk_note_draft: String,
+    checkpoint_monitor: Option<Task<()>>,
     preparing_studio_editor: Option<PreparingStudioEditor>,
     /// `EditorRecordingTarget` (`src-tauri/src/windows.rs:3679-3697`): the
     /// open editor project a "Record a new clip" capture must land back in.
@@ -490,6 +493,9 @@ impl RecordingSession {
             walk_notice:
                 "Saved walk. Open its report, or reprocess it if preparation was interrupted."
                     .into(),
+            walk_checkpoint_notice: String::new(),
+            walk_note_draft: String::new(),
+            checkpoint_monitor: None,
             preparing_studio_editor: None,
             editor_recording_target: None,
             started_at: None,
@@ -986,6 +992,7 @@ impl RecordingSession {
                         self.error = Some("Browser evidence is unavailable. Video and notes are still recording. Open walk notes for details.".into());
                     }
                     self.walk = Some(journal);
+                    self.start_walk_checkpoints(cx);
                 }
                 Err(error) => {
                     self.error = Some(format!("Could not create the walk journal: {error}"));
@@ -1047,6 +1054,42 @@ impl RecordingSession {
                 cx.notify();
             })
             .ok();
+        }));
+    }
+
+    fn start_walk_checkpoints(&mut self, cx: &mut Context<Self>) {
+        let Some(journal) = self.walk.clone() else { return; };
+        let file = journal.file();
+        let generation = self.recording_generation;
+        self.walk_note_draft.clear();
+        self.walk_checkpoint_notice = "Starting evidence checkpoints…".into();
+        self.checkpoint_monitor = Some(cx.spawn(async move |this, cx| {
+            let mut started = false;
+            loop {
+                let snapshot = this.update(cx, |this, _| {
+                    if this.recording_generation != generation || this.walk.as_ref().is_none_or(|walk| walk.file() != file) { return None; }
+                    let journal = this.walk.as_ref().unwrap().clone();
+                    let elapsed = this.elapsed().as_millis() as u64;
+                    let paused = this.is_paused() || this.phase != (Phase::Recording { paused: false });
+                    let microphone = this.last_config.as_ref().is_some_and(|config| config.microphone.is_some());
+                    let system_audio = this.last_config.as_ref().is_some_and(|config| config.system_audio);
+                    Some((journal, elapsed, paused, this.walk_note_draft.clone(), microphone, system_audio, this.phase == Phase::Idle))
+                }).ok().flatten();
+                let Some((journal, elapsed, paused, draft, microphone, system_audio, terminal)) = snapshot else { return; };
+                let status = cx.background_executor().spawn(async move {
+                    crate::ux_walk_checkpoints::heartbeat(&journal, generation, elapsed, paused, &draft, microphone, system_audio)?;
+                    if !started { crate::ux_walk_checkpoints::start(&journal)?; }
+                    Ok::<String, String>(crate::ux_walk_checkpoints::notice(&journal.request.directory))
+                }).await;
+                started = status.is_ok();
+                let _ = this.update(cx, |this, cx| {
+                    if this.recording_generation != generation { return; }
+                    this.walk_checkpoint_notice = status.unwrap_or_else(|error| format!("Checkpoint saving needs attention: {error}. Recording continues."));
+                    cx.notify();
+                });
+                if terminal { return; }
+                cx.background_executor().timer(Duration::from_secs(1)).await;
+            }
         }));
     }
 

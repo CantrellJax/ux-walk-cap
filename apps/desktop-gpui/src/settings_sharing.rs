@@ -42,12 +42,14 @@ impl SettingsWindow {
         vec![
             self.section("Sharing", Some("Record locally. Share only when you choose, through a server you control."), None, vec![
                 self.card(true).flex().flex_col().gap(px(16.))
-                    .child(self.setting_row("Enable cloud sharing", Some("Enables Share actions. Recording does not upload automatically."), self.toggle("sharing-enabled", "Enable cloud sharing", settings.enabled, cx, |this, cx| {
+                    .child(self.setting_row("Enable cloud sharing", Some("Enables Share actions. Private walk backup is a separate choice."), self.toggle("sharing-enabled", "Enable cloud sharing", settings.enabled, cx, |this, cx| {
                         let mut settings = this.sharing.settings.clone();
                         settings.enabled = !settings.enabled;
                         settings.endpoint = this.sharing.endpoint.read(cx).text().to_string();
                         this.sharing_save(settings, cx);
                     }).into_any_element()))
+                    .child(self.setting_row("Back up new walks privately", Some("Upload recorded source speech, transcripts, notes and click/error logs as you record. No public link is created. Later edits do not remove original backup content. Requires this server and its credential."), self.toggle("walk-backup-enabled", "Back up new walks privately", settings.backup_enabled, cx, |this, cx| { let mut settings = this.sharing.settings.clone(); settings.backup_enabled = !settings.backup_enabled; settings.endpoint = this.sharing.endpoint.read(cx).text().to_string(); this.sharing_save(settings, cx); }).into_any_element()))
+                    .child(self.button("sharing-recover-walk", (ui::ButtonVariant::Gray, None), "Recover private walk backup", settings.endpoint.is_empty(), cx, |_, _, cx| crate::ux_walk_window::open_recovery(cx)))
                     .child(div().text_size(px(13.)).child("Sharing server"))
                     .child(ui::TextInput::settings(&theme, "sharing-server", &self.sharing.endpoint))
                     .child(self.button("sharing-save", (ui::ButtonVariant::Dark, None), "Save server", false, cx, |this, _, cx| {
@@ -81,7 +83,7 @@ impl SettingsWindow {
         let server = self.sharing.settings.endpoint.clone();
         cx.notify();
         cx.spawn_in(window, async move |this, cx| {
-            let token = if remove { None } else { crate::ux_walk::prompt_secret("Sharing upload credential", "Saved in your system credential store for this sharing server. Used only when you share a video or screenshot.") };
+            let token = if remove { None } else { crate::ux_walk::prompt_secret("Sharing upload credential", "Saved in your system credential store for this sharing server. Used for explicit sharing and, when enabled separately, private walk backups.") };
             let result = if remove || token.is_some() {
                 Some(cx.background_executor().spawn(async move {
                     if remove { cap_cloud_sharing::remove_token(&server) } else { cap_cloud_sharing::set_token(&server, token.as_deref().unwrap_or_default()) }

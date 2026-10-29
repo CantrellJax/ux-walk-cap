@@ -51,6 +51,7 @@ impl Journal {
         fs::create_dir_all(request.directory.parent().ok_or("Invalid walk folder.")?)
             .map_err(|e| e.to_string())?;
         fs::create_dir(&request.directory).map_err(|e| e.to_string())?;
+        #[cfg(unix)] { if let Some(parent) = request.directory.parent() { fs::File::open(parent).and_then(|directory| directory.sync_all()).map_err(|error| error.to_string())?; } }
         let journal = Self {
             schema_version: 1,
             request,
@@ -81,7 +82,9 @@ impl Journal {
         file.write_all(&serde_json::to_vec_pretty(self).map_err(|e| e.to_string())?)
             .map_err(|e| e.to_string())?;
         file.sync_all().map_err(|e| e.to_string())?;
-        fs::rename(temporary, self.file()).map_err(|e| e.to_string())
+        fs::rename(temporary, self.file()).map_err(|e| e.to_string())?;
+        #[cfg(unix)] { fs::File::open(&self.request.directory).and_then(|directory| directory.sync_all()).map_err(|error| error.to_string())?; }
+        Ok(())
     }
 
     pub fn add(&mut self, kind: &str, text: &str, offset_ms: u64) -> Result<(), String> {
