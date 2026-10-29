@@ -688,3 +688,14 @@ test("early provider rejection stays visible in final summary and index without 
 	assert.equal(finalOptions.brief, false);
 	assert.equal(uploads, 1);
 });
+
+test("a partial live cache never reports transcript ready or automatically resubmits missing coverage", async (t) => {
+ const f=fixture(t);f.journal.events=f.journal.events.filter(event=>event.kind==="note");f.save();
+ const {durableJson,sha256}=await import("./checkpoint-store.mjs");const root=path.join(f.directory,"checkpoints");fs.mkdirSync(path.join(root,"jobs"),{recursive:true});
+ durableJson(path.join(root,"final-layout.json"),{displaySpans:[10],meta:{segments:[{display:{start_time:0},mic:{start_time:0}}]},config:{}});
+ const id="b".repeat(64);const resultFile=path.join(root,`jobs/${id}.words.json`);durableJson(resultFile,{source:"segment-0:microphone",words:[{start:0,end:1,text:"saved speech",speaker:"unique-chunk-speaker"}]});
+ durableJson(path.join(root,`jobs/${id}.json`),{jobId:id,source:"segment-0:microphone",sourceStartMs:0,sourceEndMs:1000,state:"complete",resultHash:sha256(fs.readFileSync(resultFile))});
+ await finishNativeWalk(f.file,{transcriber:"elevenlabs",brief:true},{client:{export:async(_project,output)=>{fs.writeFileSync(output,"export");return{durationS:10};}},prepareAudio:async()=>{throw new Error("Must reuse saved jobs");},processChapter:async(_directory,cfg,options)=>{assert.equal(cfg.transcriber,"none");assert.equal(options.brief,false);assert.deepEqual(options.speakers,[]);return{transcript:true};},writeIndex:()=>{},writeReport:()=>{}});
+ const status=JSON.parse(fs.readFileSync(path.join(f.directory,"processing.json")));assert.equal(status.transcript,"partial");
+ const chapter=JSON.parse(fs.readFileSync(path.join(f.directory,"session.json"))).chapters[0];assert.equal(chapter.status,"no transcript");assert.match(JSON.parse(fs.readFileSync(path.join(f.directory,chapter.dir,"summary.json"))).transcriptError,/partial/i);
+});
