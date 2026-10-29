@@ -71,3 +71,9 @@ test("a live checkpoint owner with no prepared jobs cannot race a duplicate batc
 		/pending|draining/i,
 	);
 });
+
+test("unsupported channel, calibration and edited timeline layouts never claim aligned live captions",async(t)=>{
+ for(const config of [{audio:{micStereoMode:"monoL"}},{timeline:{transitions:[{duration:1}]}},{timeline:{audioSegments:[{enabled:true}]}},{timeline:{textSegments:[{enabled:true,layout:"fullscreen",start:0,end:1}]}}]){
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),"uxw-layout-"));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));fs.mkdirSync(path.join(root,"checkpoints/jobs"),{recursive:true});fs.mkdirSync(path.join(root,"chapter"));const id="c".repeat(64),file=path.join(root,`checkpoints/jobs/${id}.words.json`);durableJson(file,{source:"segment-0:microphone",words:[{start:0,end:1,text:"raw speech"}]});durableJson(path.join(root,`checkpoints/jobs/${id}.json`),{jobId:id,source:"segment-0:microphone",sourceStartMs:0,sourceEndMs:1000,state:"complete",resultHash:sha256(fs.readFileSync(file))});durableJson(path.join(root,"checkpoints/final-layout.json"),{displaySpans:[1],meta:{segments:[{display:{start_time:0},mic:{start_time:0}}]},config});const reused=await reuseCheckpointTranscript(root,[{dir:"chapter",startMs:0,endMs:1000}],0);assert.match(reused.error,/unsupported|edited|alignment/i,JSON.stringify(config));
+ }
+});
