@@ -10,6 +10,10 @@ const engine = fs.existsSync(local)
 	? new URL("./src/", import.meta.url)
 	: new URL("../../../vendor/ux-walk/src/", import.meta.url);
 
+const { glossaryTerms, resolveGlossaries } = await import(
+	new URL("glossary.mjs", engine)
+);
+
 export class CheckpointJobs {
 	constructor(
 		store,
@@ -70,12 +74,7 @@ export class CheckpointJobs {
 	prepare(source, references, startMs, endMs, { tail = false } = {}) {
 		if (!/^[\w:.-]{1,128}$/.test(source) || !(endMs > startMs) || startMs < 0)
 			throw new Error("Invalid source transcription range");
-		const options = {
-			provider: this.cfg.transcriber,
-			model: this.cfg.elevenlabsModel ?? this.cfg.assemblyaiModel ?? "default",
-			language: this.cfg.language ?? "en",
-			glossary: this.cfg.glossary ?? "",
-		};
+		const options = this.options();
 		const optionsHash = sha256(Buffer.from(JSON.stringify(options)));
 		const identity = {
 			source,
@@ -105,6 +104,18 @@ export class CheckpointJobs {
 		};
 		durableJson(this.jobPath(jobId), job);
 		return job;
+	}
+	options() {
+		return {
+			provider: this.cfg.transcriber,
+			model:
+				this.cfg.transcriber === "assemblyai"
+					? (this.cfg.assemblyaiModel ?? "universal-3-5-pro")
+					: (this.cfg.elevenlabsModel ?? "scribe_v2"),
+			language: this.cfg.language ?? "en",
+			glossary: this.cfg.glossary ?? "",
+			terms: glossaryTerms(resolveGlossaries(this.cfg.glossary)),
+		};
 	}
 	retry(id) {
 		if (this.running)
@@ -211,6 +222,8 @@ export class CheckpointJobs {
 		);
 	}
 	async runNext() {
+		if (fs.existsSync(path.join(this.store.root, "full-transcript.json")))
+			return;
 		if (this.running) return this.running;
 		if (
 			this.cfg.transcriber === "none" ||
@@ -223,11 +236,15 @@ export class CheckpointJobs {
 		this.running = (async () => {
 			let submitted = false;
 			try {
+				if (
+					job.optionsHash !==
+					sha256(Buffer.from(JSON.stringify(this.options())))
+				)
+					throw new Error(
+						"Prepared job options differ from current provider, model, language or glossary configuration; restore the original settings or explicitly process retained source separately",
+					);
 				const audio = await this.materialize(job);
-				const { glossaryTerms, resolveGlossaries } = await import(
-					new URL("glossary.mjs", engine)
-				);
-				const terms = glossaryTerms(resolveGlossaries(this.cfg.glossary));
+				const terms = job.terms;
 				durableJson(this.jobPath(job.jobId), {
 					...job,
 					state: "submitted",

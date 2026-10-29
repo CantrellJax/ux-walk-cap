@@ -158,6 +158,7 @@ export async function restoreRecovery(transport, recordingId, destination) {
 		}
 	let savedJournal = {};
 	let clockData = {};
+	let eventEnd = 0;
 	const words = [];
 	const eventFile = path.join(destination, "browser-evidence.jsonl");
 	const eventFd = fs.openSync(eventFile, "wx", 0o600);
@@ -174,6 +175,15 @@ export async function restoreRecovery(transport, recordingId, destination) {
 				words.push(JSON.parse(fs.readFileSync(object.file, "utf8")));
 			if (object.kind === "events") {
 				const bytes = fs.readFileSync(object.file);
+				if (
+					!Number.isSafeInteger(object.byteStart) ||
+					object.byteStart !== eventEnd ||
+					object.byteEnd - object.byteStart !== bytes.length
+				)
+					throw new Error(
+						"Recovery event byte ranges contain a gap or are not contiguous",
+					);
+				eventEnd = object.byteEnd;
 				if (bytes.length && bytes.at(-1) !== 10)
 					throw new Error("Recovery events contain an incomplete JSONL tail");
 				for (const line of bytes.toString("utf8").split("\n").filter(Boolean))

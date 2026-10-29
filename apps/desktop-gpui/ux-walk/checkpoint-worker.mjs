@@ -15,6 +15,7 @@ import {
 	syncDirectory,
 } from "./checkpoint-store.mjs";
 import { scanFragmentedAudio } from "./fragmented-audio.mjs";
+import { sourceAudioProblem } from "./native-audio.mjs";
 import { RecoveryTransport } from "./recovery-transport.mjs";
 
 const local = new URL("./src/config.mjs", import.meta.url);
@@ -369,6 +370,20 @@ export class CheckpointWorker {
 					}),
 				);
 		}
+		const fullWords = path.join(this.store.root, "full-transcript-words.json");
+		if (fs.existsSync(fullWords)) {
+			const bytes = fs.readFileSync(fullWords);
+			if (!this.transcriptObjects.has(sha256(bytes)))
+				objects.push(
+					this.store.put("transcriptWords", bytes, {
+						source: "exported-session",
+						sourceStartMs: 0,
+						sourceEndMs: this.journal.durationMs ?? heartbeat.activeElapsedMs,
+						activeStartMs: 0,
+						activeEndMs: 0,
+					}),
+				);
+		}
 		try {
 			this.store.commit(
 				objects,
@@ -532,9 +547,15 @@ export class CheckpointWorker {
 			config: {
 				audio: config.audio,
 				clips: config.clips,
-				timeline: { segments: config.timeline?.segments },
+				timeline: {
+					segments: config.timeline?.segments,
+					transitions: config.timeline?.transitions,
+					audioSegments: config.timeline?.audioSegments,
+					textSegments: config.timeline?.textSegments,
+				},
 			},
 			displaySpans,
+			alignmentProblem: sourceAudioProblem(this.journal.sourceProject, config),
 			sourceDurations,
 		};
 		durableJson(path.join(this.store.root, "final-layout.json"), layout);
@@ -548,6 +569,8 @@ export class CheckpointWorker {
 		this.finalized = true;
 	}
 	prepareJobs(tail = false) {
+		if (fs.existsSync(path.join(this.store.root, "full-transcript.json")))
+			return;
 		if (
 			this.cfg.liveTranscription === false ||
 			!["elevenlabs", "assemblyai"].includes(this.cfg.transcriber)
@@ -558,20 +581,12 @@ export class CheckpointWorker {
 			"project-config.json",
 		);
 		const config = fs.existsSync(configFile) ? readJson(configFile) : {};
-		if (
-			config.audio?.mute ||
-			config.timeline?.segments?.some(
-				(span, index) =>
-					span.recordingSegment !== index ||
-					span.start !== 0 ||
-					span.timescale !== 1 ||
-					(span.volume ?? 1) !== 1,
-			)
-		) {
-			this.sourceErrors.transcription =
-				"Edited or muted source configuration requires stop-time transcription";
+		const unsupported = sourceAudioProblem(this.journal.sourceProject, config);
+		if (unsupported) {
+			this.sourceErrors.transcription = unsupported;
 			return;
 		}
+
 		const references = this.store
 			.descriptors()
 			.flatMap((descriptor) =>
@@ -628,6 +643,13 @@ export class CheckpointWorker {
 		)
 			return this.uploading;
 		this.uploading = (async () => {
+			const withinBudget = () => {
+				if (this.uploadDeadlineAt && Date.now() >= this.uploadDeadlineAt)
+					throw new Error(
+						"Private backup drain deadline reached; pending objects are retained for Resume evidence sync",
+					);
+			};
+			withinBudget();
 			const settings = await this.transport.status();
 			if (
 				!settings.backupEnabled ||
@@ -640,8 +662,12 @@ export class CheckpointWorker {
 				schemaVersion: 1,
 				recordingId: this.store.options.recordingId,
 				writerGeneration: this.store.options.generation,
-				title: this.journal.request.topic
-					.replace(/[\u0000-\u001f\u007f]/g, " ")
+				title: Array.from(this.journal.request.topic, (character) =>
+					character.codePointAt(0) < 32 || character.codePointAt(0) === 127
+						? " "
+						: character,
+				)
+					.join("")
 					.slice(0, 200),
 				startedAtMs: this.journal.startedAtMs,
 				expiresInDays: this.store.options.expiresInDays ?? 7,
@@ -649,18 +675,37 @@ export class CheckpointWorker {
 			const registrationPath = path.join(this.store.root, "registration.json");
 			durableJson(registrationPath, registration);
 			const base = `/api/v1/recovery/${registration.recordingId}`;
-			await this.transport.request("PUT", base, { input: registrationPath });
+			const registered = await this.transport.request("PUT", base, {
+				input: registrationPath,
+			});
+			if (
+				registered.recordingId !== registration.recordingId ||
+				registered.writerGeneration !== registration.writerGeneration ||
+				registered.requestHash !==
+					sha256(Buffer.from(JSON.stringify(registration))) ||
+				!Number.isSafeInteger(registered.expiresAt) ||
+				registered.expiresAt <= Date.now()
+			)
+				throw new Error(
+					"Recovery registration acknowledgement identity is invalid",
+				);
 			const descriptor = this.store.pending()[0];
 			if (!descriptor) return;
 			for (const object of descriptor.objects) {
+				withinBudget();
 				this.store.verify(object);
-				await this.transport.request(
+				const receipt = await this.transport.request(
 					"PUT",
 					`${base}/objects/${object.sha256}`,
 					{ input: this.store.objectPath(object.sha256) },
 				);
+				if (receipt.sha256 !== object.sha256 || receipt.size !== object.size)
+					throw new Error(
+						"Recovery object acknowledgement integrity is invalid",
+					);
 			}
-			await this.transport.request(
+			withinBudget();
+			const checkpointReceipt = await this.transport.request(
 				"PUT",
 				`${base}/checkpoints/${descriptor.sequence}`,
 				{
@@ -671,6 +716,21 @@ export class CheckpointWorker {
 					),
 				},
 			);
+			const uploadedDescriptor = fs.readFileSync(
+				path.join(
+					this.store.root,
+					"descriptors",
+					`${String(descriptor.sequence).padStart(12, "0")}.json`,
+				),
+			);
+			if (
+				checkpointReceipt.acknowledged !== true ||
+				checkpointReceipt.sequence !== descriptor.sequence ||
+				checkpointReceipt.sha256 !== sha256(uploadedDescriptor)
+			)
+				throw new Error(
+					"Recovery checkpoint acknowledgement receipt does not match uploaded data",
+				);
 			this.store.acknowledge(descriptor.sequence, this.store.options.endpoint);
 			for (const object of descriptor.objects.filter((object) =>
 				["microphone", "systemAudio"].includes(object.kind),
@@ -726,6 +786,7 @@ export async function runCheckpointWorker(file, cfg, dependencies = {}) {
 		});
 		if (dependencies.retryJobId) worker.jobs.retry(dependencies.retryJobId);
 		let terminalAt = null;
+		let terminalSealed = false;
 		let previousPaused = null;
 		for (;;) {
 			let heartbeat;
@@ -740,17 +801,24 @@ export async function runCheckpointWorker(file, cfg, dependencies = {}) {
 				const journal = readJson(file);
 				let terminalStarted = false;
 				if (journal.state !== "recording" || !parentAlive) {
-					terminalStarted = terminalAt == null;
-					terminalAt ??= Date.now();
 					worker.phase =
 						journal.state === "complete" ? "draining" : "interrupted";
+					if (heartbeat.captureEnded !== false || !parentAlive) {
+						terminalStarted = terminalAt == null;
+						terminalAt ??= Date.now();
+						worker.uploadDeadlineAt = terminalAt + 150000;
+					}
 				}
-				await worker.checkpoint({
-					force:
-						terminalStarted ||
-						(previousPaused !== null && previousPaused !== heartbeat.paused),
-				});
+				if (!terminalSealed)
+					await worker.checkpoint({
+						force:
+							terminalStarted ||
+							(previousPaused !== null && previousPaused !== heartbeat.paused),
+					});
 				previousPaused = heartbeat.paused;
+				const outstandingJobs = () =>
+					worker.jobs.running ||
+					worker.jobs.all().some((job) => job.state === "prepared");
 				if (
 					!worker.jobs.running &&
 					(terminalAt == null || Date.now() - terminalAt < 150000)
@@ -758,19 +826,29 @@ export async function runCheckpointWorker(file, cfg, dependencies = {}) {
 					void worker.jobs.runNext().catch((error) => {
 						worker.error = error.message;
 					});
-				if (!worker.uploading) void worker.uploadNext();
+				if (terminalAt != null && !outstandingJobs() && !terminalSealed) {
+					await worker.checkpoint({ force: true });
+					terminalSealed = !outstandingJobs();
+				}
+				if (
+					!worker.uploading &&
+					(terminalAt == null || Date.now() - terminalAt < 150000)
+				)
+					void worker.uploadNext();
+				const pendingRemote =
+					worker.store.options.backupEnabled &&
+					worker.store.state.remoteSequence < worker.store.state.sequence;
 				if (
 					terminalAt != null &&
-					((!worker.jobs.all().some((job) => job.state === "prepared") &&
-						!worker.jobs.running) ||
+					((terminalSealed && !pendingRemote) ||
 						Date.now() - terminalAt > 150000)
 				) {
 					worker.jobs.cancel();
 					if (worker.jobs.running) await worker.jobs.running;
 					if (worker.uploading) await worker.uploading;
+					if (!terminalSealed) await worker.checkpoint({ force: true });
 					worker.phase =
 						journal.state === "complete" ? "stopped" : "interrupted";
-					await worker.checkpoint({ force: true });
 					worker.status();
 					break;
 				}

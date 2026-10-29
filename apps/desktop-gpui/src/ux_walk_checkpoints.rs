@@ -24,6 +24,7 @@ pub fn heartbeat(
     draft: &str,
     microphone: bool,
     system_audio: bool,
+    capture_ended: bool,
 ) -> Result<(), String> {
     let directory = &journal.request.directory;
     let file = directory.join("checkpoint-heartbeat.json");
@@ -32,7 +33,7 @@ pub fn heartbeat(
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|error| error.to_string())?
         .as_millis() as u64;
-    let value = json!({ "schemaVersion": 1, "parentPid": std::process::id(), "generation": generation, "wallMs": wall, "activeElapsedMs": elapsed, "paused": paused, "noteDraft": draft, "expectedAudio": { "microphone": microphone, "systemAudio": system_audio } });
+    let value = json!({ "schemaVersion": 1, "parentPid": std::process::id(), "generation": generation, "wallMs": wall, "activeElapsedMs": elapsed, "paused": paused, "captureEnded": capture_ended, "noteDraft": draft, "expectedAudio": { "microphone": microphone, "systemAudio": system_audio } });
     let mut options = fs::OpenOptions::new();
     options.write(true).create(true).truncate(true);
     #[cfg(unix)]

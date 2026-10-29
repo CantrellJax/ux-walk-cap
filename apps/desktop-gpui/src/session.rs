@@ -1115,6 +1115,7 @@ impl RecordingSession {
                             &draft,
                             microphone,
                             system_audio,
+                            terminal,
                         )?;
                         if !started {
                             crate::ux_walk_checkpoints::start(&journal)?;

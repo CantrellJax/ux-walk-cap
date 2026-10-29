@@ -83,6 +83,32 @@ test("ambiguous jobs only retry through a bounded explicit action", async (t) =>
 	assert.equal(jobs.read(job.jobId).state, "ambiguous");
 });
 
-test("prepared job provenance cannot silently change with provider or language settings",async(t)=>{
- const root=fs.mkdtempSync(path.join(os.tmpdir(),"uxw-options-"));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));const store=new CheckpointStore(root,{recordingId:"11111111-1111-4111-8111-111111111111",generation:"22222222-2222-4222-8222-222222222222",endpoint:""});new CheckpointJobs(store,{transcriber:"elevenlabs",language:"en"}).prepare("segment-0:microphone",[],0,1000);let calls=0;const resumed=new CheckpointJobs(store,{transcriber:"assemblyai",language:"es"},{materialize:async()=>"synthetic.wav",words:async()=>{calls++;return[];}});await resumed.runNext();assert.equal(calls,0);assert.equal(resumed.all()[0].state,"failed");assert.match(resumed.all()[0].error,/configuration|options|provider/i);
+test("prepared job provenance cannot silently change with provider or language settings", async (t) => {
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "uxw-options-"));
+	t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+	const store = new CheckpointStore(root, {
+		recordingId: "11111111-1111-4111-8111-111111111111",
+		generation: "22222222-2222-4222-8222-222222222222",
+		endpoint: "",
+	});
+	new CheckpointJobs(store, {
+		transcriber: "elevenlabs",
+		language: "en",
+	}).prepare("segment-0:microphone", [], 0, 1000);
+	let calls = 0;
+	const resumed = new CheckpointJobs(
+		store,
+		{ transcriber: "assemblyai", language: "es" },
+		{
+			materialize: async () => "synthetic.wav",
+			words: async () => {
+				calls++;
+				return [];
+			},
+		},
+	);
+	await resumed.runNext();
+	assert.equal(calls, 0);
+	assert.equal(resumed.all()[0].state, "failed");
+	assert.match(resumed.all()[0].error, /configuration|options|provider/i);
 });

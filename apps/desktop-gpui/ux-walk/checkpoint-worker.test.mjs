@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { durableJson } from "./checkpoint-store.mjs";
+import { durableJson, sha256 } from "./checkpoint-store.mjs";
 import { CheckpointWorker } from "./checkpoint-worker.mjs";
 import { restoreRecovery } from "./restore-checkpoint.mjs";
 
@@ -75,14 +75,25 @@ test("local complete audio and log checkpoints advance while network is held; ac
 		request: async (method, resource, options = {}) => {
 			if (method === "PUT") {
 				await gate;
-				if (resource.includes("/objects/"))
-					uploaded.set(
-						resource.split("/").at(-1),
-						fs.readFileSync(options.input),
-					);
-				else if (resource.includes("/checkpoints/"))
-					descriptors.push(JSON.parse(fs.readFileSync(options.input)));
-				return {};
+				const bytes = fs.readFileSync(options.input);
+				if (resource.includes("/objects/")) {
+					uploaded.set(resource.split("/").at(-1), bytes);
+					return { sha256: sha256(bytes), size: bytes.length };
+				}
+				const value = JSON.parse(bytes);
+				if (resource.includes("/checkpoints/")) {
+					descriptors.push(value);
+					return {
+						acknowledged: true,
+						sequence: value.sequence,
+						sha256: sha256(bytes),
+					};
+				}
+				return {
+					...value,
+					requestHash: sha256(Buffer.from(JSON.stringify(value))),
+					expiresAt: Date.now() + 100000,
+				};
 			}
 			if (options.output) {
 				fs.writeFileSync(
@@ -170,15 +181,139 @@ test("local complete audio and log checkpoints advance while network is held; ac
 	assert.equal(resumed.sources["segment-0:microphone"].sourceEndMs, firstEnd);
 });
 
-test("mismatched registration, object or checkpoint receipts never advance acknowledged coverage", async(t)=>{
- for(const failedStage of ["registration","object","checkpoint"]){
-  const root=fs.mkdtempSync(path.join(os.tmpdir(),"uxw-receipt-"));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));const file=path.join(root,"native-walk.json");const project=path.join(root,"source.cap");fs.mkdirSync(project);durableJson(file,{state:"recording",request:{directory:root,topic:"Test"},sourceProject:project,startedAtMs:1});durableJson(path.join(root,"checkpoint-heartbeat.json"),{wallMs:1000,activeElapsedMs:1000,paused:false,parentPid:process.pid,generation:1});
-  const settings={backupEnabled:true,server:"https://backup.example"};const transport={status:async()=>settings,request:async(_method,resource,{input})=>{const bytes=fs.readFileSync(input);const {sha256}=await import("./checkpoint-store.mjs");if(resource.includes("/objects/"))return failedStage==="object"?{sha256:"0".repeat(64),size:-1}:{sha256:sha256(bytes),size:bytes.length};if(resource.includes("/checkpoints/"))return{acknowledged:failedStage!=="checkpoint",sequence:JSON.parse(bytes).sequence,sha256:sha256(bytes)};return failedStage==="registration"?{recordingId:"wrong"}:{...JSON.parse(bytes),expiresAt:Date.now()+100000,requestHash:sha256(Buffer.from(JSON.stringify(JSON.parse(bytes))))};}};
-  const worker=new CheckpointWorker(file,{transcriber:"none"},settings,{transport});await worker.checkpoint({force:true});await worker.uploadNext();assert.equal(worker.store.state.remoteSequence,0,failedStage);assert.match(worker.error,/acknowledg|identity|receipt|integrity/i);
- }
+test("mismatched registration, object or checkpoint receipts never advance acknowledged coverage", async (t) => {
+	for (const failedStage of ["registration", "object", "checkpoint"]) {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "uxw-receipt-"));
+		t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+		const file = path.join(root, "native-walk.json");
+		const project = path.join(root, "source.cap");
+		fs.mkdirSync(project);
+		durableJson(file, {
+			state: "recording",
+			request: { directory: root, topic: "Test" },
+			sourceProject: project,
+			startedAtMs: 1,
+		});
+		durableJson(path.join(root, "checkpoint-heartbeat.json"), {
+			wallMs: 1000,
+			activeElapsedMs: 1000,
+			paused: false,
+			parentPid: process.pid,
+			generation: 1,
+		});
+		const settings = { backupEnabled: true, server: "https://backup.example" };
+		const transport = {
+			status: async () => settings,
+			request: async (_method, resource, { input }) => {
+				const bytes = fs.readFileSync(input);
+				const { sha256 } = await import("./checkpoint-store.mjs");
+				if (resource.includes("/objects/"))
+					return failedStage === "object"
+						? { sha256: "0".repeat(64), size: -1 }
+						: { sha256: sha256(bytes), size: bytes.length };
+				if (resource.includes("/checkpoints/"))
+					return {
+						acknowledged: failedStage !== "checkpoint",
+						sequence: JSON.parse(bytes).sequence,
+						sha256: sha256(bytes),
+					};
+				return failedStage === "registration"
+					? { recordingId: "wrong" }
+					: {
+							...JSON.parse(bytes),
+							expiresAt: Date.now() + 100000,
+							requestHash: sha256(
+								Buffer.from(JSON.stringify(JSON.parse(bytes))),
+							),
+						};
+			},
+		};
+		const worker = new CheckpointWorker(
+			file,
+			{ transcriber: "none" },
+			settings,
+			{ transport },
+		);
+		await worker.checkpoint({ force: true });
+		await worker.uploadNext();
+		assert.equal(worker.store.state.remoteSequence, 0, failedStage);
+		assert.match(worker.error, /acknowledg|identity|receipt|integrity/i);
+	}
 });
 
-test("terminal drain backs up the final event and descriptor before a healthy worker exits",async(t)=>{
- const root=fs.mkdtempSync(path.join(os.tmpdir(),"uxw-drain-"));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));const file=path.join(root,"native-walk.json"),sourceProject=path.join(root,"source.cap");fs.mkdirSync(sourceProject);const journal={state:"recording",request:{directory:root,topic:"Test"},sourceProject,startedAtMs:1};durableJson(file,journal);durableJson(path.join(root,"checkpoint-heartbeat.json"),{activeElapsedMs:100,wallMs:100,parentPid:process.pid,generation:1,paused:false});const settings={backupEnabled:true,server:"https://backup.example"};const blobs=[];const transport={status:async()=>settings,request:async(_method,resource,{input})=>{const bytes=fs.readFileSync(input);const {sha256}=await import("./checkpoint-store.mjs");if(resource.includes("/objects/")){blobs.push(bytes.toString());return{sha256:sha256(bytes),size:bytes.length};}const value=JSON.parse(bytes);if(resource.includes("/checkpoints/"))return{acknowledged:true,sequence:value.sequence,sha256:sha256(bytes)};return{...value,requestHash:sha256(Buffer.from(JSON.stringify(value))),expiresAt:Date.now()+100000};}};
- const worker=new CheckpointWorker(file,{transcriber:"none"},settings,{transport,sessionGeneration:1});await worker.checkpoint({force:true});durableJson(file,{...journal,state:"aborted"});fs.writeFileSync(path.join(root,"browser-evidence.jsonl"),'{"ev":"pageerror","text":"final failure"}\n');durableJson(path.join(root,"checkpoint-heartbeat.json"),{activeElapsedMs:1000,wallMs:1000,parentPid:process.pid,generation:1,paused:true});const {runCheckpointWorker}=await import("./checkpoint-worker.mjs");await runCheckpointWorker(file,{transcriber:"none"},{transport});const resumed=new CheckpointWorker(file,{transcriber:"none"},settings,{transport});assert.equal(resumed.store.state.remoteSequence,resumed.store.state.sequence);assert.ok(blobs.some(text=>text.includes("final failure")));
+test("terminal drain backs up the final event and descriptor before a healthy worker exits", async (t) => {
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "uxw-drain-"));
+	t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+	const file = path.join(root, "native-walk.json"),
+		sourceProject = path.join(root, "source.cap");
+	fs.mkdirSync(sourceProject);
+	const journal = {
+		state: "recording",
+		request: { directory: root, topic: "Test" },
+		sourceProject,
+		startedAtMs: 1,
+	};
+	durableJson(file, journal);
+	durableJson(path.join(root, "checkpoint-heartbeat.json"), {
+		activeElapsedMs: 100,
+		wallMs: 100,
+		parentPid: process.pid,
+		generation: 1,
+		paused: false,
+	});
+	const settings = { backupEnabled: true, server: "https://backup.example" };
+	const blobs = [];
+	const transport = {
+		status: async () => settings,
+		request: async (_method, resource, { input }) => {
+			const bytes = fs.readFileSync(input);
+			const { sha256 } = await import("./checkpoint-store.mjs");
+			if (resource.includes("/objects/")) {
+				blobs.push(bytes.toString());
+				return { sha256: sha256(bytes), size: bytes.length };
+			}
+			const value = JSON.parse(bytes);
+			if (resource.includes("/checkpoints/"))
+				return {
+					acknowledged: true,
+					sequence: value.sequence,
+					sha256: sha256(bytes),
+				};
+			return {
+				...value,
+				requestHash: sha256(Buffer.from(JSON.stringify(value))),
+				expiresAt: Date.now() + 100000,
+			};
+		},
+	};
+	const worker = new CheckpointWorker(file, { transcriber: "none" }, settings, {
+		transport,
+		sessionGeneration: 1,
+	});
+	await worker.checkpoint({ force: true });
+	durableJson(file, { ...journal, state: "aborted" });
+	fs.writeFileSync(
+		path.join(root, "browser-evidence.jsonl"),
+		'{"ev":"pageerror","text":"final failure"}\n',
+	);
+	durableJson(path.join(root, "checkpoint-heartbeat.json"), {
+		activeElapsedMs: 1000,
+		wallMs: 1000,
+		parentPid: process.pid,
+		generation: 1,
+		paused: true,
+	});
+	const { runCheckpointWorker } = await import("./checkpoint-worker.mjs");
+	await runCheckpointWorker(file, { transcriber: "none" }, { transport });
+	const resumed = new CheckpointWorker(
+		file,
+		{ transcriber: "none" },
+		settings,
+		{ transport },
+	);
+	assert.equal(
+		resumed.store.state.remoteSequence,
+		resumed.store.state.sequence,
+	);
+	assert.ok(blobs.some((text) => text.includes("final failure")));
 });

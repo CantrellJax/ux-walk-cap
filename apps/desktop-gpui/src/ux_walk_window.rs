@@ -460,6 +460,7 @@ impl WalkWindow {
     fn reprocess_saved(
         &mut self,
         file: std::path::PathBuf,
+        full_transcription: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -486,7 +487,7 @@ impl WalkWindow {
                 .background_executor()
                 .spawn(async move {
                     crate::ux_walk_library::reprocess_allowed(&file)?;
-                    crate::ux_walk::run_engine("process", &file)
+                    crate::ux_walk::run_engine(if full_transcription { "process-full-transcript" } else { "process" }, &file)
                 })
                 .await;
             this.update_in(cx, |this, window, cx| {
@@ -771,6 +772,7 @@ impl Render for WalkWindow {
                                 == crate::ux_walk_library::WalkStatus::Ready
                     };
                 let saved_retry = file.clone();
+                let full_retry = file.clone();
                 let checkpoint_file = file.clone();
                 let has_checkpoints = folder.join("checkpoints/identity.json").is_file();
                 let retry_disabled = capture_active
@@ -874,6 +876,7 @@ impl Render for WalkWindow {
                                 )),
                             )
                         })
+                        .when(saved_view && walk.state == "complete" && has_checkpoints, |this| this.child(ui::Button::plain(&theme, "walk-full-transcript", ui::ButtonVariant::Gray, ui::ButtonSize::Sm).label("Transcribe full audio again (provider charges)").disabled(retry_disabled).on_click(cx.listener(move |this, _, window, cx| this.reprocess_saved(full_retry.clone(), true, window, cx)))))
                         .when(saved_view && walk.state == "complete", |this| {
                             this.child(
                                 ui::Button::plain(
@@ -886,7 +889,7 @@ impl Render for WalkWindow {
                                 .disabled(retry_disabled)
                                 .on_click(cx.listener(
                                     move |this, _, window, cx| {
-                                        this.reprocess_saved(saved_retry.clone(), window, cx)
+                                        this.reprocess_saved(saved_retry.clone(), false, window, cx)
                                     },
                                 )),
                             )

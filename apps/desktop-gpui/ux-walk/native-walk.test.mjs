@@ -763,7 +763,49 @@ test("a partial live cache never reports transcript ready or automatically resub
 	);
 });
 
-test("explicit full transcription is available after unsupported live capture and ordinary reprocess reuses it",async(t)=>{
- const f=fixture(t);let submissions=0;const deps={fullTranscription:true,client:{export:async(_project,output)=>{fs.writeFileSync(output,"export");return{durationS:10};}},clip:async(_input,output)=>fs.writeFileSync(output,"clip"),prepareAudio:async()=>null,processChapter:async(directory,cfg)=>{if(cfg.transcriber!=="none"&&!fs.existsSync(path.join(directory,"transcript.srt"))){submissions++;fs.writeFileSync(path.join(directory,"transcript.srt"),'1\n00:00:00,000 --> 00:00:01,000\nSaved full transcript\n');}return{transcript:true};},writeIndex:()=>{},writeReport:()=>{}};
- await finishNativeWalk(f.file,{transcriber:"elevenlabs"},deps);assert.equal(submissions,2);assert.ok(fs.existsSync(path.join(f.directory,"checkpoints/full-transcript.json")));await finishNativeWalk(f.file,{transcriber:"elevenlabs"},{...deps,fullTranscription:false});assert.equal(submissions,2);assert.equal(JSON.parse(fs.readFileSync(path.join(f.directory,"processing.json"))).transcript,"ready");
+test("explicit full transcription is available after unsupported live capture and ordinary reprocess reuses it", async (t) => {
+	const f = fixture(t);
+	let submissions = 0;
+	const deps = {
+		fullTranscription: true,
+		client: {
+			export: async (_project, output) => {
+				fs.writeFileSync(output, "export");
+				return { durationS: 10 };
+			},
+		},
+		clip: async (_input, output) => fs.writeFileSync(output, "clip"),
+		prepareAudio: async () => null,
+		processChapter: async (directory, cfg) => {
+			if (
+				cfg.transcriber !== "none" &&
+				!fs.existsSync(path.join(directory, "transcript.srt"))
+			) {
+				submissions++;
+				fs.writeFileSync(
+					path.join(directory, "transcript.srt"),
+					"1\n00:00:00,000 --> 00:00:01,000\nSaved full transcript\n",
+				);
+			}
+			return { transcript: true };
+		},
+		writeIndex: () => {},
+		writeReport: () => {},
+	};
+	await finishNativeWalk(f.file, { transcriber: "elevenlabs" }, deps);
+	assert.equal(submissions, 2);
+	assert.ok(
+		fs.existsSync(path.join(f.directory, "checkpoints/full-transcript.json")),
+	);
+	await finishNativeWalk(
+		f.file,
+		{ transcriber: "elevenlabs" },
+		{ ...deps, fullTranscription: false },
+	);
+	assert.equal(submissions, 2);
+	assert.equal(
+		JSON.parse(fs.readFileSync(path.join(f.directory, "processing.json")))
+			.transcript,
+		"ready",
+	);
 });

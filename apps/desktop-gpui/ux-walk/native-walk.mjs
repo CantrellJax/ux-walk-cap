@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { projectBrowserEvidence, safeBrowserUrl } from "./browser-evidence.mjs";
+import { durableJson, durableWrite, sha256 } from "./checkpoint-store.mjs";
 import { reuseCheckpointTranscript } from "./checkpoint-transcript.mjs";
 import { clipNativeAudio, prepareNativeAudio } from "./native-audio.mjs";
 import { RecoveryTransport } from "./recovery-transport.mjs";
@@ -409,6 +410,97 @@ export async function finishNativeWalk(file, cfg, dependencies = {}) {
 			return session.chapters;
 		};
 		const earlyRows = chapters(journal.durationMs);
+		const fullReceipt = path.join(
+			directory,
+			"checkpoints/full-transcript.json",
+		);
+		const explicitFull = dependencies.fullTranscription === true;
+		const fullCached = !explicitFull && fs.existsSync(fullReceipt);
+		if (explicitFull) {
+			const workerOwner = path.join(directory, ".checkpoint-worker/owner.json");
+			if (fs.existsSync(workerOwner)) {
+				const { pid } = JSON.parse(fs.readFileSync(workerOwner, "utf8"));
+				let alive = true;
+				try {
+					process.kill(pid, 0);
+				} catch (error) {
+					if (error.code === "ESRCH") alive = false;
+					else throw error;
+				}
+				if (alive)
+					throw new Error(
+						"Wait for evidence sync to finish before requesting a full paid transcription. Existing jobs and audio remain saved.",
+					);
+			}
+			if (cfg.transcriber === "none")
+				throw new Error(
+					"Choose a transcription provider before requesting a full transcript",
+				);
+			const previous = fs.existsSync(fullReceipt)
+				? JSON.parse(fs.readFileSync(fullReceipt, "utf8"))
+				: {};
+			if ((previous.manualRequests ?? 0) >= 3)
+				throw new Error(
+					"This walk reached its three explicit full-transcript request limit; retained audio can be processed separately",
+				);
+			durableJson(fullReceipt, {
+				schemaVersion: 1,
+				requestedAt: Date.now(),
+				provider: cfg.transcriber,
+				state: "requested",
+				requestId: randomUUID(),
+				manualRequests: (previous.manualRequests ?? 0) + 1,
+			});
+			for (const row of earlyRows) {
+				const srt = path.join(directory, row.dir, "transcript.srt");
+				const request = JSON.parse(fs.readFileSync(fullReceipt, "utf8"));
+				durableJson(
+					path.join(directory, row.dir, "full-transcript-request.json"),
+					{ requestId: request.requestId, state: "prepared" },
+				);
+				if (fs.existsSync(srt)) {
+					const bytes = fs.readFileSync(srt);
+					durableWrite(
+						path.join(
+							directory,
+							row.dir,
+							`transcript-source-${sha256(bytes).slice(0, 12)}.srt`,
+						),
+						bytes,
+					);
+					fs.unlinkSync(srt);
+				}
+			}
+			const jobsRoot = path.join(directory, "checkpoints/jobs");
+			if (fs.existsSync(jobsRoot))
+				for (const name of fs
+					.readdirSync(jobsRoot)
+					.filter((name) => /^[a-f0-9]{64}\.json$/.test(name))) {
+					const file = path.join(jobsRoot, name);
+					const job = JSON.parse(fs.readFileSync(file, "utf8"));
+					if (job.state === "prepared")
+						durableJson(file, {
+							...job,
+							state: "superseded",
+							reason:
+								"Explicit full-transcript request owns subsequent processing",
+						});
+				}
+		}
+		const completeFullChapter = (row, summary) => {
+			if (!explicitFull || summary?.transcriptError) return;
+			const file = path.join(directory, row.dir, "transcript.srt");
+			if (fs.existsSync(file))
+				durableJson(
+					path.join(directory, row.dir, "full-transcript-request.json"),
+					{
+						requestId: JSON.parse(fs.readFileSync(fullReceipt, "utf8"))
+							.requestId,
+						state: "complete",
+						resultHash: sha256(fs.readFileSync(file)),
+					},
+				);
+		};
 		const earlyResults = new Map();
 		let liveCacheHandled = false;
 		const audio = (async () => {
@@ -416,20 +508,53 @@ export async function finishNativeWalk(file, cfg, dependencies = {}) {
 				progress("processing", null, { transcript: "disabled" });
 				return;
 			}
-			const cached = await reuseCheckpointTranscript(
-				directory,
-				earlyRows,
-				journal.startedAtMs,
-				cfg,
-			);
-			if (cached.handled) {
+			if (fullCached) {
 				liveCacheHandled = true;
-				for (const [name, summary] of cached.results)
-					earlyResults.set(name, summary);
-				progress("processing", null, {
-					transcript: cached.error ? "partial" : "saved live jobs",
-				});
+				const request = JSON.parse(fs.readFileSync(fullReceipt, "utf8"));
+				for (const row of earlyRows) {
+					const srt = path.join(directory, row.dir, "transcript.srt");
+					let receipt;
+					try {
+						receipt = JSON.parse(
+							fs.readFileSync(
+								path.join(directory, row.dir, "full-transcript-request.json"),
+								"utf8",
+							),
+						);
+					} catch {}
+					const exists =
+						fs.existsSync(srt) &&
+						receipt?.requestId === request.requestId &&
+						receipt?.state === "complete" &&
+						receipt.resultHash === sha256(fs.readFileSync(srt));
+					earlyResults.set(row.dir, {
+						transcript: exists,
+						...(!exists
+							? {
+									transcriptError:
+										"The explicit full-transcript request has no verified saved result for this chapter. Choose Transcribe full audio again to allow another paid attempt.",
+								}
+							: {}),
+					});
+				}
 				return;
+			}
+			if (!explicitFull) {
+				const cached = await reuseCheckpointTranscript(
+					directory,
+					earlyRows,
+					journal.startedAtMs,
+					cfg,
+				);
+				if (cached.handled) {
+					liveCacheHandled = true;
+					for (const [name, summary] of cached.results)
+						earlyResults.set(name, summary);
+					progress("processing", null, {
+						transcript: cached.error ? "partial" : "saved live jobs",
+					});
+					return;
+				}
 			}
 			const source = await (dependencies.prepareAudio ?? prepareNativeAudio)(
 				project,
@@ -472,6 +597,7 @@ export async function finishNativeWalk(file, cfg, dependencies = {}) {
 					brief: false,
 					log: () => {},
 				});
+				completeFullChapter(row, summary);
 				earlyResults.set(row.dir, summary);
 			}
 			const results = [...earlyResults.values()];
@@ -530,7 +656,7 @@ export async function finishNativeWalk(file, cfg, dependencies = {}) {
 			Math.round(info.durationS * 1000),
 		);
 		const rows = chapters(durationMs);
-		if (liveCacheHandled) {
+		if (liveCacheHandled && !fullCached) {
 			const cached = await reuseCheckpointTranscript(
 				directory,
 				rows,
@@ -576,6 +702,7 @@ export async function finishNativeWalk(file, cfg, dependencies = {}) {
 						log: () => {},
 					},
 				);
+				completeFullChapter(row, summary);
 				if (early?.transcriptError)
 					save(path.join(chapterDir, "summary.json"), {
 						...summary,
@@ -608,6 +735,36 @@ export async function finishNativeWalk(file, cfg, dependencies = {}) {
 			transcriptFiles.every(
 				(file) => fs.existsSync(file) && fs.statSync(file).size > 0,
 			);
+		if (explicitFull) {
+			const { parseSrt } = await import(new URL("timeline.mjs", engine));
+			const words = rows.flatMap((row) => {
+				const srt = path.join(directory, row.dir, "transcript.srt");
+				return fs.existsSync(srt)
+					? parseSrt(fs.readFileSync(srt, "utf8"), [], {}).map((cue) => ({
+							...cue,
+							start: cue.start + (row.startMs - journal.startedAtMs) / 1000,
+							end: cue.end + (row.startMs - journal.startedAtMs) / 1000,
+						}))
+					: [];
+			});
+			durableJson(
+				path.join(directory, "checkpoints/full-transcript-words.json"),
+				{
+					schemaVersion: 1,
+					source: "exported-session",
+					sourceStartMs: 0,
+					sourceEndMs: durationMs,
+					words,
+					speakerScope:
+						"Full exported session; names depend on supplied speaker mapping",
+				},
+			);
+			durableJson(fullReceipt, {
+				...JSON.parse(fs.readFileSync(fullReceipt, "utf8")),
+				state: transcriptsReady ? "complete" : "partial",
+				completedAt: Date.now(),
+			});
+		}
 		progress("ready", null, {
 			...(stages.transcript === "disabled"
 				? {}
@@ -718,9 +875,11 @@ if (isMainModule()) {
 	const [command, file] = process.argv.slice(2);
 	try {
 		if (command === "snapshot") snapshotNativeWalk(file);
-		else if (command === "process") {
+		else if (command === "process" || command === "process-full-transcript") {
 			const { loadConfig } = await import(new URL("config.mjs", engine));
-			await finishNativeWalk(file, loadConfig());
+			await finishNativeWalk(file, loadConfig(), {
+				fullTranscription: command === "process-full-transcript",
+			});
 		} else if (command === "recovery-list") {
 			const initial = new RecoveryTransport("");
 			const settings = await initial.status();

@@ -7,6 +7,8 @@ import {
 	sha256,
 } from "./checkpoint-store.mjs";
 
+import { sourceAudioProblem } from "./native-audio.mjs";
+
 const local = new URL("./src/transcribe.mjs", import.meta.url);
 const engine = fs.existsSync(local)
 	? new URL("./src/", import.meta.url)
@@ -61,6 +63,8 @@ export async function reuseCheckpointTranscript(
 		const config = layout.config ?? {};
 		const spans = layout.displaySpans;
 		const unsupported =
+			layout.alignmentProblem ||
+			sourceAudioProblem(null, config) ||
 			!Array.isArray(spans) ||
 			spans.length !== layout.meta?.segments?.length ||
 			spans.some((span) => !(span > 0)) ||
@@ -167,6 +171,22 @@ export async function reuseCheckpointTranscript(
 				end: Math.min(end - start, word.end - start),
 			}));
 		const chapter = path.join(directory, row.dir);
+		const srt = path.join(chapter, "transcript.srt");
+		if (
+			!words.length &&
+			fs.existsSync(path.join(chapter, "transcript-sources.json")) &&
+			fs.existsSync(srt)
+		) {
+			const bytes = fs.readFileSync(srt);
+			durableWrite(
+				path.join(
+					chapter,
+					`transcript-source-${sha256(bytes).slice(0, 12)}.srt`,
+				),
+				bytes,
+			);
+			fs.unlinkSync(srt);
+		}
 		durableJson(path.join(chapter, "transcript-sources.json"), {
 			schemaVersion: 1,
 			words,
