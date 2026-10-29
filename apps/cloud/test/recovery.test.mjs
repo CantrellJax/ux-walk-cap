@@ -216,3 +216,23 @@ test("checkpoint coverage rejects reversed or future ranges and active clock reg
 	assert.equal((await request(`/${id}/checkpoints/2`, { method: "PUT", headers, body: JSON.stringify({ ...checkpoint, sequence: 2, previousSequence: 1, activeThroughMs: 999, clock: { ...checkpoint.clock, activeElapsedMs: 999 } }) })).status, 400);
 	assert.equal((await request(`/${id}/checkpoints/2`, { method: "PUT", headers, body: JSON.stringify({ ...checkpoint, sequence: 2, previousSequence: 1, clock: { ...checkpoint.clock, wallMs: 1999 } }) })).status, 200);
 });
+
+test("acknowledged recovery descriptors remain retrievable within the client response budget", async () => {
+	const registration = await register();
+	const id = registration.recordingId;
+	for (let sequence = 1; sequence <= 35; sequence++) {
+		const descriptor = { schemaVersion: 1, recordingId: id, writerGeneration: registration.writerGeneration, sequence, previousSequence: sequence - 1, activeThroughMs: 1000, clock: { wallMs: 2000, activeElapsedMs: 1000, paused: false }, objects: [], padding: "x".repeat(245000) };
+		assert.equal((await request(`/${id}/checkpoints/${sequence}`, { method: "PUT", headers, body: JSON.stringify(descriptor) })).status, 200);
+	}
+	let cursor;
+	let count = 0;
+	do {
+		const response = await request(`/${id}${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`, { headers });
+		const text = await response.text();
+		assert.ok(Buffer.byteLength(text) <= 8 * 1024 * 1024);
+		const page = JSON.parse(text);
+		count += page.checkpoints.length;
+		cursor = page.cursor;
+	} while (cursor);
+	assert.equal(count, 35);
+});
