@@ -34,6 +34,20 @@ export async function reuseCheckpointTranscript(
 			!["elevenlabs", "assemblyai"].includes(cfg.transcriber)
 		)
 			return { handled: false };
+		if (sealedNoAudioCapture(directory, cfg))
+			return {
+				handled: true,
+				error: null,
+				results: new Map(
+					rows.map((row) => [
+						row.dir,
+						{
+							transcript: false,
+							transcriptUnavailable: "No audio was selected for this recording",
+						},
+					]),
+				),
+			};
 		const error =
 			"Live transcription is pending or draining. Source audio is retained; reprocess after the checkpoint worker finishes.";
 		return {
@@ -57,7 +71,7 @@ export async function reuseCheckpointTranscript(
 			"Live transcript source clocks are retained; final display alignment is not yet available. Retry preparation after checkpoint draining finishes.";
 	}
 	const mapped = [];
-	let complete = true;
+	let complete = jobs.every((job) => job.state === "complete");
 	let base = 0;
 	if (layout) {
 		const config = layout.config ?? {};
@@ -205,11 +219,7 @@ export async function reuseCheckpointTranscript(
 	return { handled: true, results, error };
 }
 
-export function sealedUnsupportedFallback(
-	directory,
-	cfg,
-	allowFullOwner = false,
-) {
+function verifiedZeroJobSeal(directory, cfg, allowFullOwner = false) {
 	if (
 		cfg.liveTranscription === false ||
 		!["elevenlabs", "assemblyai"].includes(cfg.transcriber)
@@ -224,8 +234,7 @@ export function sealedUnsupportedFallback(
 			seal.recordingId !== identity.recordingId ||
 			seal.generation !== identity.generation ||
 			seal.captureState !== "complete" ||
-			seal.providerJobs !== 0 ||
-			!Object.keys(seal.unsupportedSources ?? {}).length
+			seal.providerJobs !== 0
 		)
 			return false;
 		if (fs.readdirSync(path.join(root, "jobs")).length) return false;
@@ -266,7 +275,67 @@ export function sealedUnsupportedFallback(
 				if (error.code !== "ESRCH") return false;
 			}
 		}
-		return true;
+		return {
+			seal,
+			root,
+			descriptors: names.map((name) =>
+				readJson(path.join(root, "descriptors", name)),
+			),
+		};
+	} catch {
+		return false;
+	}
+}
+
+export function sealedUnsupportedFallback(
+	directory,
+	cfg,
+	allowFullOwner = false,
+) {
+	const verified = verifiedZeroJobSeal(directory, cfg, allowFullOwner);
+	return (
+		!!verified && Object.keys(verified.seal.unsupportedSources ?? {}).length > 0
+	);
+}
+
+export function sealedNoAudioCapture(directory, cfg) {
+	const verified = verifiedZeroJobSeal(directory, cfg);
+	if (!verified) return false;
+	const { seal, root, descriptors } = verified;
+	try {
+		if (
+			seal.expectedAudio?.microphone !== false ||
+			seal.expectedAudio?.systemAudio !== false ||
+			seal.sourceCaptureState !== "Complete" ||
+			Object.keys(seal.unsupportedSources ?? {}).length ||
+			!descriptors.at(-1)?.finalized ||
+			descriptors.at(-1)?.captureState !== "complete" ||
+			descriptors.some((descriptor) =>
+				descriptor.objects.some((object) =>
+					[
+						"microphone",
+						"systemAudio",
+						"microphoneInit",
+						"systemAudioInit",
+					].includes(object.kind),
+				),
+			)
+		)
+			return false;
+		const bytes = fs.readFileSync(path.join(root, "final-layout.json"));
+		if (sha256(bytes) !== seal.finalLayoutHash) return false;
+		const layout = JSON.parse(bytes);
+		return (
+			Array.isArray(layout.meta?.segments) &&
+			layout.meta.segments.length > 0 &&
+			layout.meta.segments.every(
+				(segment) => !segment.mic && !segment.system_audio,
+			) &&
+			Array.isArray(layout.displaySpans) &&
+			layout.displaySpans.length === layout.meta.segments.length &&
+			layout.displaySpans.every((span) => Number.isFinite(span) && span > 0) &&
+			Object.keys(layout.sourceDurations ?? {}).length === 0
+		);
 	} catch {
 		return false;
 	}
