@@ -23,6 +23,7 @@ const included = [
 	"test/unit/embedded-config.test.mjs",
 	"test/unit/start-link.test.mjs",
 	"test/unit/cap-editor-handoff.test.mjs",
+	"test/unit/transcript-only.test.mjs",
 ];
 
 export async function verifyUxWalkSource(directory = engineDirectory) {

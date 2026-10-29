@@ -71,6 +71,7 @@ export async function bundleUxWalk(app) {
 	);
 	for (const file of [
 		"native-walk.mjs",
+		"native-audio.mjs",
 		"native-browser.mjs",
 		"browser-evidence.mjs",
 	]) {

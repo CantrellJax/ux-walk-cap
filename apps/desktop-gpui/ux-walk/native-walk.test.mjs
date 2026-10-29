@@ -343,22 +343,36 @@ test("transcript is saved while export is blocked and reused after export failur
 	f.save();
 	let failExport;
 	let enteredExport;
-	const entered = new Promise((resolve) => { enteredExport = resolve; });
+	const entered = new Promise((resolve) => {
+		enteredExport = resolve;
+	});
 	let ready;
-	const transcriptReady = new Promise((resolve) => { ready = resolve; });
+	const transcriptReady = new Promise((resolve) => {
+		ready = resolve;
+	});
 	let uploads = 0;
 	const transcript = path.join(f.directory, "01-walkthrough/transcript.srt");
 	const deps = {
-		prepareAudio: async () => ({ path: path.join(f.directory, "source.m4a"), durationS: 10 }),
+		prepareAudio: async () => ({
+			path: path.join(f.directory, "source.m4a"),
+			durationS: 10,
+		}),
 		clipAudio: async (_input, output) => fs.writeFileSync(output, "audio"),
-		client: { export: async () => {
-			enteredExport();
-			return new Promise((_resolve, reject) => { failExport = reject; });
-		} },
+		client: {
+			export: async () => {
+				enteredExport();
+				return new Promise((_resolve, reject) => {
+					failExport = reject;
+				});
+			},
+		},
 		processChapter: async (directory, _cfg, options) => {
 			if (options.transcriptOnly && !fs.existsSync(transcript)) {
 				uploads++;
-				fs.writeFileSync(path.join(directory, "transcript.srt"), "1\n00:00:00,000 --> 00:00:01,000\nSpeaker 1: Saved.\n");
+				fs.writeFileSync(
+					path.join(directory, "transcript.srt"),
+					"1\n00:00:00,000 --> 00:00:01,000\nSpeaker 1: Saved.\n",
+				);
 				ready();
 			}
 			return { transcript: true };
@@ -375,16 +389,25 @@ test("transcript is saved while export is blocked and reused after export failur
 	]);
 	failExport(new Error("Export unavailable"));
 	await rejected;
-	assert.equal(observed, true, "transcription must finish while export is unresolved");
+	assert.equal(
+		observed,
+		true,
+		"transcription must finish while export is unresolved",
+	);
 	assert.match(fs.readFileSync(transcript, "utf8"), /Saved/);
 	deps.client.export = async (_project, output) => {
 		fs.writeFileSync(output, "verified export");
 		return { durationS: 10 };
 	};
-	deps.clip = async () => { throw new Error("full-session video must be reused"); };
+	deps.clip = async () => {
+		throw new Error("full-session video must be reused");
+	};
 	await finishNativeWalk(f.file, { transcriber: "elevenlabs" }, deps);
 	assert.equal(uploads, 1);
-	assert.equal(fs.readFileSync(path.join(f.directory, "01-walkthrough/video.mp4"), "utf8"), "verified export");
+	assert.equal(
+		fs.readFileSync(path.join(f.directory, "01-walkthrough/video.mp4"), "utf8"),
+		"verified export",
+	);
 });
 
 test("one chapter reuses a full export but still trims a longer export", async (t) => {
@@ -393,13 +416,188 @@ test("one chapter reuses a full export but still trims a longer export", async (
 		f.journal.events = [];
 		f.save();
 		const spans = [];
-		await finishNativeWalk(f.file, { transcriber: "none" }, {
-			client: { export: async (_project, output) => { fs.writeFileSync(output, "export"); return { durationS: exportedS }; } },
-			clip: async (_input, output, start, duration) => { spans.push([start, duration]); fs.writeFileSync(output, "clipped"); },
-			processChapter: async () => ({}),
-			writeIndex: () => {},
-			writeReport: () => {},
-		});
+		await finishNativeWalk(
+			f.file,
+			{ transcriber: "none" },
+			{
+				client: {
+					export: async (_project, output) => {
+						fs.writeFileSync(output, "export");
+						return { durationS: exportedS };
+					},
+				},
+				clip: async (_input, output, start, duration) => {
+					spans.push([start, duration]);
+					fs.writeFileSync(output, "clipped");
+				},
+				processChapter: async () => ({}),
+				writeIndex: () => {},
+				writeReport: () => {},
+			},
+		);
 		assert.deepEqual(spans, exportedS === 10 ? [] : [[0, 10]]);
 	}
+});
+
+test("real source AAC and the configured provider save words before the video export finishes", async (t) => {
+	const f = fixture(t);
+	f.journal.durationMs = 1000;
+	f.journal.events = [];
+	f.save();
+	const video = spawnSync(
+		"ffmpeg",
+		[
+			"-v",
+			"error",
+			"-y",
+			"-f",
+			"lavfi",
+			"-i",
+			"color=size=32x32:rate=10:duration=1",
+			"-c:v",
+			"libx264",
+			"-threads",
+			"1",
+			path.join(f.source, "source.mp4"),
+		],
+		{ encoding: "utf8" },
+	);
+	assert.equal(video.status, 0, video.stderr);
+	const audio = spawnSync(
+		"ffmpeg",
+		[
+			"-v",
+			"error",
+			"-f",
+			"lavfi",
+			"-i",
+			"sine=frequency=440:duration=1",
+			"-c:a",
+			"aac",
+			path.join(f.source, "mic.m4a"),
+		],
+		{ encoding: "utf8" },
+	);
+	assert.equal(audio.status, 0, audio.stderr);
+	fs.writeFileSync(
+		path.join(f.source, "recording-meta.json"),
+		JSON.stringify({
+			status: { status: "Complete" },
+			segments: [
+				{
+					display: { path: "source.mp4", start_time: 0 },
+					mic: { path: "mic.m4a", start_time: 0 },
+				},
+			],
+		}),
+	);
+	const old = process.env.ELEVENLABS_API_KEY;
+	process.env.ELEVENLABS_API_KEY = "synthetic-test-key";
+	t.after(() => {
+		if (old === undefined) delete process.env.ELEVENLABS_API_KEY;
+		else process.env.ELEVENLABS_API_KEY = old;
+	});
+	let uploads = 0;
+	t.mock.method(globalThis, "fetch", async () => {
+		uploads++;
+		return new Response(
+			JSON.stringify({
+				words: [
+					{
+						type: "word",
+						text: "Recovered.",
+						start: 0.05,
+						end: 0.4,
+						speaker_id: "speaker_0",
+					},
+				],
+			}),
+		);
+	});
+	const { processChapter } = await import(
+		"../../../vendor/ux-walk/src/process.mjs"
+	);
+	let failExport;
+	const deps = {
+		client: {
+			export: async () =>
+				new Promise((_resolve, reject) => {
+					failExport = reject;
+				}),
+		},
+		processChapter: (directory, cfg, options) =>
+			options.transcriptOnly
+				? processChapter(directory, cfg, options)
+				: Promise.resolve({}),
+		writeIndex: () => {},
+		writeReport: () => {},
+	};
+	const cfg = {
+		transcriber: "elevenlabs",
+		glossary: "",
+		brief: false,
+		sections: false,
+	};
+	const running = finishNativeWalk(f.file, cfg, deps);
+	const rejected = assert.rejects(running, /Synthetic export failure/);
+	const transcript = path.join(f.directory, "01-walkthrough/transcript.srt");
+	const deadline = Date.now() + 5000;
+	while (!fs.existsSync(transcript) && Date.now() < deadline)
+		await new Promise((resolve) => setTimeout(resolve, 10));
+	failExport(new Error("Synthetic export failure"));
+	await rejected;
+	assert.match(fs.readFileSync(transcript, "utf8"), /Recovered/);
+	assert.equal(uploads, 1);
+	const state = JSON.parse(
+		fs.readFileSync(path.join(f.directory, "processing.json")),
+	);
+	assert.equal(state.transcript, "ready");
+	assert.equal(state.video, "failed");
+	deps.client.export = async (_project, output) => {
+		fs.writeFileSync(output, "verified export");
+		return { durationS: 1 };
+	};
+	await finishNativeWalk(f.file, cfg, deps);
+	assert.equal(uploads, 1);
+});
+
+test("a shorter final export bounds chapter captions and keeps the full source transcript", async (t) => {
+	const f = fixture(t);
+	f.journal.events = [];
+	f.save();
+	await finishNativeWalk(
+		f.file,
+		{ transcriber: "elevenlabs" },
+		{
+			prepareAudio: async () => ({ path: "source.m4a", durationS: 10 }),
+			clipAudio: async (_input, output) => fs.writeFileSync(output, "audio"),
+			client: {
+				export: async (_project, output) => {
+					fs.writeFileSync(output, "verified export");
+					return { durationS: 5 };
+				},
+			},
+			processChapter: async (directory, _cfg, options) => {
+				if (options.transcriptOnly)
+					fs.writeFileSync(
+						path.join(directory, "transcript.srt"),
+						"1\n00:00:04,000 --> 00:00:06,000\nSpeaker 1: Boundary.\n\n2\n00:00:08,000 --> 00:00:09,000\nSpeaker 1: Outside.\n",
+					);
+				return { transcript: true };
+			},
+			writeIndex: () => {},
+			writeReport: () => {},
+		},
+	);
+	const directory = path.join(f.directory, "01-walkthrough");
+	const captions = fs.readFileSync(
+		path.join(directory, "transcript.srt"),
+		"utf8",
+	);
+	assert.match(captions, /00:00:04,000 --> 00:00:05,000/);
+	assert.doesNotMatch(captions, /Outside/);
+	assert.match(
+		fs.readFileSync(path.join(directory, "transcript-source.srt"), "utf8"),
+		/Outside/,
+	);
 });

@@ -104,7 +104,9 @@ jobs:
           cargo +1.95.0 check --locked -p cap
           cargo +1.95.0 test --locked -p cap-cloud-sharing
       - name: Exercise the native walk processor
-        run: node --test apps/desktop-gpui/ux-walk/browser-evidence.test.mjs apps/desktop-gpui/ux-walk/native-walk.test.mjs
+        run: |
+          command -v ffmpeg >/dev/null || brew install ffmpeg
+          node --test apps/desktop-gpui/ux-walk/browser-evidence.test.mjs apps/desktop-gpui/ux-walk/native-walk.test.mjs apps/desktop-gpui/ux-walk/native-audio.test.mjs vendor/ux-walk/test/unit/transcript-only.test.mjs
       - name: Exercise portable production projects
         run: node --test apps/cli/skill/cap-demo/lib/production.test.mjs
       - name: Exercise isolated window selection

@@ -23,6 +23,7 @@ export class WindowCapture {
     this.onEvent = onEvent || (() => {});
     this.exited = false;
     this.nextSnapshot = 0;
+    this.helperEventSequence = 0;
   }
 
   wait(match, ms = 20000) {
@@ -35,6 +36,7 @@ export class WindowCapture {
   }
 
   handle(e) {
+    e = { ...e, helperEventSequence: ++this.helperEventSequence, receivedAt: Date.now() };
     this.onEvent(e);
     if (e.ev === 'error') {
       const i = this.waiters.findIndex((w) => e.requestId ? w.match(e) : true);
@@ -52,9 +54,9 @@ export class WindowCapture {
     readline.createInterface({ input: this.proc.stdout }).on('line', (l) => { try { this.handle(JSON.parse(l)); } catch {} });
     let stderr = '';
     this.proc.stderr.on('data', (d) => { stderr += d; });
-    this.done = new Promise((r) => this.proc.on('exit', (code) => {
+    this.done = new Promise((r) => this.proc.on('exit', (code, signal) => {
       this.exited = true;
-      this.onEvent({ ev: 'exit', code });
+      this.handle({ ev: 'exit', code, signal });
       for (const w of this.waiters.splice(0)) { clearTimeout(w.timer); w.reject(new Error(`capture helper exited (${code}) ${stderr.trim()}`)); }
       r(code);
     }));
@@ -136,7 +138,7 @@ export function detectCalls() {
 
 // Persist native recording failures independently of recoverable, request-scoped screenshot errors.
 export function createCaptureHealth({ session, write, save, clock = Date.now }) {
-  session.capture = { status: 'starting', errors: [] };
+  session.capture = { status: 'starting', errors: [], boundaries: [] };
   const interrupt = (reason, details = {}) => {
     const t = clock(), error = { t, reason, ...details };
     Object.assign(session.capture, { status: 'interrupted', error: reason, interruptedAt: t, endReason: reason });
@@ -147,18 +149,24 @@ export function createCaptureHealth({ session, write, save, clock = Date.now }) 
     save();
     return true;
   };
-  const exited = (code) => {
+  const exited = (code, helperEvent) => {
     if (code === 0) return false;
     session.capture.exitCode = code;
-    return interrupt(`Native capture exited unexpectedly (${code ?? 'signal'})`, { exitCode: code });
+    return interrupt(`Native capture exited unexpectedly (${code ?? 'signal'})`, { exitCode: code, ...(helperEvent ? { helperEvent } : {}) });
   };
   return {
     event(e) {
-      if (e.ev === 'exit') return exited(e.code);
+      if (e.ev === 'exit') return exited(e.code, e);
+      if (e.ev === 'capture-boundary') {
+        const boundary = { t: clock(), source: 'capture-helper', helperEvent: e };
+        session.capture.boundaries.push(boundary);
+        write({ ev: 'capture-boundary', ...boundary });
+        save();
+      }
       if (e.ev === 'error' && !e.requestId) return interrupt(e.message || 'Native capture error', { helperEvent: e });
       if (e.ev === 'ready') {
         session.capture.startedAt = clock();
-        session.capture.target = { windowId: e.windowId, title: e.title, width: e.width, height: e.height };
+        session.capture.target = { ...e.target, windowId: e.windowId, title: e.title, width: e.width, height: e.height };
         if (session.capture.status !== 'interrupted') session.capture.status = 'recording';
         save();
       }

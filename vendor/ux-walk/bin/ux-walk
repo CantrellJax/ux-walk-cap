@@ -35,7 +35,8 @@ const HELP = `ux-walk: record a narrated walkthrough in chapters; get a timeline
   ux-walk process --stale [dir]    rebuild timelines made by an older ux-walk or before a glossary change (--dry-run lists)
   ux-walk timeline <dir> [--short] [--stdout]
                                    rebuild the timeline only (no upload); --stdout prints it
-  ux-walk report <dir>           deterministic HTML report from saved findings, checkpoints and timings
+  ux-walk report <dir>           deterministic HTML report from saved findings, checkpoints and timings;
+                                 a parent report.json combines existing interrupted/continuation sessions
   ux-walk cap doctor|targets      Cap Desktop readiness or exact target/device IDs (JSON)
   ux-walk cap sessions            active/recent detached Cap recordings (JSON)
   ux-walk cap compatibility       check the installed Cap contract without recording or updating
