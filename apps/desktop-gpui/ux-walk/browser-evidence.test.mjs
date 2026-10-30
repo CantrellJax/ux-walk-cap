@@ -628,7 +628,11 @@ test("native note preflight keeps the active boundary open until ACK and revokes
 		fs.writeFileSync(f.file, JSON.stringify(f.journal));
 		let now = 100000,
 			release,
-			reject;
+			reject,
+			checkedResolve;
+		const checked = new Promise((resolve) => {
+			checkedResolve = resolve;
+		});
 		const gate = new Promise((resolve, fail) => {
 			release = resolve;
 			reject = fail;
@@ -651,6 +655,7 @@ test("native note preflight keeps the active boundary open until ACK and revokes
 			{
 				prepareNotePause: async ({ allowPage }) => {
 					assert.equal(await allowPage(page), true);
+					checkedResolve();
 					await gate;
 				},
 			},
@@ -658,8 +663,7 @@ test("native note preflight keeps the active boundary open until ACK and revokes
 			events,
 		);
 		pending.catch(() => {});
-		await Promise.resolve();
-		await Promise.resolve();
+		await checked;
 		assert.equal(evidence.active.metadata.state, "recording");
 		assert.equal(
 			evidence.active.metadata.anchors.at(-1).paused,
@@ -680,6 +684,39 @@ test("native note preflight keeps the active boundary open until ACK and revokes
 				evidence.clockEpoch,
 			);
 			assert.equal(evidence.active.metadata.anchors.at(-1).paused, false);
+			evidence.anchor(f.file, now, 20, true);
+			evidence.active.metadata.state = "finishing";
+			assert.equal(
+				evidence.write({ ev: "note", id: 9, t: now, text: "PAUSED_UNSCOPED" }),
+				false,
+			);
+			await flushNativeNotes(
+				{
+					flushPendingNotes: async ({ writeNote }) => {
+						assert.equal(
+							await writeNote(
+								{ ev: "note", id: 1, t: now, text: "ACK_ORDERED_SAME_MS" },
+								page,
+							),
+							true,
+						);
+					},
+				},
+				evidence,
+				events,
+				now,
+			);
+			const rows = fs
+				.readFileSync(
+					path.join(path.dirname(f.file), "browser-evidence.jsonl"),
+					"utf8",
+				)
+				.trim()
+				.split("\n")
+				.map(JSON.parse);
+			assert.equal(rows.length, 1);
+			assert.equal(rows[0].nativeOffsetMs, 20);
+			assert.equal(rows[0].text, "ACK_ORDERED_SAME_MS");
 		} else {
 			await assert.rejects(pending, /ACK timed out|another recording|changed/);
 			if (outcome === "failure") {
