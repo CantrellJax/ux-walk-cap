@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
+import readline from "node:readline";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { projectBrowserEvidence } from "./browser-evidence.mjs";
@@ -446,5 +448,178 @@ document.querySelector("button").onclick = () => {
 		assert.match(nativeWalkPrompt(file), /no server-side query trace/);
 		assert.match(nativeWalkPrompt(file), /browser-preroll/);
 		phase("all smoke assertions passed");
+	},
+);
+
+test(
+	"owned helper finishing schedules its draft drain and Stop awaits one durable note",
+	{ timeout: 10000 },
+	async (t) => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "cap-ux-finish-draft-"));
+		const captureId = randomUUID(),
+			work = path.join(root, "walk-browser", captureId),
+			directory = path.join(root, "walk"),
+			source = path.join(root, "source.cap"),
+			engine = path.join(root, "engine"),
+			config = path.join(root, "config");
+		for (const folder of [
+			work,
+			directory,
+			source,
+			path.join(engine, "src"),
+			config,
+		])
+			fs.mkdirSync(folder, { recursive: true });
+		const original =
+			process.env.CAP_UX_TEST_ENGINE_DIR ||
+			fileURLToPath(new URL("../../../vendor/ux-walk", import.meta.url));
+		for (const name of fs.readdirSync(path.join(original, "src")))
+			if (name !== "browser.mjs")
+				fs.symlinkSync(
+					path.join(original, "src", name),
+					path.join(engine, "src", name),
+				);
+		const entered = path.join(root, "drain-entered"),
+			release = path.join(root, "drain-release");
+		const file = path.join(directory, "native-walk.json"),
+			startedAtMs = Date.now() - 5000;
+		fs.writeFileSync(
+			file,
+			JSON.stringify({
+				schemaVersion: 1,
+				state: "recording",
+				startedAtMs,
+				sourceProject: source,
+				request: { directory, topic: "Owned Stop draft", speakers: [] },
+				events: [],
+				durationMs: null,
+			}),
+		);
+		fs.writeFileSync(
+			path.join(engine, "src/browser.mjs"),
+			`import fs from "node:fs";
+export async function openBrowser(options) {
+ let saved=false;
+ const context={pages:()=>[page],newCDPSession:async()=>({send:async()=>({windowId:17})})};
+ const page={context:()=>context};
+ await options.write({ev:"nav",url:"https://example.com"},page);
+ return {context,browser:{once(){}},saveAuth:async()=>{},close:async()=>{},async flushPendingNotes({allowPage}) {
+  fs.writeFileSync(${JSON.stringify(entered)},"entered");
+  while(!fs.existsSync(${JSON.stringify(release)})) await new Promise(resolve=>setTimeout(resolve,10));
+  if(!saved && await allowPage(page)) {
+   saved=true;
+   await options.write({ev:"note",id:1,t:${startedAtMs + 500},text:"Accepted draft at real finishing",shot:"notes/01.png"},page);
+  }
+ }};
+}`,
+		);
+		const child = spawn(
+			process.execPath,
+			[
+				fileURLToPath(new URL("./native-browser.mjs", import.meta.url)),
+				captureId,
+				work,
+			],
+			{
+				env: {
+					...process.env,
+					CAP_UX_TEST_ENGINE_DIR: engine,
+					CAP_UX_WALK_CONFIG_DIR: config,
+				},
+				stdio: ["pipe", "pipe", "pipe"],
+			},
+		);
+		t.after(() => {
+			child.kill("SIGKILL");
+			fs.rmSync(root, { recursive: true, force: true });
+		});
+		let stderr = "",
+			readyResolve,
+			readyReject;
+		child.stderr.on("data", (data) => {
+			stderr += data;
+		});
+		const ready = new Promise((resolve, reject) => {
+			readyResolve = resolve;
+			readyReject = reject;
+		});
+		const pending = new Map();
+		child.once("exit", (code) => {
+			if (code) {
+				const error = new Error(stderr || `helper exited ${code}`);
+				readyReject(error);
+				for (const waiter of pending.values()) waiter.reject(error);
+			}
+		});
+		readline.createInterface({ input: child.stdout }).on("line", (line) => {
+			const result = JSON.parse(line);
+			if (result.ready !== undefined)
+				return result.ready
+					? readyResolve(result)
+					: readyReject(new Error(result.error));
+			const waiter = pending.get(result.id);
+			pending.delete(result.id);
+			if (result.ok) waiter?.resolve(result);
+			else waiter?.reject(new Error(result.error));
+		});
+		const command = (op, more = {}) =>
+			new Promise((resolve, reject) => {
+				const id = randomUUID();
+				pending.set(id, { resolve, reject });
+				child.stdin.write(
+					`${JSON.stringify({ op, id, captureId, ...more })}\n`,
+				);
+			});
+		await ready;
+		await command("bind", { windowId: "17" });
+		await command("start", { file, windowId: "17" });
+		await command("finishing", {
+			file,
+			wallMs: startedAtMs + 2000,
+			offsetMs: 2000,
+		});
+		const deadline = Date.now() + 1500;
+		while (!fs.existsSync(entered) && Date.now() < deadline)
+			await new Promise((resolve) => setTimeout(resolve, 10));
+		assert.equal(
+			fs.existsSync(entered),
+			true,
+			"finishing must schedule the owned draft drain",
+		);
+		await command("finishing", {
+			file,
+			wallMs: startedAtMs + 2100,
+			offsetMs: 2000,
+		});
+		let stopped = false;
+		const stop = command("stop", { file }).then(() => {
+			stopped = true;
+		});
+		await new Promise((resolve) => setTimeout(resolve, 30));
+		assert.equal(stopped, false, "Stop must await the existing pending drain");
+		fs.writeFileSync(release, "release");
+		await stop;
+		const raw = fs
+			.readFileSync(path.join(directory, "browser-evidence.jsonl"), "utf8")
+			.trim()
+			.split("\n")
+			.filter(Boolean)
+			.map(JSON.parse);
+		assert.equal(
+			raw.length,
+			1,
+			"duplicate finishing anchors must not duplicate the accepted note",
+		);
+		assert.equal(raw[0].text, "Accepted draft at real finishing");
+		assert.equal(raw[0].observedAt, startedAtMs + 500);
+		assert.equal(raw[0].nativeOffsetMs, 500);
+		assert.equal(
+			JSON.parse(
+				fs.readFileSync(path.join(directory, "browser-evidence.json"), "utf8"),
+			).state,
+			"complete",
+		);
+		await command("close");
+		child.stdin.end();
 	},
 );

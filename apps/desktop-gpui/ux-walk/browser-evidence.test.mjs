@@ -329,3 +329,98 @@ test("Stop drains an owned pre-boundary draft into raw evidence and its original
 	assert.equal(projected.events[0].t, 100500);
 	assert.equal(projected.events[0].text, "Unsaved note before Stop");
 });
+
+test("boundary note drains retain ownership and pause fences across asynchronous window checks", async (t) => {
+	for (const scenario of [
+		"ordinary",
+		"foreign",
+		"after-boundary",
+		"previous-epoch",
+		"resume",
+		"generation",
+		"abort",
+		"duplicate-pause",
+	]) {
+		const f = fixture(t);
+		Object.assign(f.journal, { schemaVersion: 1, state: "recording" });
+		fs.writeFileSync(f.file, JSON.stringify(f.journal));
+		let now = 100000;
+		const evidence = new NativeBrowserEvidence(
+			"owned-browser",
+			path.join(path.dirname(f.file), "prepared"),
+			() => now,
+		);
+		t.after(() => clearInterval(evidence.flushTimer));
+		evidence.windowId = "17";
+		evidence.start(f.file, "17");
+		const context = {
+			pages: () => [page],
+			newCDPSession: async (candidate) => ({
+				send: async () => ({ windowId: candidate.windowId }),
+			}),
+		};
+		const page = { windowId: 17, context: () => context };
+		const foreign = { windowId: 88, context: () => context };
+		const events = new OwnedWindowEvents(evidence);
+		if (scenario === "previous-epoch") {
+			evidence.anchor(f.file, 101000, 1000, true);
+			evidence.anchor(f.file, 103000, 1000, false);
+		}
+		const throughMs = scenario === "previous-epoch" ? 104000 : 101000;
+		now = throughMs;
+		evidence.anchor(f.file, throughMs, 2000, true);
+		evidence.active.metadata.state = "finishing";
+		now += 10;
+		await flushNativeNotes(
+			{
+				async flushPendingNotes({ allowPage }) {
+					assert.equal(await allowPage(page), true, scenario);
+					const raw = {
+						ev: "note",
+						id: 1,
+						t: scenario === "after-boundary" ? throughMs + 1 : 100500,
+						text: "Retain accepted draft",
+					};
+					if (scenario === "ordinary") {
+						assert.equal(
+							evidence.write(raw),
+							false,
+							"unscoped paused note remains refused",
+						);
+						return;
+					}
+					const pending = events.write(
+						raw,
+						scenario === "foreign" ? foreign : page,
+					);
+					if (scenario === "resume")
+						evidence.anchor(f.file, throughMs + 20, 2000, false);
+					if (scenario === "generation")
+						evidence.active.metadata.generation = "another-generation";
+					if (scenario === "abort") evidence.finish(f.file, "failed");
+					if (scenario === "duplicate-pause")
+						evidence.anchor(f.file, throughMs + 20, 2000, true);
+					await pending;
+					await events.write(
+						{ ev: "click", t: 100500, el: { text: "PAUSED_CLICK" } },
+						page,
+					);
+				},
+			},
+			evidence,
+			events,
+			throughMs,
+		);
+		const raw = fs
+			.readFileSync(
+				path.join(path.dirname(f.file), "browser-evidence.jsonl"),
+				"utf8",
+			)
+			.trim()
+			.split("\n")
+			.filter(Boolean)
+			.map(JSON.parse);
+		assert.equal(raw.length, scenario === "duplicate-pause" ? 1 : 0, scenario);
+		assert.equal(JSON.stringify(raw).includes("PAUSED_CLICK"), false, scenario);
+	}
+});
