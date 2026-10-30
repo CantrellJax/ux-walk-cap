@@ -439,10 +439,11 @@ test("boundary note drains retain ownership and pause fences across asynchronous
 						scenario === "duplicate-pause",
 						`scoped writer outcome: ${scenario}`,
 					);
-					await events.write(
-						{ ev: "click", t: 100500, el: { text: "PAUSED_CLICK" } },
-						page,
-					);
+					if (!["resume", "new-owner"].includes(scenario))
+						await events.write(
+							{ ev: "click", t: 100500, el: { text: "PAUSED_CLICK" } },
+							page,
+						);
 				},
 			},
 			evidence,

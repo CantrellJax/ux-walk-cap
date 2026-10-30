@@ -230,6 +230,8 @@ export class NativeBrowserEvidence {
 	}
 
 	write(raw, receivedAt = this.clock(), companion = false, noteDrain = null) {
+		if (noteDrain && (raw?.ev !== "note" || !this.ownsNoteDrain(noteDrain)))
+			return false;
 		if (
 			!["prepared", "recording"].includes(this.mode) ||
 			(!companion &&
