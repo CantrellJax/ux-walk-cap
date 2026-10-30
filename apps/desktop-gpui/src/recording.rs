@@ -79,6 +79,8 @@ enum Handle {
     Instant(Arc<instant_recording::ActorHandle>),
 }
 
+mod local_instant;
+
 type SharedInstantUpload = Arc<tokio::sync::Mutex<Option<crate::upload::InstantUpload>>>;
 
 struct RecordingOwnedFeed<A: Actor>(ActorRef<A>);
@@ -1326,11 +1328,7 @@ impl ActiveRecording {
                         return Err(anyhow!("instant recording has no finalized output"));
                     }
 
-                    if let Some(upload) = instant_upload.as_mut() {
-                        persist_instant_meta(&completed, upload.video(), upload.metadata_lock())?;
-                    } else {
-                        persist_local_instant_meta(&completed.project_path, match &completed.meta { cap_project::InstantRecordingMeta::InProgress { .. } => cap_project::InstantRecordingMeta::Failed { error: "Recording stopped before finalization completed.".into() }, other => other.clone() })?;
-                    }
+                    local_instant::persist(&completed, instant_upload.as_deref())?;
 
                     // The Tauri app builds the instant thumbnail by concatenating
                     // `content/display`'s init segment with the first media
@@ -2030,30 +2028,6 @@ fn persist_instant_meta(
     })
 }
 
-fn persist_local_instant_meta(
-    project_path: &std::path::Path,
-    inner: cap_project::InstantRecordingMeta,
-) -> anyhow::Result<()> {
-    let pretty_name = project_path
-        .file_stem()
-        .and_then(|name| name.to_str())
-        .unwrap_or(fork_brand::text_static("Cap recording"))
-        .to_string();
-    let meta = cap_project::RecordingMeta {
-        platform: Some(cap_project::Platform::default()),
-        project_path: project_path.to_path_buf(),
-        pretty_name,
-        sharing: None,
-        inner: cap_project::RecordingMetaInner::Instant(inner),
-        upload: None,
-    };
-    save_instant_metadata(&meta)?;
-    cap_project::ProjectConfiguration::default()
-        .write(project_path)
-        .map_err(|error| anyhow!("saving instant project config: {error}"))?;
-    Ok(())
-}
-
 pub(crate) fn persist_instant_upload_failure(
     project_path: &std::path::Path,
     error: &str,
@@ -2566,24 +2540,8 @@ async fn start_attempt_with_upload(
                     .context("studio recording actor")?,
             )
         }
-        RecordingMode::Instant => {
-            if cfg!(feature = "ux-walk") {
-                std::fs::create_dir(&project_dir).context("reserving local instant recording")?;
-                std::fs::create_dir(project_dir.join("content"))
-                    .context("creating instant content folder")?;
-                if config.microphone.is_some() || config.system_audio {
-                    std::fs::create_dir(project_dir.join("content/audio"))
-                        .context("preserving required audio intent")?;
-                }
-                local_instant_ownership = Some(Arc::new(
-                    cap_recording::upload_resume::UploadLock::acquire(&project_dir)
-                        .map_err(|error| anyhow!("reserving instant recording: {error}"))?,
-                ));
-                persist_local_instant_meta(
-                    &project_dir,
-                    cap_project::InstantRecordingMeta::InProgress { recording: true },
-                )?;
-            }
+        RecordingMode::Instant => 'instant: {
+            local_instant_ownership = local_instant::reserve(&project_dir, &config)?;
             let mut builder =
                 instant_recording::Actor::builder(project_dir.clone(), config.target.clone())
                     .with_system_audio(config.system_audio)
@@ -2615,64 +2573,50 @@ async fn start_attempt_with_upload(
             if let Some(attempt) = &attempt {
                 attempt.attach(builder.lifecycle())?;
             }
-            let built = builder
-                .build(
-                    #[cfg(target_os = "macos")]
-                    shareable_content,
-                )
-                .await
-                .context("instant recording actor");
-            if cfg!(feature = "ux-walk")
-                && let Err(error) = &built
-                && let Err(metadata_error) = persist_local_instant_meta(
+            let handle = Arc::new(
+                builder
+                    .build(
+                        #[cfg(target_os = "macos")]
+                        shareable_content,
+                    )
+                    .await
+                    .context("instant recording actor")
+                    .inspect_err(|error| local_instant::build_failed(&project_dir, error))?,
+            );
+            if local_instant_ownership.is_some() {
+                local_instant::drain_segments(&handle);
+                break 'instant Handle::Instant(handle);
+            }
+            let setup = (|| {
+                let video = pre_created_video
+                    .ok_or_else(|| anyhow!("instant recording has no reserved upload"))?;
+                let segment_rx = handle.take_segment_rx();
+                let metadata_lock = Arc::new(Mutex::new(()));
+                persist_in_progress_instant_meta(
                     &project_dir,
-                    cap_project::InstantRecordingMeta::Failed {
-                        error: error.to_string(),
-                    },
+                    &video,
+                    segment_rx.is_some(),
+                    &metadata_lock,
+                )?;
+                crate::upload::queue::record_capture(
+                    &project_dir,
+                    &video,
+                    segment_rx.is_some(),
+                    config.microphone.is_some() || config.system_audio,
                 )
-            {
-                tracing::error!(%metadata_error, "Could not save the failed local recording status");
-            }
-            let handle = Arc::new(built?);
-            if cfg!(feature = "ux-walk")
-                && let Some(events) = handle.take_segment_rx()
-            {
-                drop(tokio::task::spawn_blocking(move || {
-                    events.into_iter().for_each(drop)
-                }));
-            }
-            if !cfg!(feature = "ux-walk") {
-                let setup = (|| {
-                    let video = pre_created_video
-                        .ok_or_else(|| anyhow!("instant recording has no reserved upload"))?;
-                    let segment_rx = handle.take_segment_rx();
-                    let metadata_lock = Arc::new(Mutex::new(()));
-                    persist_in_progress_instant_meta(
-                        &project_dir,
-                        &video,
-                        segment_rx.is_some(),
-                        &metadata_lock,
-                    )?;
-                    crate::upload::queue::record_capture(
-                        &project_dir,
-                        &video,
-                        segment_rx.is_some(),
-                        config.microphone.is_some() || config.system_audio,
-                    )
-                    .map_err(anyhow::Error::msg)?;
-                    crate::upload::start_instant_upload(
-                        video,
-                        project_dir.clone(),
-                        segment_rx,
-                        metadata_lock,
-                        Some(crate::upload::CompletionAuthorization::new()),
-                    )
-                    .map_err(anyhow::Error::msg)
-                })();
-                #[cfg(windows)]
-                let setup = finish_windows_startup_setup(setup, handle.cancel()).await;
-                instant_upload = Some(setup?);
-            }
+                .map_err(anyhow::Error::msg)?;
+                crate::upload::start_instant_upload(
+                    video,
+                    project_dir.clone(),
+                    segment_rx,
+                    metadata_lock,
+                    Some(crate::upload::CompletionAuthorization::new()),
+                )
+                .map_err(anyhow::Error::msg)
+            })();
+            #[cfg(windows)]
+            let setup = finish_windows_startup_setup(setup, handle.cancel()).await;
+            instant_upload = Some(setup?);
             Handle::Instant(handle)
         }
     };
@@ -5177,47 +5121,5 @@ mod preparing_presentation_tests {
             preparing_presentation_for(&project, crate::store::BlurMode::Off, &library).is_err()
         );
         assert_eq!(serde_json::to_value(project).unwrap(), original);
-    }
-}
-
-#[cfg(test)]
-mod owned_sharing_tests {
-    use super::*;
-
-    #[test]
-    fn local_instant_metadata_needs_no_remote_identity_or_upload() {
-        let directory = tempfile::tempdir().unwrap();
-        persist_local_instant_meta(
-            directory.path(),
-            cap_project::InstantRecordingMeta::InProgress { recording: true },
-        )
-        .unwrap();
-        let meta = cap_project::RecordingMeta::load_for_project(directory.path()).unwrap();
-        assert!(meta.sharing.is_none());
-        assert!(meta.upload.is_none());
-        assert!(matches!(
-            meta.inner,
-            cap_project::RecordingMetaInner::Instant(
-                cap_project::InstantRecordingMeta::InProgress { recording: true }
-            )
-        ));
-        persist_local_instant_meta(
-            directory.path(),
-            cap_project::InstantRecordingMeta::Complete {
-                fps: 60,
-                sample_rate: Some(48000),
-            },
-        )
-        .unwrap();
-        let meta = cap_project::RecordingMeta::load_for_project(directory.path()).unwrap();
-        assert!(matches!(
-            meta.inner,
-            cap_project::RecordingMetaInner::Instant(cap_project::InstantRecordingMeta::Complete {
-                fps: 60,
-                sample_rate: Some(48000)
-            })
-        ));
-        assert!(meta.upload.is_none());
-        assert!(meta.sharing.is_none());
     }
 }
