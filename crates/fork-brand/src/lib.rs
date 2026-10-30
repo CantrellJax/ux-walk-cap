@@ -12,8 +12,44 @@ pub const REPO_URL: &str = env!("FORK_BRAND_REPO_URL");
 pub const RELEASES_URL: &str = env!("FORK_BRAND_RELEASES_URL");
 pub const ISSUES_URL: &str = env!("FORK_BRAND_ISSUES_URL");
 pub const CHANGES_URL: &str = env!("FORK_BRAND_CHANGES_URL");
+pub const HELP_URL: &str = env!("FORK_BRAND_HELP_URL");
+pub const DOCS_URL: &str = env!("FORK_BRAND_DOCS_URL");
+pub const FEEDBACK_URL: &str = env!("FORK_BRAND_FEEDBACK_URL");
+/// `None` when the fork has no status page; its menu item is hidden.
+pub const STATUS_URL: Option<&str> = non_empty(env!("FORK_BRAND_STATUS_URL"));
+/// `None` when the fork has no community chat; its menu item is hidden.
+pub const COMMUNITY_URL: Option<&str> = non_empty(env!("FORK_BRAND_COMMUNITY_URL"));
 pub const DEFAULT_SERVER_URL: &str = env!("FORK_BRAND_DEFAULT_SERVER_URL");
 pub const LONG_DESCRIPTION: &str = env!("FORK_BRAND_LONG_DESCRIPTION");
+
+/// Hosts of upstream's own site, help center, status page and short links.
+/// A fork build must not send people to any of them.
+pub const UPSTREAM_SERVICE_HOSTS: &[&str] = &["cap.so", "cap.link", "cap.openstatus.dev"];
+
+const fn non_empty(value: &'static str) -> Option<&'static str> {
+    if value.is_empty() { None } else { Some(value) }
+}
+
+/// The first [`UPSTREAM_SERVICE_HOSTS`] entry `text` names, as a host or
+/// subdomain (`help.cap.so`), in a URL, bare (`cap.link/discord`) or in an
+/// address (`hello@cap.so`). Longer names that only contain one (`recap.so`,
+/// `cap.social`) do not count.
+pub fn upstream_service_host(text: &str) -> Option<&'static str> {
+    let lower = text.to_ascii_lowercase();
+    UPSTREAM_SERVICE_HOSTS.iter().copied().find(|host| {
+        lower.match_indices(host).any(|(index, _)| {
+            let before = lower[..index].chars().next_back();
+            let mut after = lower[index + host.len()..].chars();
+            let joined_before = before.is_some_and(|c| c.is_ascii_alphanumeric() || c == '-');
+            let joined_after = match after.next() {
+                Some(c) if c.is_ascii_alphanumeric() || c == '-' => true,
+                Some('.') => after.next().is_some_and(|c| c.is_ascii_alphanumeric()),
+                _ => false,
+            };
+            !joined_before && !joined_after
+        })
+    })
+}
 
 /// Catalog keys whose "Cap" names upstream's product, service or `.cap`
 /// file format rather than this app, so the build-time catalog pass leaves
@@ -126,6 +162,53 @@ mod tests {
     fn update_refusal_points_at_fork_releases() {
         assert!(update_refusal().contains(RELEASES_URL));
         assert!(update_refusal().contains(APP_NAME));
+    }
+
+    #[test]
+    fn upstream_service_hosts_are_found_in_links_and_text() {
+        for (text, host) in [
+            ("https://cap.so/docs", "cap.so"),
+            ("https://help.cap.so/", "cap.so"),
+            ("email hello@cap.so today", "cap.so"),
+            ("join us at cap.link/discord.", "cap.link"),
+            ("https://cap.openstatus.dev/", "cap.openstatus.dev"),
+            ("Opens CAP.SO/pricing", "cap.so"),
+        ] {
+            assert_eq!(upstream_service_host(text), Some(host), "{text}");
+        }
+        for text in [
+            "recap.so",
+            "cap.social",
+            "my-cap.so",
+            "https://openstatus.dev/",
+            "Cap.app/Contents",
+            "",
+        ] {
+            assert_eq!(upstream_service_host(text), None, "{text}");
+        }
+    }
+
+    #[test]
+    fn fork_destinations_stay_off_upstream_services() {
+        let destinations = [
+            REPO_URL,
+            RELEASES_URL,
+            ISSUES_URL,
+            CHANGES_URL,
+            HELP_URL,
+            DOCS_URL,
+            FEEDBACK_URL,
+            DEFAULT_SERVER_URL,
+        ]
+        .into_iter()
+        .chain(STATUS_URL)
+        .chain(COMMUNITY_URL);
+        for url in destinations {
+            assert_eq!(upstream_service_host(url), None, "{url}");
+        }
+        for url in [HELP_URL, DOCS_URL, FEEDBACK_URL] {
+            assert!(url.starts_with("https://"), "{url}");
+        }
     }
 
     #[test]

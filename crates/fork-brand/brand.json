@@ -9,6 +9,11 @@
 	"releases_url": "https://github.com/CantrellJax/ux-walk-cap/releases",
 	"issues_url": "https://github.com/CantrellJax/ux-walk-cap/issues",
 	"changes_url": "https://github.com/CantrellJax/ux-walk-cap/commits/main/",
+	"help_url": "https://github.com/CantrellJax/ux-walk-cap#readme",
+	"docs_url": "https://github.com/CantrellJax/ux-walk-cap/blob/main/UX-WALK.md",
+	"feedback_url": "https://github.com/CantrellJax/ux-walk-cap/issues",
+	"status_url": "",
+	"community_url": "",
 	"default_server_url": "",
 	"long_description": "Cap UX combines Cap screen recording and editing with UX Walk notes, chapters, transcripts and agent-ready evidence.",
 	"icon": [

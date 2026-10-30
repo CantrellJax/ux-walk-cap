@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-const STRINGS: [(&str, &str); 11] = [
+const STRINGS: [(&str, &str); 16] = [
     ("display_name", "FORK_BRAND_APP_NAME"),
     ("upstream_name", "FORK_BRAND_UPSTREAM_NAME"),
     ("slug", "FORK_BRAND_SLUG"),
@@ -10,6 +10,11 @@ const STRINGS: [(&str, &str); 11] = [
     ("releases_url", "FORK_BRAND_RELEASES_URL"),
     ("issues_url", "FORK_BRAND_ISSUES_URL"),
     ("changes_url", "FORK_BRAND_CHANGES_URL"),
+    ("help_url", "FORK_BRAND_HELP_URL"),
+    ("docs_url", "FORK_BRAND_DOCS_URL"),
+    ("feedback_url", "FORK_BRAND_FEEDBACK_URL"),
+    ("status_url", "FORK_BRAND_STATUS_URL"),
+    ("community_url", "FORK_BRAND_COMMUNITY_URL"),
     ("default_server_url", "FORK_BRAND_DEFAULT_SERVER_URL"),
     ("long_description", "FORK_BRAND_LONG_DESCRIPTION"),
 ];
