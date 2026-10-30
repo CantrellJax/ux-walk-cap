@@ -3,6 +3,7 @@
 	"name": "capux",
 	"main": "src/index.ts",
 	"compatibility_date": "2026-10-25",
+	"compatibility_flags": ["nodejs_compat"],
 	"workers_dev": true,
 	"preview_urls": false,
 	"assets": {
@@ -17,6 +18,31 @@
 			"bucket_name": "capux-media"
 		}
 	],
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "capux-accounts",
+			"migrations_dir": "migrations"
+		}
+	],
+	"ratelimits": [
+		{
+			"name": "SHARE_CREATE_LIMITER",
+			"namespace_id": "1001",
+			"simple": { "limit": 30, "period": 60 }
+		},
+		{
+			"name": "UPLOAD_LIMITER",
+			"namespace_id": "1002",
+			"simple": { "limit": 600, "period": 60 }
+		}
+	],
+	"vars": {
+		"BETTER_AUTH_URL": "https://capux.jaxtrell.workers.dev",
+		"SIGNUP_ENABLED": "false",
+		"FREE_PLAN_MAX_BYTES": "5368709120",
+		"FREE_PLAN_MAX_SHARES": "25"
+	},
 	"observability": {
 		"enabled": true,
 		"head_sampling_rate": 0.1,
