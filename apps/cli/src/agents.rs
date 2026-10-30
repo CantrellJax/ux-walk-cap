@@ -15,6 +15,11 @@ const BUNDLED_SKILL: &str = if cfg!(feature = "ux-walk") {
 } else {
     include_str!("../skill/cap/SKILL.md")
 };
+const SKILL_NAME: &str = if cfg!(feature = "ux-walk") {
+    fork_brand::SLUG
+} else {
+    "cap"
+};
 
 // The cap-demo companion skill ships as a directory tree (scripts, cursor and
 // music assets) embedded into the binary alongside the main cap skill.
@@ -114,21 +119,9 @@ fn skill_path(target: AgentTarget) -> Result<PathBuf, String> {
         AgentTarget::Codex => std::env::var_os("CODEX_HOME")
             .map(PathBuf::from)
             .unwrap_or_else(|| home.join(".codex"))
-            .join(if cfg!(feature = "ux-walk") {
-                "skills/cap-ux/SKILL.md"
-            } else {
-                "skills/cap/SKILL.md"
-            }),
-        AgentTarget::Claude => home.join(if cfg!(feature = "ux-walk") {
-            ".claude/skills/cap-ux/SKILL.md"
-        } else {
-            ".claude/skills/cap/SKILL.md"
-        }),
-        AgentTarget::Cursor => home.join(if cfg!(feature = "ux-walk") {
-            ".cursor/skills/cap-ux/SKILL.md"
-        } else {
-            ".cursor/skills/cap/SKILL.md"
-        }),
+            .join(format!("skills/{SKILL_NAME}/SKILL.md")),
+        AgentTarget::Claude => home.join(format!(".claude/skills/{SKILL_NAME}/SKILL.md")),
+        AgentTarget::Cursor => home.join(format!(".cursor/skills/{SKILL_NAME}/SKILL.md")),
     })
 }
 
@@ -291,7 +284,9 @@ impl InstallArgs {
 
     fn plan(&self) -> Result<Vec<PlannedChange>, String> {
         if cfg!(feature = "ux-walk") && self.includes_mcp() {
-            return Err("Cap UX uses local agent skills. Choose --component skill; the upstream cloud MCP adapter is not included.".into());
+            return Err(fork_brand::text(
+                "Cap uses local agent skills. Choose --component skill; the upstream cloud MCP adapter is not included.",
+            ));
         }
         let mut changes = Vec::new();
         if self.includes_skill() {
@@ -309,7 +304,7 @@ impl InstallArgs {
                 component: "skill",
                 path,
                 action,
-                value: json!({ "name": if cfg!(feature = "ux-walk") { "cap-ux" } else { "cap" }, "content": BUNDLED_SKILL }),
+                value: json!({ "name": SKILL_NAME, "content": BUNDLED_SKILL }),
                 expected,
                 content,
             });

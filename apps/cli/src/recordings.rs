@@ -12,7 +12,7 @@ use crate::{OutputFormat, write_json};
 // The desktop app's bundle identifier (`identifier` in apps/desktop-gpui/tauri.conf.json). Dev
 // builds of 0.6.0 and earlier used `so.cap.desktop.dev`, which the user can reach with `--dir`.
 const DESKTOP_BUNDLE_IDENTIFIER: &str = if cfg!(feature = "ux-walk") {
-    "com.cantrell.cap-ux"
+    fork_brand::BUNDLE_ID
 } else {
     "so.cap.desktop"
 };
