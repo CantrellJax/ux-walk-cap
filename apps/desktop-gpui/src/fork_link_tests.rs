@@ -58,10 +58,7 @@ const UNREACHABLE: &[(&str, &str, (&str, &str))] = &[
     (
         "settings_pages.rs",
         "https://l.cap.so/api",
-        (
-            "entitlement.rs",
-            "assert!(!Page::ALL.contains(&Page::License));",
-        ),
+        ("entitlement.rs", "fn license_page_is_unreachable()"),
     ),
     (
         "settings_window/fork.rs",

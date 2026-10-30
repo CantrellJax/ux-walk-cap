@@ -46,6 +46,7 @@ mod tests {
         ("editor_export.rs", "PRICING_URL", 2),
         ("editor_export.rs", "SignInOrigin::", 2),
         ("editor_export.rs", "UpgradeRequired", 1),
+        ("fork_link_tests.rs", "PRICING_URL", 1),
         ("i18n/dialogs_surface_tests.rs", "upgrade_required", 1),
         (
             "i18n/settings_surface_tests.rs",
