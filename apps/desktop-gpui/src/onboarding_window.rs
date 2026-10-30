@@ -23,6 +23,8 @@ use crate::{
 use crate::ui;
 
 mod stage;
+mod ux_walk;
+use ux_walk::CARDS_W;
 mod welcome_script;
 
 pub use stage::Paper;
@@ -240,49 +242,8 @@ static MODES: &[ModeDetail] = &[
         ],
     },
     #[cfg(target_os = "macos")]
-    ModeDetail {
-        mode: ModeChoice::UxWalk,
-        title: || "UX Walk Mode",
-        tagline: || "Record, note & review",
-        description: || "Open a fresh browser window, already selected for recording. Walk through your product with native capture controls, notes, chapters and transcripts.",
-        icon: "icons/ux-walk.svg",
-        features: [
-            || "Fresh browser window, ready to record",
-            || "Timestamped notes & chapters",
-            || "Your transcription provider",
-            || "Evidence for your agent",
-        ],
-    },
+    ux_walk::DETAIL,
 ];
-
-#[derive(Default)]
-struct ModeSelection {
-    preview: Option<usize>,
-    selected: Option<ModeChoice>,
-}
-
-impl ModeSelection {
-    fn select(&mut self, index: usize) -> Option<ModeChoice> {
-        let mode = MODES.get(index)?.mode;
-        self.preview = Some(index);
-        self.selected = Some(mode);
-        Some(mode)
-    }
-
-    fn navigate(&mut self) {
-        self.preview = None;
-    }
-
-    fn choice(&self) -> Option<ModeChoice> {
-        self.selected
-    }
-}
-
-const CARDS_W: gpui::Pixels = px(if cfg!(target_os = "macos") {
-    720.
-} else {
-    540.
-});
 
 const FAQ: [(fn() -> &'static str, fn() -> &'static str); 5] = [
     (
@@ -333,7 +294,8 @@ pub struct OnboardingWindow {
     demo_task: Option<gpui::Task<()>>,
     demo_phase: usize,
     demo_cycle: usize,
-    mode_selection: ModeSelection,
+    chosen_mode: Option<usize>,
+    walk_chosen: bool,
     step_revision: usize,
     transition_direction: f32,
     faq_open: [bool; FAQ.len()],
@@ -387,7 +349,8 @@ impl OnboardingWindow {
             demo_task: None,
             demo_phase: 0,
             demo_cycle: 0,
-            mode_selection: ModeSelection::default(),
+            chosen_mode: None,
+            walk_chosen: false,
             step_revision: 0,
             transition_direction: 1.,
             faq_open: [false; FAQ.len()],
@@ -553,13 +516,7 @@ impl OnboardingWindow {
             permissions::relaunch(cx);
             return;
         }
-        let walk = self.mode_selection.choice() == Some(ModeChoice::UxWalk);
-        cx.defer(move |cx| {
-            crate::app_windows::onboarding_finished(cx);
-            if walk {
-                ModeChoice::UxWalk.activate(cx);
-            }
-        });
+        cx.defer(ux_walk::finish_onboarding(self.walk_chosen));
     }
 
     fn continue_from_welcome(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -618,7 +575,7 @@ impl OnboardingWindow {
         self.demo_task = None;
         self.demo_phase = 0;
         self.demo_cycle = 0;
-        self.mode_selection.navigate();
+        self.chosen_mode = None;
         self.focus_root(window, cx);
         if self.permissions_visible() {
             self.refresh_permissions(window, cx);
@@ -684,7 +641,7 @@ impl OnboardingWindow {
         if self.welcome
             || !window.is_window_active()
             || self.demo_task.is_some()
-            || self.mode_selection.preview.is_some()
+            || self.chosen_mode.is_some()
         {
             return;
         }
@@ -1225,12 +1182,7 @@ impl OnboardingWindow {
         let logo_y = -24. * logo_leave * travel;
         let logo_opacity = ease(beat(m.t, 0.6, 1.2)) * (1. - logo_leave);
 
-        let logo = div()
-            .flex()
-            .items_center()
-            .gap(px(12.))
-            .child(img("branding/cap-ux.png").size(px(36.)))
-            .child(copy(fork_brand::APP_NAME, 28., ink).font_weight(FontWeight::SEMIBOLD));
+        let logo = ux_walk::wordmark(ink);
 
         let shadow = |color: u32, y: f32, blur: f32, spread: f32, inset: bool| gpui::BoxShadow {
             color: rgba(color).into(),
@@ -1553,22 +1505,20 @@ impl OnboardingWindow {
     }
 
     fn choose_mode(&mut self, index: usize, cx: &mut Context<Self>) {
-        let Some(mode) = self.mode_selection.select(index) else {
+        let Some(mode) = MODES.get(index) else {
             return;
         };
+        self.chosen_mode = Some(index);
+        self.walk_chosen = mode.mode == ModeChoice::UxWalk;
         self.demo_task = None;
-        if let Some(mode) = mode.capture_mode() {
-            cx.defer(move |cx| crate::app_windows::set_recording_mode(mode, cx));
-        }
+        let mode = mode.mode;
+        cx.defer(move |cx| ux_walk::set_recording_mode(mode, cx));
         cx.notify();
     }
 
     fn render_toggle(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = self.theme;
-        let active = self
-            .mode_selection
-            .preview
-            .unwrap_or(self.demo_phase % MODES.len());
+        let active = self.chosen_mode.unwrap_or(self.demo_phase % MODES.len());
         div()
             .flex()
             .flex_col()
@@ -1797,14 +1747,12 @@ impl OnboardingWindow {
                             })
                     })),
             )
-            .when(!cfg!(feature = "ux-walk"), |el| {
-                el.child(
-                    copy(tr::onboarding::faq::pricing_link(), 13., theme.blue_10)
-                        .id("onboarding-pricing")
-                        .cursor_pointer()
-                        .on_click(|_, _, cx| cx.open_url(crate::auth::PRICING_URL)),
-                )
-            })
+            .children(crate::fork_policy::upstream_only(|| {
+                copy(tr::onboarding::faq::pricing_link(), 13., theme.blue_10)
+                    .id("onboarding-pricing")
+                    .cursor_pointer()
+                    .on_click(|_, _, cx| cx.open_url(crate::auth::PRICING_URL))
+            }))
             .into_any_element()
     }
 
@@ -2744,52 +2692,8 @@ impl OnboardingWindow {
     }
 
     fn render_demo(&self, index: usize) -> AnyElement {
-        if MODES[index].mode == ModeChoice::UxWalk {
-            let paper = stage::Paper::new(&self.theme);
-            return div()
-                .size_full()
-                .flex()
-                .flex_col()
-                .justify_center()
-                .gap(px(18.))
-                .children(
-                    [
-                        (
-                            "1",
-                            "Open your walk window",
-                            "A new browser window is selected for recording.",
-                        ),
-                        (
-                            "2",
-                            "Add notes and chapters",
-                            "Keep observations beside the recording.",
-                        ),
-                        (
-                            "3",
-                            "Review and hand off",
-                            "Give your agent the evidence and context.",
-                        ),
-                    ]
-                    .into_iter()
-                    .map(|(number, title, description)| {
-                        div()
-                            .flex()
-                            .items_start()
-                            .gap(px(12.))
-                            .child(copy(number, 16., paper.accent).font_weight(FontWeight::BOLD))
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(4.))
-                                    .child(
-                                        copy(title, 13., paper.ink).font_weight(FontWeight::MEDIUM),
-                                    )
-                                    .child(copy(description, 11., paper.soft).line_height(px(16.))),
-                            )
-                    }),
-                )
-                .into_any_element();
+        if let Some(demo) = ux_walk::demo(index, &self.theme) {
+            return demo;
         }
         let phase = self.demo_phase;
         let (labels, active) = match index {
@@ -3025,38 +2929,6 @@ impl Render for OnboardingWindow {
 mod tests {
     use super::*;
     use crate::permissions::{MediaAuthorization, RawPermissions};
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn ux_walk_choice_survives_the_remaining_tour_navigation() {
-        let mut selection = ModeSelection::default();
-        let index = MODES
-            .iter()
-            .position(|mode| mode.mode == ModeChoice::UxWalk)
-            .unwrap();
-        assert_eq!(selection.select(index), Some(ModeChoice::UxWalk));
-        for _ in 0..3 {
-            selection.navigate();
-            assert_eq!(selection.preview, None);
-            assert_eq!(selection.choice(), Some(ModeChoice::UxWalk));
-        }
-    }
-
-    #[test]
-    fn choosing_another_mode_replaces_the_pending_onboarding_choice() {
-        let mut selection = ModeSelection::default();
-        assert_eq!(selection.choice(), None);
-        assert_eq!(
-            selection.select(0),
-            Some(ModeChoice::Capture(Mode::Instant))
-        );
-        selection.navigate();
-        let studio = ModeChoice::Capture(Mode::Studio);
-        assert_eq!(selection.select(1), Some(studio));
-        assert_eq!(selection.select(usize::MAX), None);
-        selection.navigate();
-        assert_eq!(selection.choice(), Some(studio));
-    }
 
     #[test]
     fn first_run_visits_every_platform_stage_and_back_never_opens_an_omitted_step() {
