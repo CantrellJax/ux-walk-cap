@@ -519,7 +519,6 @@ pub fn health(_journal: &crate::ux_walk_journal::Journal) -> Option<String> {
     None
 }
 
-
 pub async fn prepare_note_pause(journal: crate::ux_walk_journal::Journal) -> Result<(), String> {
     let failed_journal = journal.clone();
     match tokio::task::spawn_blocking(move || preflight(&journal)).await {

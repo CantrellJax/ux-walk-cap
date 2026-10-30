@@ -108,13 +108,19 @@ mod tests {
     fn failed_source_ack_still_runs_requested_media_shutdown() {
         let controlled = Arc::new(AtomicBool::new(false));
         let observed = controlled.clone();
-        let mut operation = pin!(after_note_fence(async { Err("source timeout") }, async move {
-            observed.store(true, Ordering::SeqCst);
-            Ok(())
-        }));
+        let mut operation = pin!(after_note_fence(
+            async { Err("source timeout") },
+            async move {
+                observed.store(true, Ordering::SeqCst);
+                Ok(())
+            }
+        ));
         let waker = Waker::from(Arc::new(NoopWake));
         let mut context = Context::from_waker(&waker);
-        assert_eq!(operation.as_mut().poll(&mut context), Poll::Ready(Err("source timeout")));
+        assert_eq!(
+            operation.as_mut().poll(&mut context),
+            Poll::Ready(Err("source timeout"))
+        );
         assert!(controlled.load(Ordering::SeqCst));
     }
 

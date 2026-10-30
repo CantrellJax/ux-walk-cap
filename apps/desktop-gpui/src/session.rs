@@ -583,7 +583,10 @@ impl RecordingSession {
     }
 
     pub fn pause_unavailable(&self) -> bool {
-        self.pause_pending() || self.pause_uncertain() || self.pipeline_failed || self.walk_stop_fence.pending()
+        self.pause_pending()
+            || self.pause_uncertain()
+            || self.pipeline_failed
+            || self.walk_stop_fence.pending()
     }
 
     /// The live (or last) recording's mode -- the bar exposes mic mute for
@@ -1306,7 +1309,9 @@ impl RecordingSession {
         if !matches!(self.phase, Phase::Recording { .. }) {
             return;
         }
-        if !source_fenced && !self.pipeline_failed && !self.stopped_for_low_storage
+        if !source_fenced
+            && !self.pipeline_failed
+            && !self.stopped_for_low_storage
             && let Some(journal) = self.walk.clone()
         {
             let generation = self.recording_generation;
@@ -1314,12 +1319,17 @@ impl RecordingSession {
                 return;
             }
             self.pause_control.cancel_for_stop();
-            let task = gpui_tokio::Tokio::spawn(cx, crate::ux_walk_browser::prepare_note_pause(journal));
+            let task =
+                gpui_tokio::Tokio::spawn(cx, crate::ux_walk_browser::prepare_note_pause(journal));
             cx.notify();
             cx.spawn(async move |this, cx| {
                 let result = task.await;
                 this.update(cx, |this, cx| {
-                    if this.recording_generation != generation || !this.walk_stop_fence.complete(generation, matches!(this.phase, Phase::Recording { .. })) {
+                    if this.recording_generation != generation
+                        || !this
+                            .walk_stop_fence
+                            .complete(generation, matches!(this.phase, Phase::Recording { .. }))
+                    {
                         return;
                     }
                     let error = match result {
@@ -1328,11 +1338,15 @@ impl RecordingSession {
                         Err(error) => Some(format!("Browser note preflight task failed: {error}")),
                     };
                     if let Some(error) = error {
-                        this.walk_notice = format!("Browser notes are incomplete: {error}. Recording is stopping.");
+                        this.walk_notice = format!(
+                            "Browser notes are incomplete: {error}. Recording is stopping."
+                        );
                     }
                     this.stop_after_source_fence(cx, true);
-                }).ok();
-            }).detach();
+                })
+                .ok();
+            })
+            .detach();
             return;
         }
         self.walk_stop_fence.invalidate();
@@ -1440,7 +1454,10 @@ impl RecordingSession {
             self.stop_requested = false;
         }
         self.stopped_elapsed = Some(self.elapsed());
-        let browser_stop = self.walk.clone().map(|journal| (journal, self.elapsed().as_millis() as u64));
+        let browser_stop = self
+            .walk
+            .clone()
+            .map(|journal| (journal, self.elapsed().as_millis() as u64));
         self.pause_control.cancel_for_stop();
         self.phase = Phase::Stopping;
         self.preparing_studio_editor =
@@ -1456,7 +1473,10 @@ impl RecordingSession {
         let stop_sound = Arc::new(Once::new());
         let task = gpui_tokio::Tokio::spawn(cx, async move {
             if let Some((journal, offset_ms)) = browser_stop {
-                let _ = tokio::task::spawn_blocking(move || crate::ux_walk_browser::stopping(&journal, offset_ms)).await;
+                let _ = tokio::task::spawn_blocking(move || {
+                    crate::ux_walk_browser::stopping(&journal, offset_ms)
+                })
+                .await;
             }
             stop_future.await
         });
@@ -1621,7 +1641,9 @@ impl RecordingSession {
         let control = note_control::after_note_fence(
             async move {
                 match fence_journal {
-                    Some(journal) => crate::ux_walk_browser::prepare_note_pause(journal).await.map_err(anyhow::Error::msg),
+                    Some(journal) => crate::ux_walk_browser::prepare_note_pause(journal)
+                        .await
+                        .map_err(anyhow::Error::msg),
                     None => Ok(()),
                 }
             },
