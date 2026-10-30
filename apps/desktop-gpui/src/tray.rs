@@ -46,29 +46,11 @@ const THUMBNAIL_SIZE: u32 = 32;
 /// `get_mode_icon(mode)`. Template images (`icon_as_template(true)`), so macOS
 /// tints them for the current menu-bar appearance.
 #[cfg(target_os = "macos")]
-const UX_WALK_ICON: &[u8] = include_bytes!("../assets/tray/tray-default-icon-ux-walk.png");
-
-#[cfg(target_os = "macos")]
 fn mode_icon(mode: Mode) -> &'static [u8] {
     match mode {
         Mode::Studio => include_bytes!("../assets/tray/tray-default-icon-studio.png"),
         Mode::Instant => include_bytes!("../assets/tray/tray-default-icon-instant.png"),
         Mode::Screenshot => include_bytes!("../assets/tray/tray-default-icon-screenshot.png"),
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn current_mode_icon(mode: Mode, cx: &gpui::App) -> &'static [u8] {
-    if crate::session::RecordingSession::global(cx)
-        .read(cx)
-        .editor_recording_target()
-        .is_some()
-    {
-        mode_icon(Mode::Studio)
-    } else if crate::store::ux_walk_selected() {
-        UX_WALK_ICON
-    } else {
-        mode_icon(mode)
     }
 }
 
@@ -494,13 +476,9 @@ fn mode_heading(mode: Mode) -> &'static str {
 /// `create_mode_submenu`: a `✓ ` prefix on the current mode and three spaces on
 /// the others, so the labels stay aligned without a real check mark.
 fn mode_submenu(mode: Mode) -> Entry {
-    mode_submenu_choice(mode, false)
-}
-
-fn mode_submenu_choice(mode: Mode, ux_walk: bool) -> Entry {
     let label = |target: Mode, text: &str| {
         Entry::item(
-            if mode == target && !ux_walk {
+            if mode == target {
                 format!("\u{2713} {text}")
             } else {
                 format!("   {text}")
@@ -512,25 +490,15 @@ fn mode_submenu_choice(mode: Mode, ux_walk: bool) -> Entry {
             },
         )
     };
-    let items = vec![
-        label(Mode::Studio, tr::tray::mode::studio()),
-        label(Mode::Instant, tr::tray::mode::instant()),
-        label(Mode::Screenshot, tr::tray::mode::screenshot()),
-    ];
-    #[cfg(target_os = "macos")]
-    let items = {
-        let mut items = items;
-        items.extend([Entry::item(
-            if ux_walk { "✓ UX Walk" } else { "   UX Walk" },
-            TrayItem::StartWalkthrough,
-        )]);
-        items
-    };
     Entry::Submenu {
         title: tr::tray::select_mode().into(),
         enabled: true,
         icon: None,
-        items,
+        items: vec![
+            label(Mode::Studio, tr::tray::mode::studio()),
+            label(Mode::Instant, tr::tray::mode::instant()),
+            label(Mode::Screenshot, tr::tray::mode::screenshot()),
+        ],
     }
 }
 
@@ -651,14 +619,14 @@ pub fn build_menu(mode: Mode, previous: &[PreviousItem], version: &str) -> Vec<E
     entries.push(Entry::disabled(tr::tray::upload_logs()));
     entries.push(Entry::Separator);
 
-    let version = tr::tray::version(version);
-    let quit = tr::tray::quit();
     if cfg!(target_os = "macos") {
-        entries.push(Entry::item(quit, TrayItem::Quit));
-        entries.push(Entry::SectionHeader { title: version });
+        entries.push(Entry::item(tr::tray::quit(), TrayItem::Quit));
+        entries.push(Entry::SectionHeader {
+            title: tr::tray::version(version),
+        });
     } else {
-        entries.push(Entry::disabled(version));
-        entries.push(Entry::item(quit, TrayItem::Quit));
+        entries.push(Entry::disabled(tr::tray::version(version)));
+        entries.push(Entry::item(tr::tray::quit(), TrayItem::Quit));
     }
 
     entries
@@ -713,20 +681,9 @@ fn current_menu_entries(cx: &App, mode: Mode, previous: &[PreviousItem]) -> Vec<
     if crate::app_windows::onboarding_is_open(cx) && !crate::permissions::necessary_granted() {
         return build_onboarding_menu(crate::menus::app_version());
     }
-    let editor = crate::session::RecordingSession::global(cx)
-        .read(cx)
-        .editor_recording_target()
-        .is_some();
-    let mode = if editor { Mode::Studio } else { mode };
-    let walk = crate::store::ux_walk_selected() && !editor;
+    let mode = ux_walk::menu_mode(mode, cx);
     let mut entries = build_menu(mode, previous, crate::menus::app_version());
-    for entry in &mut entries {
-        if matches!(entry, Entry::ModePicker { .. })
-            || matches!(entry, Entry::Submenu { title, .. } if title == tr::tray::select_mode())
-        {
-            *entry = mode_submenu_choice(mode, walk);
-        }
-    }
+    ux_walk::decorate_mode_submenu(&mut entries, mode, cx);
     decorate_accelerators(&mut entries, cx);
     entries
 }
@@ -1007,6 +964,8 @@ pub use mac::*;
 #[cfg(target_os = "macos")]
 mod mac_mode_picker;
 
+mod ux_walk;
+
 #[cfg(target_os = "macos")]
 mod mac {
     use std::cell::{Cell, RefCell};
@@ -1027,10 +986,11 @@ mod mac {
         append_mode_picker, clear_hover, clear_hover_unless, fit_to_menu_width, hover_from_pointer,
         install_key_hook, stop_flash,
     };
+    use super::ux_walk::current_mode_icon;
     use super::{
-        Accelerator, Entry, PREVIOUS_SYMBOL, PreviousItem, STOP_ICON, TrayItem, UX_WALK_ICON,
-        current_menu_entries, current_mode_icon, handle_item, mode_icon, mode_submenu, row_symbol,
-        scan_previous, stop_recording,
+        Accelerator, Entry, PREVIOUS_SYMBOL, PreviousItem, STOP_ICON, TrayItem,
+        current_menu_entries, handle_item, mode_icon, mode_submenu, row_symbol, scan_previous,
+        stop_recording,
     };
     use crate::main_window::{Mode, TargetType};
 
@@ -1287,14 +1247,14 @@ mod mac {
     }
 
     fn icon_name(png: &[u8]) -> &'static str {
-        if png == STOP_ICON {
+        if let Some(name) = super::ux_walk::icon_name(png) {
+            return name;
+        }
+        if std::ptr::eq(png.as_ptr(), STOP_ICON.as_ptr()) {
             return "stop";
         }
-        if png == UX_WALK_ICON {
-            return "ux-walk";
-        }
         for mode in [Mode::Studio, Mode::Instant, Mode::Screenshot] {
-            if png == mode_icon(mode) {
+            if std::ptr::eq(png.as_ptr(), mode_icon(mode).as_ptr()) {
                 return match mode {
                     Mode::Studio => "studio",
                     Mode::Instant => "instant",
@@ -2319,21 +2279,7 @@ mod tests {
             let Entry::Submenu { items, .. } = mode_submenu(mode) else {
                 panic!("the mode picker is a submenu");
             };
-            assert_eq!(titles(&items[..3]), expected.to_vec());
-            #[cfg(target_os = "macos")]
-            {
-                assert_eq!(titles(&items[3..]), vec!["   UX Walk"]);
-                assert!(matches!(
-                    items[3],
-                    Entry::Item {
-                        item: Some(TrayItem::StartWalkthrough),
-                        enabled: true,
-                        ..
-                    }
-                ));
-            }
-            #[cfg(not(target_os = "macos"))]
-            assert_eq!(items.len(), 3);
+            assert_eq!(titles(&items), expected.to_vec());
         }
     }
 
