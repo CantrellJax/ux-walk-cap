@@ -18,6 +18,10 @@ Use an established authentication implementation with verified sessions, recover
 
 Before opening registration, implement user-scoped credentials, quotas, abuse/rate limits, account export/deletion, incident visibility and a retention policy. Preserve the self-hosted owner mode and local-only desktop behavior. There is no need for a subscription surface to deliver these capabilities.
 
+Phase 1 is implemented in `apps/cloud` (see its README, "Protocol v2"): Better Auth on D1 with GitHub and Google sign-in, passkeys, an RFC 8628 device flow for the desktop app and CLI, bearer sessions on `/api/v1`, per-share ownership in D1, account-isolation tests, free-plan quotas checked at create and complete, per-account share rate limits and Better Auth's auth-route limits, `/api/v1/me` with export and deletion, and a `SIGNUP_ENABLED` gate that is off by default. Owner mode is unchanged and still requires no account.
+
+Still to do before opening registration: switch the desktop app and CLI to the device flow; incident visibility (audit events and alerts for sign-ins, deletions and limit hits); a published retention and privacy policy; abuse reporting and takedown; and namespacing recovery storage per principal so recovery can be offered to accounts. Later phases: billing that sets the user's `plan`, and workspaces with membership and shared ownership.
+
 ## One recording to one handoff
 
 The current UX Walk journal, browser capture, native processor, local report and agent prompt are the foundation. Extend them rather than introducing another recorder or separate transcript application.
