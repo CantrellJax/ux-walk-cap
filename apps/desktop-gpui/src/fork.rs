@@ -1,6 +1,9 @@
 #[path = "entitlement.rs"]
 pub mod entitlement;
 #[cfg(all(test, feature = "ux-walk"))]
+#[path = "fork_catalog_tests.rs"]
+pub mod fork_catalog_tests;
+#[cfg(all(test, feature = "ux-walk"))]
 #[path = "fork_identity_tests.rs"]
 pub mod fork_identity_tests;
 #[cfg(all(test, feature = "ux-walk"))]
