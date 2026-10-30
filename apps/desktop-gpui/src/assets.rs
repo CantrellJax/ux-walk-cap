@@ -256,8 +256,6 @@ const ONBOARDING: &[(&str, &[u8])] = &[
     ("onboarding/volume-x.svg", include_bytes!("../assets/icons/volume-x.svg")),
 ];
 
-const BRANDING: &[(&str, &[u8])] = assets!("branding": "cap-ux.png");
-
 pub struct Assets;
 
 impl Assets {
@@ -265,7 +263,7 @@ impl Assets {
         FONTS
             .iter()
             .chain(ICONS.iter())
-            .chain(BRANDING.iter())
+            .chain(crate::ux_walk::assets::ALL.iter())
             .chain(IMAGES.iter())
             .chain(ONBOARDING.iter())
     }
@@ -310,8 +308,6 @@ mod tests {
     /// scan the same list.
     const ICON_SOURCES: &[&str] = &[
         include_str!("main_window.rs"),
-        include_str!("mode_choice.rs"),
-        include_str!("ux_walk_window.rs"),
         // Not a window: the Recents card's per-kind pill and fallback glyphs
         // are named on `MediaKind`, next to the `Recents.tsx` lines they come
         // from, so the table has to scan here too.
