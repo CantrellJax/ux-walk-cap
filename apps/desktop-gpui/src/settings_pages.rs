@@ -42,6 +42,8 @@ use crate::{
     ui,
 };
 
+mod fork;
+
 /// `font-mono` in the TSX resolves to the platform mono stack; the closest
 /// single face per OS, since no mono font is bundled.
 const MONO_FONT: &str = if cfg!(target_os = "macos") {
@@ -1050,14 +1052,15 @@ const INSTANT_OUTCOMES: [(store::PostInstantBehaviour, OutcomeOption); 3] = [
 ];
 
 fn shortcut_label(action: &str) -> &'static str {
+    if let Some(label) = fork::shortcut_label(action) {
+        return label;
+    }
     match action {
         "screenshotArea" => tr::settings::shortcuts::label::screenshot_area(),
         "screenshotWindow" => tr::settings::shortcuts::label::screenshot_window(),
         "screenshotDisplay" => tr::settings::shortcuts::label::screenshot_display(),
         "startStudioRecording" => tr::settings::shortcuts::label::start_studio(),
         "startInstantRecording" => tr::settings::shortcuts::label::start_instant(),
-        "openUxWalk" => "Open UX Walk",
-        "openUxWalkNotes" => "Open walk notes",
         "openRecordingPickerArea" => tr::settings::shortcuts::label::record_area(),
         "openRecordingPickerWindow" => tr::settings::shortcuts::label::record_window(),
         "openRecordingPickerDisplay" => tr::settings::shortcuts::label::record_display(),
@@ -1092,26 +1095,11 @@ fn shortcut_effect(
     use crate::main_window::Mode;
     use store::{PostScreenshotBehaviour as Shot, PostStudioBehaviour as Studio};
 
+    if let Some(effect) = fork::shortcut_effect(action) {
+        return Some(effect);
+    }
     let shot = settings.post_screenshot_behaviour;
     let effect = match action {
-        "openRecordingPickerArea" | "openRecordingPickerWindow" | "openRecordingPickerDisplay"
-            if crate::store::ux_walk_selected() =>
-        {
-            match action {
-                "openRecordingPickerArea" => ShortcutEffect {
-                    phrase: || "select an area, then record it in UX Walk mode",
-                    sentence: || "Select an area, then record it in UX Walk mode.",
-                },
-                "openRecordingPickerWindow" => ShortcutEffect {
-                    phrase: || "choose a window, then record it in UX Walk mode",
-                    sentence: || "Choose a window, then record it in UX Walk mode.",
-                },
-                _ => ShortcutEffect {
-                    phrase: || "choose a display, then record it in UX Walk mode",
-                    sentence: || "Choose a display, then record it in UX Walk mode.",
-                },
-            }
-        }
         "screenshotArea" => match shot {
             Shot::OpenEditor => ShortcutEffect {
                 phrase: tr::settings::shortcuts::effect::screenshot_area_open_editor,
@@ -1178,12 +1166,7 @@ fn shortcut_effect(
             },
         },
         "startInstantRecording" => {
-            if cfg!(feature = "ux-walk") {
-                ShortcutEffect {
-                    phrase: || "record your selected screen or window in Instant mode, then save it locally when you stop",
-                    sentence: || "Record your selected screen or window in Instant mode, then save it locally when you stop.",
-                }
-            } else if settings.disable_auto_open_links {
+            if settings.disable_auto_open_links {
                 ShortcutEffect {
                     phrase: tr::settings::shortcuts::effect::instant_copy,
                     sentence: tr::settings::shortcuts::sentence::instant_copy,
@@ -1195,14 +1178,6 @@ fn shortcut_effect(
                 }
             }
         }
-        "openUxWalk" => ShortcutEffect {
-            phrase: || "open UX Walk setup with the recorder’s capture and audio controls",
-            sentence: || "Open UX Walk setup with the recorder’s capture and audio controls.",
-        },
-        "openUxWalkNotes" => ShortcutEffect {
-            phrase: || "open notes for your current or most recent UX Walk",
-            sentence: || "Open notes for your current or most recent UX Walk.",
-        },
         "openRecordingPickerArea" => match mode {
             Mode::Studio => ShortcutEffect {
                 phrase: tr::settings::shortcuts::effect::picker_area_studio,
@@ -1661,16 +1636,8 @@ impl SettingsWindow {
         recording.push(
             self.render_outcome_panel(
                 "outcome-instant",
-                if cfg!(feature = "ux-walk") {
-                    "After sharing a video"
-                } else {
-                    tr::settings::shortcuts::after_instant::title()
-                },
-                if cfg!(feature = "ux-walk") {
-                    "Recording saves locally. Share from Recordings when you choose."
-                } else {
-                    tr::settings::shortcuts::after_instant::hint()
-                },
+                fork::after_instant_title(),
+                fork::after_instant_hint(),
                 &INSTANT_OUTCOMES
                     .iter()
                     .map(|(value, option)| {
@@ -3440,12 +3407,10 @@ impl SettingsWindow {
     }
 
     pub(crate) fn render_feedback(&self, cx: &mut Context<Self>) -> Vec<gpui::AnyElement> {
-        let theme = self.theme;
         if cfg!(feature = "ux-walk") {
-            return vec![self.section(fork_brand::text_static("Cap feedback"), Some(fork_brand::text_static("Report a bug, suggest an improvement or share your workflow with the Cap project.")), None, vec![
-                ui::Button::settings(&theme, "cap-ux-feedback", ui::ButtonVariant::Dark, ui::ButtonSize::Sm).label("Open GitHub issues ↗").on_click(|_, _, cx| cx.open_url(fork_brand::ISSUES_URL)).into_any_element()
-            ]).into_any_element()];
+            return self.render_fork_feedback();
         }
+        let theme = self.theme;
         let pending = self.pages.feedback == FeedbackStatus::Pending;
         // `disabled={feedback().trim().length < 4}`.
         let submit_disabled = pending || self.pages.feedback_draft.trim().chars().count() < 4;
@@ -3752,16 +3717,10 @@ impl SettingsWindow {
     }
 
     pub(crate) fn render_changelog(&self, _cx: &mut Context<Self>) -> Vec<gpui::AnyElement> {
-        let theme = self.theme;
         if cfg!(feature = "ux-walk") {
-            return vec![self.section(fork_brand::text_static("Cap updates"), Some("Native UX Walk recording, notes, chapters, transcripts and explicit agent handoffs."), None, vec![
-                self.card(true).child(div().flex().flex_col().items_start().gap(px(12.))
-                    .child(div().text_size(px(13.)).line_height(px(20.)).child(fork_brand::text("This is a developer preview. Follow Cap releases and source changes on GitHub.")))
-                    .child(ui::Button::settings(&theme, "cap-ux-releases", ui::ButtonVariant::Dark, ui::ButtonSize::Sm).label(fork_brand::text("Cap releases ↗")).on_click(|_, _, cx| cx.open_url(fork_brand::RELEASES_URL)))
-                    .child(ui::Button::settings(&theme, "cap-ux-changes", ui::ButtonVariant::Gray, ui::ButtonSize::Sm).label("View source changes ↗").on_click(|_, _, cx| cx.open_url(fork_brand::CHANGES_URL)))
-                ).into_any_element()
-            ]).into_any_element()];
+            return self.render_fork_changelog();
         }
+        let theme = self.theme;
 
         match &self.pages.changelog {
             None => vec![

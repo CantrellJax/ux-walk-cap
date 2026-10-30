@@ -1,0 +1,131 @@
+use gpui::{IntoElement, ParentElement, Styled, div, px};
+
+use super::ShortcutEffect;
+use crate::{settings_window::SettingsWindow, ui};
+
+const FORK: bool = cfg!(feature = "ux-walk");
+const WALK_SHORTCUTS: bool = cfg!(all(target_os = "macos", feature = "ux-walk"));
+
+pub(super) fn shortcut_label(action: &str) -> Option<&'static str> {
+    match action {
+        "openUxWalk" if WALK_SHORTCUTS => Some("Open UX Walk"),
+        "openUxWalkNotes" if WALK_SHORTCUTS => Some("Open walk notes"),
+        _ => None,
+    }
+}
+
+pub(super) fn shortcut_effect(action: &str) -> Option<ShortcutEffect> {
+    Some(match action {
+        "openRecordingPickerArea" if crate::store::ux_walk_selected() => ShortcutEffect {
+            phrase: || "select an area, then record it in UX Walk mode",
+            sentence: || "Select an area, then record it in UX Walk mode.",
+        },
+        "openRecordingPickerWindow" if crate::store::ux_walk_selected() => ShortcutEffect {
+            phrase: || "choose a window, then record it in UX Walk mode",
+            sentence: || "Choose a window, then record it in UX Walk mode.",
+        },
+        "openRecordingPickerDisplay" if crate::store::ux_walk_selected() => ShortcutEffect {
+            phrase: || "choose a display, then record it in UX Walk mode",
+            sentence: || "Choose a display, then record it in UX Walk mode.",
+        },
+        "startInstantRecording" if FORK => ShortcutEffect {
+            phrase: || "record your selected screen or window in Instant mode, then save it locally when you stop",
+            sentence: || "Record your selected screen or window in Instant mode, then save it locally when you stop.",
+        },
+        "openUxWalk" if WALK_SHORTCUTS => ShortcutEffect {
+            phrase: || "open UX Walk setup with the recorder’s capture and audio controls",
+            sentence: || "Open UX Walk setup with the recorder’s capture and audio controls.",
+        },
+        "openUxWalkNotes" if WALK_SHORTCUTS => ShortcutEffect {
+            phrase: || "open notes for your current or most recent UX Walk",
+            sentence: || "Open notes for your current or most recent UX Walk.",
+        },
+        _ => return None,
+    })
+}
+
+pub(super) fn after_instant_title() -> &'static str {
+    if FORK {
+        "After sharing a video"
+    } else {
+        crate::i18n::tr::settings::shortcuts::after_instant::title()
+    }
+}
+
+pub(super) fn after_instant_hint() -> &'static str {
+    if FORK {
+        "Recording saves locally. Share from Recordings when you choose."
+    } else {
+        crate::i18n::tr::settings::shortcuts::after_instant::hint()
+    }
+}
+
+impl SettingsWindow {
+    pub(super) fn render_fork_feedback(&self) -> Vec<gpui::AnyElement> {
+        let theme = self.theme;
+        vec![
+            self.section(
+                fork_brand::text_static("Cap feedback"),
+                Some(fork_brand::text_static(
+                    "Report a bug, suggest an improvement or share your workflow with the Cap project.",
+                )),
+                None,
+                vec![
+                    ui::Button::settings(
+                        &theme,
+                        "cap-ux-feedback",
+                        ui::ButtonVariant::Dark,
+                        ui::ButtonSize::Sm,
+                    )
+                    .label("Open GitHub issues ↗")
+                    .on_click(|_, _, cx| cx.open_url(fork_brand::ISSUES_URL))
+                    .into_any_element(),
+                ],
+            )
+            .into_any_element(),
+        ]
+    }
+
+    pub(super) fn render_fork_changelog(&self) -> Vec<gpui::AnyElement> {
+        let theme = self.theme;
+        let body = div()
+            .flex()
+            .flex_col()
+            .items_start()
+            .gap(px(12.))
+            .child(div().text_size(px(13.)).line_height(px(20.)).child(fork_brand::text(
+                "This is a developer preview. Follow Cap releases and source changes on GitHub.",
+            )))
+            .child(
+                ui::Button::settings(
+                    &theme,
+                    "cap-ux-releases",
+                    ui::ButtonVariant::Dark,
+                    ui::ButtonSize::Sm,
+                )
+                .label(fork_brand::text("Cap releases ↗"))
+                .on_click(|_, _, cx| cx.open_url(fork_brand::RELEASES_URL)),
+            )
+            .child(
+                ui::Button::settings(
+                    &theme,
+                    "cap-ux-changes",
+                    ui::ButtonVariant::Gray,
+                    ui::ButtonSize::Sm,
+                )
+                .label("View source changes ↗")
+                .on_click(|_, _, cx| cx.open_url(fork_brand::CHANGES_URL)),
+            );
+        vec![
+            self.section(
+                fork_brand::text_static("Cap updates"),
+                Some(
+                    "Native UX Walk recording, notes, chapters, transcripts and explicit agent handoffs.",
+                ),
+                None,
+                vec![self.card(true).child(body).into_any_element()],
+            )
+            .into_any_element(),
+        ]
+    }
+}
