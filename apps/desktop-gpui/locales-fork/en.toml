@@ -61,3 +61,11 @@ free_plan = "Instant recordings can use any resolution up to 4K."
 desktop_description = "Cap is open source under AGPLv3 for personal and commercial recording and editing."
 explore_pro = "Sharing · Share recordings through the server you choose in Settings → Sharing."
 sign_in_hint = "Sharing uses the server you choose in Settings → Sharing."
+opens_pricing = "Opens the project page in your browser."
+
+[settings.sign_in_required]
+body = "Please sign in to continue. Alternatively, report the problem on the project's GitHub issues page."
+
+[dialog.update]
+failed = "{message}\n\nYou can always download the latest version from %releases%."
+package_not_installed = "The package wasn't installed. Approve the system prompt, or install it from %releases%."

@@ -4,6 +4,7 @@ use toml::{Table, Value};
 
 const OVERLAY: &str = "locales-fork/en.toml";
 const UPSTREAM_TOKEN: &str = "%upstream%";
+const RELEASES_TOKEN: &str = "%releases%";
 
 pub fn i18n(locales: &str) {
     let manifest_dir =
@@ -37,6 +38,7 @@ pub fn i18n(locales: &str) {
             }
             if fork {
                 brand_table(&mut table, "");
+                refuse_upstream_services(&table, &code, "");
             }
             let text = toml::to_string(&table)
                 .unwrap_or_else(|error| panic!("{code}.toml: cannot rewrite: {error}"));
@@ -113,6 +115,21 @@ fn kept(key: &str) -> bool {
     })
 }
 
+fn refuse_upstream_services(table: &Table, code: &str, prefix: &str) {
+    for (name, value) in table {
+        let key = join(prefix, name);
+        match value {
+            Value::String(text) => {
+                if let Some(host) = fork_brand::upstream_service_host(text) {
+                    panic!("{code}.toml: `{key}` sends people to {host}; override it in {OVERLAY}")
+                }
+            }
+            Value::Table(inner) => refuse_upstream_services(inner, code, &key),
+            _ => {}
+        }
+    }
+}
+
 fn brand_table(table: &mut Table, prefix: &str) {
     for (name, value) in table.iter_mut() {
         if name == "context" {
@@ -124,7 +141,9 @@ fn brand_table(table: &mut Table, prefix: &str) {
                 if !kept(&key) {
                     *text = fork_brand::text(text);
                 }
-                *text = text.replace(UPSTREAM_TOKEN, fork_brand::UPSTREAM_NAME);
+                *text = text
+                    .replace(UPSTREAM_TOKEN, fork_brand::UPSTREAM_NAME)
+                    .replace(RELEASES_TOKEN, fork_brand::RELEASES_URL);
             }
             Value::Table(inner) => brand_table(inner, &key),
             _ => {}
