@@ -281,11 +281,11 @@ test("Stop drains an owned pre-boundary draft into raw evidence and its original
 	now = 101010;
 	await flushNativeNotes(
 		{
-			async flushPendingNotes({ fromMs, throughMs, allowPage }) {
+			async flushPendingNotes({ fromMs, throughMs, allowPage, writeNote }) {
 				assert.equal(fromMs, 100000);
 				assert.equal(throughMs, 101000);
 				assert.equal(await allowPage(page), true);
-				await events.write(
+				await writeNote(
 					{
 						ev: "note",
 						id: 7,
@@ -373,7 +373,7 @@ test("boundary note drains retain ownership and pause fences across asynchronous
 		now += 10;
 		await flushNativeNotes(
 			{
-				async flushPendingNotes({ allowPage }) {
+				async flushPendingNotes({ allowPage, writeNote }) {
 					assert.equal(await allowPage(page), true, scenario);
 					const raw = {
 						ev: "note",
@@ -390,7 +390,7 @@ test("boundary note drains retain ownership and pause fences across asynchronous
 						await events.write(raw, page);
 						return;
 					}
-					const pending = events.write(
+					const pending = writeNote(
 						raw,
 						scenario === "foreign" ? foreign : page,
 					);

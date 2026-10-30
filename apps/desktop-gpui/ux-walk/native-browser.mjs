@@ -182,11 +182,54 @@ export class NativeBrowserEvidence {
 		fs.mkdirSync(path.join(workDir, "notes"), { recursive: true, mode: 0o700 });
 	}
 
+	noteDrain(throughMs) {
+		const active = this.active;
+		const anchors = active?.metadata.anchors;
+		if (
+			this.mode !== "recording" ||
+			!anchors?.at(-1)?.paused ||
+			!["recording", "finishing"].includes(active.metadata.state)
+		)
+			throw new Error("Browser note drain requires an active paused boundary");
+		let index = anchors.length - 1;
+		while (index > 0 && anchors[index - 1].paused) index--;
+		if (!anchors.slice(index).some((anchor) => anchor.wallMs === throughMs))
+			throw new Error("Browser note drain belongs to another boundary");
+		const boundary = anchors[index];
+		let start = index - 1;
+		while (start > 0 && !anchors[start - 1].paused) start--;
+		if (start < 0 || anchors[start].wallMs > boundary.wallMs)
+			throw new Error("Browser note drain has no preceding active interval");
+		return {
+			active,
+			epoch: this.clockEpoch,
+			recordingId: active.metadata.recordingId,
+			generation: active.metadata.generation,
+			boundary,
+			fromMs: anchors[start].wallMs,
+			throughMs: boundary.wallMs,
+		};
+	}
+
+	ownsNoteDrain(drain) {
+		return (
+			!!drain &&
+			this.mode === "recording" &&
+			this.active === drain.active &&
+			this.clockEpoch === drain.epoch &&
+			this.active.metadata.recordingId === drain.recordingId &&
+			this.active.metadata.generation === drain.generation &&
+			this.active.metadata.anchors.includes(drain.boundary) &&
+			this.active.metadata.anchors.at(-1)?.paused &&
+			["recording", "finishing"].includes(this.active.metadata.state)
+		);
+	}
+
 	notesDir() {
 		return path.join(this.active?.directory ?? this.workDir, "notes");
 	}
 
-	write(raw, receivedAt = this.clock(), companion = false) {
+	write(raw, receivedAt = this.clock(), companion = false, noteDrain = null) {
 		if (
 			!["prepared", "recording"].includes(this.mode) ||
 			(!companion &&
@@ -205,7 +248,16 @@ export class NativeBrowserEvidence {
 			return false;
 		}
 		const latest = this.active.metadata.anchors.at(-1);
-		if (latest.paused || this.active.metadata.state !== "recording")
+		const drainingNote =
+			!companion &&
+			event.ev === "note" &&
+			this.ownsNoteDrain(noteDrain) &&
+			event.observedAt >= noteDrain.fromMs &&
+			event.observedAt < noteDrain.throughMs;
+		if (
+			!drainingNote &&
+			(latest.paused || this.active.metadata.state !== "recording")
+		)
 			return false;
 		if (
 			companion &&
@@ -214,19 +266,32 @@ export class NativeBrowserEvidence {
 			event.ev === "click"
 		)
 			return false;
-		event.nativeOffsetMs = Math.round(
-			Math.max(
-				latest.offsetMs,
-				latest.offsetMs +
-					this.monotonic() -
-					this.anchorMonotonic -
-					(event.timingUncertain
-						? 0
-						: Math.max(0, Math.min(30000, receivedAt - event.observedAt))),
-			),
+		const anchor = this.active.metadata.anchors.findLast(
+			(entry) => entry.wallMs <= event.observedAt,
 		);
+		event.nativeOffsetMs = drainingNote
+			? Math.round(
+					Math.max(
+						anchor.offsetMs,
+						Math.min(
+							noteDrain.boundary.offsetMs,
+							anchor.offsetMs + event.observedAt - anchor.wallMs,
+						),
+					),
+				)
+			: Math.round(
+					Math.max(
+						latest.offsetMs,
+						latest.offsetMs +
+							this.monotonic() -
+							this.anchorMonotonic -
+							(event.timingUncertain
+								? 0
+								: Math.max(0, Math.min(30000, receivedAt - event.observedAt))),
+					),
+				);
 		event.receivedAt = receivedAt;
-		event.clockEpoch = this.clockEpoch;
+		event.clockEpoch = drainingNote ? noteDrain.epoch - 1 : this.clockEpoch;
 		const line = `${JSON.stringify(event)}\n`;
 		if (event.observedAt < this.active.metadata.startedAtMs && !companion) {
 			const file = path.join(this.active.directory, "browser-preroll.jsonl");
@@ -235,9 +300,6 @@ export class NativeBrowserEvidence {
 			else this.active.metadata.dropped++;
 			return false;
 		}
-		const anchor = this.active.metadata.anchors.findLast(
-			(entry) => entry.wallMs <= event.observedAt,
-		);
 		if ((!anchor || anchor.paused) && !companion) return false;
 		if (this.bytes + Buffer.byteLength(line) > 100 * 1024 * 1024) {
 			this.active.metadata.dropped++;
@@ -410,6 +472,7 @@ export class OwnedWindowEvents {
 		this.sessions = new WeakMap();
 		this.pending = new Set();
 		this.initial = null;
+		this.noteDrain = null;
 	}
 
 	async windowId(page) {
@@ -427,23 +490,30 @@ export class OwnedWindowEvents {
 		return (await this.initial) === (await this.windowId(page));
 	}
 
-	canCapturePage(page) {
-		return (
+	async canCapturePage(page) {
+		const active = this.evidence.active;
+		const epoch = this.evidence.clockEpoch;
+		const live = () =>
 			this.evidence.mode === "recording" &&
-			!this.evidence.active?.metadata.anchors.at(-1)?.paused &&
-			this.accepts(page)
-		);
+			this.evidence.active === active &&
+			this.evidence.clockEpoch === epoch &&
+			active?.metadata.state === "recording" &&
+			!active.metadata.anchors.at(-1)?.paused;
+		return live() && (await this.accepts(page)) && live();
 	}
 
-	write(event, page) {
+	write(event, page, noteDrain = null) {
 		if (this.pending.size >= 512) {
 			if (this.evidence.active) this.evidence.active.metadata.dropped++;
 			return Promise.resolve();
 		}
-		const receivedAt = Date.now();
+		const receivedAt = this.evidence.clock();
 		const task = this.accepts(page)
 			.then((accepted) => {
-				if (accepted) this.evidence.write(event, receivedAt);
+				if (!accepted) return false;
+				const saved = this.evidence.write(event, receivedAt, false, noteDrain);
+				if (saved && noteDrain) this.evidence.flush();
+				return saved;
 			})
 			.catch(() => {
 				if (this.evidence.active) {
@@ -451,6 +521,7 @@ export class OwnedWindowEvents {
 						"Some browser events could not be matched to the recorded window";
 					this.evidence.active.metadata.dropped++;
 				}
+				return false;
 			});
 		this.pending.add(task);
 		task.finally(() => this.pending.delete(task));
@@ -462,13 +533,30 @@ export class OwnedWindowEvents {
 	}
 }
 
-export async function flushNativeNotes(browser, evidence, events, throughMs) {
-	await browser.flushPendingNotes({
-		fromMs: evidence.active.metadata.startedAtMs,
-		throughMs,
-		allowPage: (page) => events.accepts(page),
-	});
-	await events.flush();
+export async function flushNativeNotes(
+	browser,
+	evidence,
+	events,
+	throughMs,
+	drain = evidence.noteDrain(throughMs),
+) {
+	if (!evidence.ownsNoteDrain(drain)) return;
+	if (events.noteDrain) throw new Error("Browser note drain is already active");
+	events.noteDrain = drain;
+	try {
+		await browser.flushPendingNotes({
+			fromMs: drain.fromMs,
+			throughMs: drain.throughMs,
+			writeNote: (event, page) => events.write(event, page, drain),
+			allowPage: async (page) =>
+				evidence.ownsNoteDrain(drain) &&
+				(await events.accepts(page)) &&
+				evidence.ownsNoteDrain(drain),
+		});
+	} finally {
+		await events.flush();
+		events.noteDrain = null;
+	}
 }
 
 export async function runNativeBrowser(captureId, workDir, external = false) {
@@ -566,6 +654,19 @@ export async function runNativeBrowser(captureId, workDir, external = false) {
 	const input = readline.createInterface({ input: process.stdin });
 	let commands = Promise.resolve();
 	let noteFlush = Promise.resolve();
+	const queueNoteFlush = (throughMs) => {
+		if (external) return;
+		const drain = evidence.noteDrain(throughMs);
+		noteFlush = noteFlush
+			.then(() => flushNativeNotes(browser, evidence, events, throughMs, drain))
+			.catch((error) => {
+				if (evidence.ownsNoteDrain(drain)) {
+					evidence.active.metadata.dropped++;
+					evidence.active.metadata.reason = `Open browser note could not be saved: ${redactBrowserText(error.message, 300)}`;
+					evidence.save();
+				}
+			});
+	};
 	input.on("line", (line) => {
 		commands = commands
 			.then(async () => {
@@ -637,6 +738,7 @@ export async function runNativeBrowser(captureId, workDir, external = false) {
 							);
 							evidence.active.metadata.state = "finishing";
 							evidence.save();
+							queueNoteFlush(message.wallMs);
 							break;
 						case "clock": {
 							const wasPaused = evidence
@@ -648,19 +750,7 @@ export async function runNativeBrowser(captureId, workDir, external = false) {
 								message.offsetMs,
 								message.paused,
 							);
-							if (message.paused && !wasPaused && !external) {
-								noteFlush = noteFlush
-									.then(() =>
-										flushNativeNotes(browser, evidence, events, message.wallMs),
-									)
-									.catch((error) => {
-										if (evidence.active) {
-											evidence.active.metadata.dropped++;
-											evidence.active.metadata.reason = `Open browser note could not be saved: ${redactBrowserText(error.message, 300)}`;
-											evidence.save();
-										}
-									});
-							}
+							if (message.paused && !wasPaused) queueNoteFlush(message.wallMs);
 							break;
 						}
 						case "stop":

@@ -503,12 +503,12 @@ export async function openBrowser(options) {
  const context={pages:()=>[page],newCDPSession:async()=>({send:async()=>({windowId:17})})};
  const page={context:()=>context};
  await options.write({ev:"nav",url:"https://example.com"},page);
- return {context,browser:{once(){}},saveAuth:async()=>{},close:async()=>{},async flushPendingNotes({allowPage}) {
+ return {context,browser:{once(){}},saveAuth:async()=>{},close:async()=>{},async flushPendingNotes({allowPage,writeNote}) {
   fs.writeFileSync(${JSON.stringify(entered)},"entered");
   while(!fs.existsSync(${JSON.stringify(release)})) await new Promise(resolve=>setTimeout(resolve,10));
   if(!saved && await allowPage(page)) {
    saved=true;
-   await options.write({ev:"note",id:1,t:${startedAtMs + 500},text:"Accepted draft at real finishing",shot:"notes/01.png"},page);
+   await writeNote({ev:"note",id:1,t:${startedAtMs + 500},text:"Accepted draft at real finishing",shot:"notes/01.png"},page);
   }
  }};
 }`,
