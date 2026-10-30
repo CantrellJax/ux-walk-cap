@@ -13,6 +13,7 @@ on:
       - apps/cli/**
       - apps/cloud/**
       - crates/cloud-sharing/**
+      - crates/fork-brand/**
       - crates/recording/**
       - scripts/bundle-gpui*
       - scripts/build-desktop-binaries*
@@ -28,6 +29,7 @@ on:
       - apps/cli/**
       - apps/cloud/**
       - crates/cloud-sharing/**
+      - crates/fork-brand/**
       - crates/recording/**
       - scripts/bundle-gpui*
       - scripts/build-desktop-binaries*
@@ -125,6 +127,7 @@ jobs:
           rustfmt +1.95.0 --edition 2024 --config skip_children=true crates/recording/src/sources/screen_capture/mod.rs crates/recording/src/sources/screen_capture/macos.rs crates/recording/src/sources/screen_capture/window_target.rs crates/recording/src/studio_recording.rs crates/recording/src/instant_recording.rs crates/recording/tests/macos_window_target_contract.rs
           rustfmt +1.95.0 --edition 2024 --config skip_children=true apps/desktop-gpui/src/onboarding_window/stage.rs apps/desktop-gpui/src/permissions.rs
           rustfmt +1.95.0 --edition 2024 --config skip_children=true apps/cli/src/agents.rs
+          rustfmt +1.95.0 --edition 2024 --config skip_children=true crates/fork-brand/src/lib.rs crates/fork-brand/build.rs apps/desktop-gpui/brand_build.rs apps/desktop-gpui/src/fork_identity_tests.rs apps/cli/tests/fork_update_refusal.rs
           rustfmt +1.95.0 --edition 2024 --config skip_children=true crates/recording/src/sources/screen_capture/macos/system_audio.rs
           git diff > "$RUNNER_TEMP/rustfmt.patch"
       - uses: actions/upload-artifact@v4
@@ -144,6 +147,7 @@ jobs:
           cargo +1.95.0 check --manifest-path apps/desktop-gpui/Cargo.toml --locked -p cap-desktop-gpui
           cargo +1.95.0 check --locked -p cap
           cargo +1.95.0 test --locked -p cap-cloud-sharing
+          cargo +1.95.0 test --locked -p fork-brand
       - name: Exercise the native walk processor
         run: |
           command -v ffmpeg >/dev/null || brew install ffmpeg
@@ -183,8 +187,9 @@ jobs:
           cargo +1.95.0 test --manifest-path apps/desktop-gpui/Cargo.toml --locked --bin cap-gpui app_windows::tests::default_exclusion_titles_line_up_with_the_table
           cargo +1.95.0 test --manifest-path apps/desktop-gpui/Cargo.toml --locked --bin cap-gpui main_window::mode_hover_tests
           cargo +1.95.0 test --manifest-path apps/desktop-gpui/Cargo.toml --locked --bin cap-gpui onboarding_window::tests
-          cargo +1.95.0 test --manifest-path apps/desktop-gpui/Cargo.toml --locked --bin cap-gpui installer::tests::fork_refuses_official_update_resolution
-          cargo +1.95.0 test --locked -p cap update::tests::fork_refuses_official_installer
+          cargo +1.95.0 test --manifest-path apps/desktop-gpui/Cargo.toml --locked --bin cap-gpui fork_identity_tests::
+          cargo +1.95.0 test --manifest-path apps/desktop-gpui/Cargo.toml --locked --bin cap-gpui i18n::
+          cargo +1.95.0 test --locked -p cap --test fork_update_refusal
       - name: Verify formatting
         if: always()
         run: git diff --exit-code
