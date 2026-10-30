@@ -2267,10 +2267,7 @@ async fn start_internal(
     if matches!(config.target, ScreenCaptureTarget::CameraOnly) && config.camera.is_none() {
         return Err(anyhow!("Camera-only recording requires a selected camera."));
     }
-    if !cfg!(feature = "ux-walk")
-        && config.mode == RecordingMode::Instant
-        && !crate::store::auth_snapshot().signed_in()
-    {
+    if config.mode == RecordingMode::Instant && !crate::store::auth_snapshot().signed_in() {
         return Err(anyhow!("Please sign in to use instant recording"));
     }
 
@@ -2506,12 +2503,11 @@ async fn start_attempt_with_upload(
     // The instant output cap is plan-gated at start time, not at settings
     // time (`recording.rs:1634-1639`): free stays at the free cap even if a
     // stale store value says otherwise.
-    let instant_max_resolution =
-        if cfg!(feature = "ux-walk") || crate::store::auth_snapshot().is_upgraded() {
-            settings.instant_mode_max_resolution
-        } else {
-            cap_recording::FREE_INSTANT_MODE_MAX_RESOLUTION
-        };
+    let instant_max_resolution = if crate::store::auth_snapshot().is_upgraded() {
+        settings.instant_mode_max_resolution
+    } else {
+        cap_recording::FREE_INSTANT_MODE_MAX_RESOLUTION
+    };
 
     #[cfg(target_os = "macos")]
     let excluded_windows = {

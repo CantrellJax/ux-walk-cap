@@ -2591,10 +2591,7 @@ impl MainWindow {
                 None => return,
             }
         };
-        if !cfg!(feature = "ux-walk")
-            && mode == recording::RecordingMode::Instant
-            && !crate::store::auth_snapshot().signed_in()
-        {
+        if mode == recording::RecordingMode::Instant && !crate::store::auth_snapshot().signed_in() {
             let kind = match &target {
                 ScreenCaptureTarget::Display { .. } => TargetType::Display,
                 ScreenCaptureTarget::Window { .. } => TargetType::Window,
@@ -3549,10 +3546,7 @@ impl MainWindow {
             .filter(|_| !pending);
 
         let message = if pending {
-            crate::menus::fork_text(
-                "Finish signing in to Cap in your browser. Cap UX returns to the recorder when you're done.",
-                tr::main::sign_in::pending_message,
-            )
+            tr::main::sign_in::pending_message()
         } else {
             tr::main::sign_in::message()
         };

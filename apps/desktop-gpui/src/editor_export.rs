@@ -843,23 +843,22 @@ impl EditorWindow {
             return;
         }
         if ui.destination == ExportDestination::Link {
-            if cfg!(feature = "ux-walk") {
-                if !cap_cloud_sharing::load().is_ok_and(|settings| settings.enabled) {
-                    cx.defer(|cx| {
-                        crate::app_windows::open_settings(crate::settings_window::Page::Sharing, cx)
-                    });
-                    return;
-                }
-            } else {
-                let sign_in = SignIn::global(cx);
-                if sign_in.read(cx).is_pending() {
-                    sign_in.update(cx, |sign_in, cx| sign_in.cancel(cx));
-                    return;
-                }
-                if ui.auth_rejected || !store::auth_snapshot().signed_in() {
-                    sign_in.update(cx, |sign_in, cx| sign_in.start(SignInOrigin::Editor, cx));
-                    return;
-                }
+            if cfg!(feature = "ux-walk")
+                && !cap_cloud_sharing::load().is_ok_and(|settings| settings.enabled)
+            {
+                cx.defer(|cx| {
+                    crate::app_windows::open_settings(crate::settings_window::Page::Sharing, cx)
+                });
+                return;
+            }
+            let sign_in = SignIn::global(cx);
+            if sign_in.read(cx).is_pending() {
+                sign_in.update(cx, |sign_in, cx| sign_in.cancel(cx));
+                return;
+            }
+            if ui.auth_rejected || !store::auth_snapshot().signed_in() {
+                sign_in.update(cx, |sign_in, cx| sign_in.start(SignInOrigin::Editor, cx));
+                return;
             }
             self.start_link_export(window, cx);
             return;
@@ -1151,7 +1150,7 @@ impl EditorWindow {
         }
 
         let upgraded = store::auth_snapshot().is_upgraded();
-        if !cfg!(feature = "ux-walk") && !upgraded && duration >= 300.0 {
+        if !upgraded && duration >= 300.0 {
             cx.open_url(crate::auth::PRICING_URL);
             return;
         }
@@ -2010,8 +2009,7 @@ impl EditorWindow {
             },
         )
         .when(
-            !cfg!(feature = "ux-walk")
-                && ui.destination == ExportDestination::Link
+            ui.destination == ExportDestination::Link
                 && self.sharing.is_none()
                 && store::auth_snapshot().organizations.len() > 1,
             |this| {

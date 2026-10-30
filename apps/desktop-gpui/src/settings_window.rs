@@ -2300,9 +2300,6 @@ impl SettingsWindow {
     }
 
     fn refresh_user_profile(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if cfg!(feature = "ux-walk") {
-            return;
-        }
         self.has_cap_pro = store::auth_snapshot().is_upgraded();
         self.instant_quality_notice = None;
         let Some(profile_session) = signed_in_profile_session() else {
@@ -3682,7 +3679,7 @@ impl SettingsWindow {
             return;
         };
         self.has_cap_pro = store::auth_snapshot().is_upgraded();
-        if !cfg!(feature = "ux-walk") && self.instant_resolution_locked(resolution) {
+        if self.instant_resolution_locked(resolution) {
             cx.open_url(crate::auth::PRICING_URL);
             cx.notify();
             return;
@@ -3739,7 +3736,7 @@ impl SettingsWindow {
     }
 
     fn effective_instant_resolution(&self) -> u32 {
-        if cfg!(feature = "ux-walk") || self.has_cap_pro {
+        if self.has_cap_pro {
             self.settings.instant_mode_max_resolution
         } else {
             FREE_INSTANT_MODE_MAX_RESOLUTION
@@ -3747,9 +3744,7 @@ impl SettingsWindow {
     }
 
     fn instant_resolution_locked(&self, resolution: u32) -> bool {
-        !cfg!(feature = "ux-walk")
-            && !self.has_cap_pro
-            && resolution > FREE_INSTANT_MODE_MAX_RESOLUTION
+        !self.has_cap_pro && resolution > FREE_INSTANT_MODE_MAX_RESOLUTION
     }
 
     fn render_instant_quality(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -3760,13 +3755,10 @@ impl SettingsWindow {
             .find(|(value, _, _)| *value == effective)
             .map(|(_, _, summary)| summary())
             .unwrap_or_default();
-        let description = if cfg!(feature = "ux-walk") || self.has_cap_pro {
+        let description = if self.has_cap_pro {
             summary
         } else {
-            crate::menus::fork_text(
-                "720p on the free plan. the upstream Pro plan records up to 4K.",
-                tr::settings::quality::instant::free_plan,
-            )
+            tr::settings::quality::instant::free_plan()
         };
 
         let options = INSTANT_RESOLUTION_TIERS
