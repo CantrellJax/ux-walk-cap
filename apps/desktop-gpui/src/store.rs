@@ -1643,11 +1643,11 @@ pub struct AuthOrganization {
 
 impl AuthSnapshot {
     pub fn signed_in(&self) -> bool {
-        self.token.is_some()
+        self.token.is_some() || crate::entitlement::NO_ACCOUNT_NEEDED
     }
 
     pub fn is_upgraded(&self) -> bool {
-        self.plan_upgraded || self.plan_manual
+        self.plan_upgraded || self.plan_manual || crate::entitlement::PLAN_UNLOCKED
     }
 }
 

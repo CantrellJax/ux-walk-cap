@@ -41,6 +41,7 @@ mod editor_sidebar;
 mod editor_tabs;
 mod editor_timeline;
 mod editor_window;
+mod entitlement;
 mod feeds;
 mod focus_border;
 mod foreign_window;
