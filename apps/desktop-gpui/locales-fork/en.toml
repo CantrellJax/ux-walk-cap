@@ -50,3 +50,7 @@ drag_into_list = "Drag this Cap app into the list. If an older preview entry is 
 
 [permission.onboarding.relaunch]
 hint = "Already enabled but still denied? Remove the old Cap entry, add this app again, then relaunch."
+
+[main.sign_in]
+pending_message = "Finish signing in to %upstream% in your browser. Cap returns to the recorder when you're done."
+

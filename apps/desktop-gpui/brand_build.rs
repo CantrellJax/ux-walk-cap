@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use toml::{Table, Value};
 
 const OVERLAY: &str = "locales-fork/en.toml";
+const UPSTREAM_TOKEN: &str = "%upstream%";
 
 pub fn i18n(locales: &str) {
     let manifest_dir =
@@ -119,7 +120,12 @@ fn brand_table(table: &mut Table, prefix: &str) {
         }
         let key = join(prefix, name);
         match value {
-            Value::String(text) if !kept(&key) => *text = fork_brand::text(text),
+            Value::String(text) => {
+                if !kept(&key) {
+                    *text = fork_brand::text(text);
+                }
+                *text = text.replace(UPSTREAM_TOKEN, fork_brand::UPSTREAM_NAME);
+            }
             Value::Table(inner) => brand_table(inner, &key),
             _ => {}
         }
