@@ -26,16 +26,21 @@ use objc2_foundation::{
 };
 use objc2_quartz_core::{CALayer, CATransaction, kCACornerCurveContinuous};
 
-use super::mac::{post, set_status_mode};
-use super::{TrayItem, mode_heading, mode_name, mode_picker_icon};
+use super::TrayItem;
+use super::mac::post;
+use super::ux_walk::{
+    Pill, mode_heading, mode_name, mode_picker_icon, picker_pills, set_status_mode, shown_pill,
+};
 use crate::i18n::tr;
 use crate::main_window::Mode;
 
-const PICKER_MODES: [(Mode, TrayItem); 3] = [
+const MODE_PILLS: [(Mode, TrayItem); 3] = [
     (Mode::Instant, TrayItem::ModeInstant),
     (Mode::Studio, TrayItem::ModeStudio),
     (Mode::Screenshot, TrayItem::ModeScreenshot),
 ];
+static PICKER_MODES: std::sync::LazyLock<Vec<(Pill, TrayItem)>> =
+    std::sync::LazyLock::new(|| picker_pills(&MODE_PILLS));
 
 const FLASH_INTERVAL: f64 = 0.08;
 const FLASH_ON_PICK: bool = true;
@@ -504,7 +509,7 @@ impl ModePickerView {
         self.ivars().focused.set(Some(i));
         self.refresh();
         post(self.ivars().tag_base + i as isize);
-        super::mac::apply(mode, super::mac::current_option());
+        super::mac::apply(mode.into(), super::mac::current_option());
         set_status_mode(mode);
 
         if !FLASH_ON_PICK {
@@ -671,6 +676,7 @@ pub(super) fn append_mode_picker(
     mtm: MainThreadMarker,
 ) -> Retained<NSMenuItem> {
     let tag_base = actions.len() as isize;
+    let selected = shown_pill(selected);
     actions.extend(PICKER_MODES.iter().map(|(_, item)| item.clone()));
 
     let index = PICKER_MODES
