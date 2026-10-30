@@ -1,8 +1,9 @@
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import readline from "node:readline";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
 	redactBrowserText,
 	sanitizeBrowserEvent,
@@ -10,12 +11,146 @@ import {
 import { durableJson } from "./checkpoint-store.mjs";
 
 const local = new URL("./src/config.mjs", import.meta.url);
-const engine = fs.existsSync(local)
-	? new URL("./src/", import.meta.url)
-	: new URL("../../../vendor/ux-walk/src/", import.meta.url);
+const engine = process.env.CAP_UX_TEST_ENGINE_DIR
+	? pathToFileURL(`${path.resolve(process.env.CAP_UX_TEST_ENGINE_DIR)}/src/`)
+	: fs.existsSync(local)
+		? new URL("./src/", import.meta.url)
+		: new URL("../../../vendor/ux-walk/src/", import.meta.url);
+const { CompanionSession, startCompanionServer } = await import(
+	new URL("companion.mjs", engine)
+);
 
 function save(file, value) {
 	durableJson(file, value);
+}
+
+const recent = (timestamp, now) =>
+	Number.isSafeInteger(timestamp) &&
+	timestamp >= 0 &&
+	now - timestamp >= -1000 &&
+	now - timestamp <= 15000;
+function readOptional(file) {
+	try {
+		return JSON.parse(fs.readFileSync(file, "utf8"));
+	} catch {
+		return null;
+	}
+}
+function audioBackupState(status, expected) {
+	const kinds = ["microphone", "systemAudio"];
+	if (!expected || kinds.some((kind) => typeof expected[kind] !== "boolean"))
+		return "unconfirmed";
+	if (
+		!status.sources ||
+		typeof status.sources !== "object" ||
+		Array.isArray(status.sources) ||
+		!Array.isArray(status.waitingSources) ||
+		!status.sourceErrors ||
+		typeof status.sourceErrors !== "object" ||
+		Array.isArray(status.sourceErrors)
+	)
+		return "unconfirmed";
+	const selected = kinds.filter((kind) => expected[kind]);
+	if (!selected.length) return "not-selected";
+	for (const kind of selected) {
+		const sources = Object.entries(status.sources ?? {}).filter(([source]) =>
+			source.endsWith(`:${kind}`),
+		);
+		if (
+			Object.keys(status.sourceErrors ?? {}).some((source) =>
+				source.endsWith(`:${kind}`),
+			) ||
+			sources.some(([, source]) => source?.unsupported)
+		)
+			return "attention";
+		if (!sources.length || status.waitingSources?.includes(kind))
+			return "waiting";
+		for (const [, source] of sources) {
+			if (
+				![source?.durableSourceMs, source?.remoteSourceMs].every(
+					(value) => Number.isFinite(value) && value >= 0,
+				) ||
+				source.remoteSourceMs > source.durableSourceMs
+			)
+				return "unconfirmed";
+			if (
+				source.durableSourceMs === 0 ||
+				source.remoteSourceMs < source.durableSourceMs
+			)
+				return "waiting";
+		}
+	}
+	return "current";
+}
+
+function captureStatus(directory, now) {
+	const heartbeat = readOptional(
+		path.join(directory, "checkpoint-heartbeat.json"),
+	);
+	const validHeartbeat =
+		heartbeat?.schemaVersion === 1 &&
+		heartbeat.parentPid === process.ppid &&
+		recent(heartbeat.wallMs, now);
+	const selected = validHeartbeat ? heartbeat.expectedAudio : null;
+	const choice = (kind) =>
+		typeof selected?.[kind] === "boolean"
+			? selected[kind]
+				? "on"
+				: "off"
+			: "unconfirmed";
+	const audio = {
+		microphone: choice("microphone"),
+		systemAudio: choice("systemAudio"),
+		updatedAt: validHeartbeat ? heartbeat.wallMs : undefined,
+		scope:
+			"All computer audio, separately from microphone; meeting video is off",
+	};
+	const status = readOptional(path.join(directory, "checkpoint-status.json"));
+	const identity = readOptional(
+		path.join(directory, "checkpoints/identity.json"),
+	);
+	const backup = { eventState: "unconfirmed", audioState: "unconfirmed" };
+	if (
+		status?.schemaVersion !== 1 ||
+		!identity ||
+		typeof identity.recordingId !== "string" ||
+		!identity.recordingId ||
+		typeof identity.generation !== "string" ||
+		!identity.generation ||
+		status.recordingId !== identity.recordingId ||
+		status.generation !== identity.generation ||
+		typeof status.backupEnabled !== "boolean" ||
+		!recent(status.updatedAt, now)
+	)
+		return { audio, backup };
+	Object.assign(backup, {
+		enabled: status.backupEnabled,
+		updatedAt: status.updatedAt,
+		needsAttention: !!status.error,
+	});
+	if (!status.backupEnabled) return { audio, backup };
+	if (
+		Number.isSafeInteger(status.remoteClockThroughMs) &&
+		status.remoteClockThroughMs > 0
+	)
+		backup.journalThroughMs = status.remoteClockThroughMs;
+	const events = status.events;
+	if (
+		events &&
+		[events.readableBytes, events.durableBytes, events.remoteBytes].every(
+			(value) => Number.isSafeInteger(value) && value >= 0,
+		) &&
+		events.remoteBytes <= events.durableBytes &&
+		events.durableBytes <= events.readableBytes
+	)
+		backup.eventState =
+			events.readableBytes === 0
+				? "none"
+				: events.remoteBytes === events.readableBytes
+					? "current"
+					: "waiting";
+	backup.audioState = audioBackupState(status, selected);
+	return { audio, backup };
 }
 
 export class NativeBrowserEvidence {
@@ -23,6 +158,9 @@ export class NativeBrowserEvidence {
 		this.captureId = captureId;
 		this.workDir = workDir;
 		this.clock = clock;
+		this.monotonic = clock === Date.now ? () => performance.now() : clock;
+		this.anchorMonotonic = this.monotonic();
+		this.clockEpoch = 0;
 		this.windowId = null;
 		this.mode = "prepared";
 		this.preRoll = [];
@@ -44,36 +182,139 @@ export class NativeBrowserEvidence {
 		fs.mkdirSync(path.join(workDir, "notes"), { recursive: true, mode: 0o700 });
 	}
 
+	noteDrain(throughMs) {
+		const active = this.active;
+		const anchors = active?.metadata.anchors;
+		if (
+			this.mode !== "recording" ||
+			!anchors?.at(-1)?.paused ||
+			!["recording", "finishing"].includes(active.metadata.state)
+		)
+			throw new Error("Browser note drain requires an active paused boundary");
+		let index = anchors.length - 1;
+		while (index > 0 && anchors[index - 1].paused) index--;
+		if (!anchors.slice(index).some((anchor) => anchor.wallMs === throughMs))
+			throw new Error("Browser note drain belongs to another boundary");
+		const boundary = anchors[index];
+		let start = index - 1;
+		while (start > 0 && !anchors[start - 1].paused) start--;
+		if (start < 0 || anchors[start].wallMs > boundary.wallMs)
+			throw new Error("Browser note drain has no preceding active interval");
+		return {
+			active,
+			epoch: this.clockEpoch,
+			recordingId: active.metadata.recordingId,
+			generation: active.metadata.generation,
+			boundary,
+			fromMs: anchors[start].wallMs,
+			throughMs: boundary.wallMs,
+			sourceFenced:
+				active.metadata.noteSourceFencedEpoch === this.clockEpoch - 1,
+		};
+	}
+
+	ownsNoteDrain(drain) {
+		return (
+			!!drain &&
+			this.mode === "recording" &&
+			this.active === drain.active &&
+			this.clockEpoch === drain.epoch &&
+			this.active.metadata.recordingId === drain.recordingId &&
+			this.active.metadata.generation === drain.generation &&
+			this.active.metadata.anchors.includes(drain.boundary) &&
+			this.active.metadata.anchors.at(-1)?.paused &&
+			["recording", "finishing"].includes(this.active.metadata.state)
+		);
+	}
+
 	notesDir() {
 		return path.join(this.active?.directory ?? this.workDir, "notes");
 	}
 
-	write(raw, receivedAt = this.clock()) {
-		if (!["prepared", "recording"].includes(this.mode)) return;
+	write(raw, receivedAt = this.clock(), companion = false, noteDrain = null) {
+		if (noteDrain && (raw?.ev !== "note" || !this.ownsNoteDrain(noteDrain)))
+			return false;
+		if (
+			!["prepared", "recording"].includes(this.mode) ||
+			(!companion &&
+				(raw?.source === "chrome-extension" ||
+					String(raw?.ev).startsWith("meet-")))
+		)
+			return false;
 		const event = sanitizeBrowserEvent(raw, receivedAt);
-		if (!event) return;
-		const line = `${JSON.stringify(event)}\n`;
+		if (!event) return false;
 		if (this.mode === "prepared") {
+			const line = `${JSON.stringify(event)}\n`;
 			this.preRoll.push(line);
 			this.preRollBytes += Buffer.byteLength(line);
 			while (this.preRollBytes > 2 * 1024 * 1024)
 				this.preRollBytes -= Buffer.byteLength(this.preRoll.shift());
-			return;
+			return false;
 		}
-		if (event.observedAt < this.active.metadata.startedAtMs) {
+		const latest = this.active.metadata.anchors.at(-1);
+		const drainingNote =
+			!companion &&
+			event.ev === "note" &&
+			this.ownsNoteDrain(noteDrain) &&
+			event.observedAt >= noteDrain.fromMs &&
+			(event.observedAt < noteDrain.throughMs ||
+				(noteDrain.sourceFenced && event.observedAt === noteDrain.throughMs));
+		if (
+			!drainingNote &&
+			(latest.paused || this.active.metadata.state !== "recording")
+		)
+			return false;
+		if (
+			companion &&
+			this.active.metadata.browserMode !== "external" &&
+			event.companion.role === "walkthrough" &&
+			event.ev === "click"
+		)
+			return false;
+		const anchors = drainingNote
+			? this.active.metadata.anchors.slice(
+					0,
+					this.active.metadata.anchors.indexOf(noteDrain.boundary),
+				)
+			: this.active.metadata.anchors;
+		const anchor = anchors.findLast(
+			(entry) => entry.wallMs <= event.observedAt,
+		);
+		event.nativeOffsetMs = drainingNote
+			? Math.round(
+					Math.max(
+						anchor.offsetMs,
+						Math.min(
+							noteDrain.boundary.offsetMs,
+							anchor.offsetMs + event.observedAt - anchor.wallMs,
+						),
+					),
+				)
+			: Math.round(
+					Math.max(
+						latest.offsetMs,
+						latest.offsetMs +
+							this.monotonic() -
+							this.anchorMonotonic -
+							(event.timingUncertain
+								? 0
+								: Math.max(0, Math.min(30000, receivedAt - event.observedAt))),
+					),
+				);
+		event.receivedAt = receivedAt;
+		event.clockEpoch = drainingNote ? noteDrain.epoch - 1 : this.clockEpoch;
+		const line = `${JSON.stringify(event)}\n`;
+		if (event.observedAt < this.active.metadata.startedAtMs && !companion) {
 			const file = path.join(this.active.directory, "browser-preroll.jsonl");
 			if (fs.statSync(file).size + Buffer.byteLength(line) <= 2 * 1024 * 1024)
 				fs.appendFileSync(file, line, { mode: 0o600 });
 			else this.active.metadata.dropped++;
-			return;
+			return false;
 		}
-		const anchor = this.active.metadata.anchors.findLast(
-			(entry) => entry.wallMs <= event.observedAt,
-		);
-		if (!anchor || anchor.paused) return;
+		if ((!anchor || anchor.paused) && !companion) return false;
 		if (this.bytes + Buffer.byteLength(line) > 100 * 1024 * 1024) {
 			this.active.metadata.dropped++;
-			return;
+			return false;
 		}
 		this.bytes += Buffer.byteLength(line);
 		fs.appendFileSync(
@@ -81,9 +322,10 @@ export class NativeBrowserEvidence {
 			line,
 			{ mode: 0o600 },
 		);
+		return true;
 	}
 
-	start(file, windowId) {
+	start(file, windowId, { mode = "owned" } = {}) {
 		if (this.active || !this.windowId || windowId !== this.windowId)
 			throw new Error("Browser window does not match the recording target");
 		const journal = JSON.parse(fs.readFileSync(file, "utf8"));
@@ -101,9 +343,12 @@ export class NativeBrowserEvidence {
 		const metadata = {
 			schemaVersion: 1,
 			captureId: this.captureId,
+			recordingId: randomUUID(),
+			generation: randomUUID(),
 			journal: fs.realpathSync(file),
 			sourceProject: fs.realpathSync(journal.sourceProject),
 			windowId,
+			browserMode: mode,
 			state: "recording",
 			startedAtMs: journal.startedAtMs,
 			dropped: 0,
@@ -134,8 +379,37 @@ export class NativeBrowserEvidence {
 		this.preRoll = [];
 		this.preRollBytes = 0;
 		this.mode = "recording";
+		this.anchorMonotonic = this.monotonic();
+		this.clockEpoch = 0;
 		this.save();
 		return metadata;
+	}
+
+	companion() {
+		if (!this.active) throw new Error("Native recording has not started");
+		const { metadata, directory } = this.active;
+		metadata.companion ??= {};
+		return new CompanionSession({
+			recordingId: metadata.recordingId,
+			generation: metadata.generation,
+			backend: "cap",
+			mode: metadata.browserMode,
+			metadata: metadata.companion,
+			clock: this.clock,
+			epoch: () => this.clockEpoch,
+			state: () =>
+				!this.active ||
+				this.mode !== "recording" ||
+				metadata.state !== "recording"
+					? "finishing"
+					: metadata.anchors.at(-1).paused
+						? "paused"
+						: "recording",
+			write: async (event) => this.write(event, this.clock(), true),
+			flush: async () => this.flush(),
+			persist: async () => this.save(),
+			details: () => captureStatus(directory, this.clock()),
+		});
 	}
 
 	owned(file) {
@@ -154,12 +428,14 @@ export class NativeBrowserEvidence {
 		if (
 			!Number.isSafeInteger(wallMs) ||
 			!Number.isSafeInteger(offsetMs) ||
-			wallMs < previous.wallMs ||
+			wallMs < 0 ||
 			offsetMs < previous.offsetMs ||
 			typeof paused !== "boolean"
 		)
 			throw new Error("Invalid native recording clock anchor");
 		metadata.anchors.push({ wallMs, offsetMs, paused });
+		if (paused !== previous.paused) this.clockEpoch++;
+		this.anchorMonotonic = this.monotonic();
 		this.save();
 	}
 
@@ -198,7 +474,6 @@ export class NativeBrowserEvidence {
 		this.save();
 		this.active = null;
 		this.mode = "stopped";
-		clearInterval(this.flushTimer);
 	}
 }
 
@@ -208,6 +483,7 @@ export class OwnedWindowEvents {
 		this.sessions = new WeakMap();
 		this.pending = new Set();
 		this.initial = null;
+		this.noteDrain = null;
 	}
 
 	async windowId(page) {
@@ -225,23 +501,61 @@ export class OwnedWindowEvents {
 		return (await this.initial) === (await this.windowId(page));
 	}
 
-	canCapturePage(page) {
-		return (
+	async canCapturePage(page, operation) {
+		const active = this.evidence.active;
+		const epoch = this.evidence.clockEpoch;
+		const recordingId = active?.metadata.recordingId;
+		const generation = active?.metadata.generation;
+		const draft = operation?.op === "draft";
+		const receivedAt = operation?.receivedAt;
+		if (draft && (!Number.isSafeInteger(receivedAt) || receivedAt < 0))
+			return false;
+		const owner = () =>
 			this.evidence.mode === "recording" &&
-			!this.evidence.active?.metadata.anchors.at(-1)?.paused &&
-			this.accepts(page)
-		);
+			this.evidence.active === active &&
+			active?.metadata.recordingId === recordingId &&
+			active?.metadata.generation === generation &&
+			["recording", "finishing"].includes(active?.metadata.state);
+		const live = () =>
+			owner() &&
+			this.evidence.clockEpoch === epoch &&
+			active.metadata.state === "recording" &&
+			!active.metadata.anchors.at(-1)?.paused;
+		if (!live() || !(await this.accepts(page)) || !owner()) return false;
+		if (!draft) return live();
+		return () => {
+			if (live()) return true;
+			if (
+				!owner() ||
+				this.evidence.clockEpoch !== epoch + 1 ||
+				!active.metadata.anchors.at(-1)?.paused
+			)
+				return false;
+			try {
+				const boundary = this.evidence.noteDrain(
+					active.metadata.anchors.at(-1).wallMs,
+				);
+				return (
+					receivedAt >= boundary.fromMs && receivedAt <= boundary.throughMs
+				);
+			} catch {
+				return false;
+			}
+		};
 	}
 
-	write(event, page) {
+	write(event, page, noteDrain = null) {
 		if (this.pending.size >= 512) {
 			if (this.evidence.active) this.evidence.active.metadata.dropped++;
-			return Promise.resolve();
+			return Promise.resolve(false);
 		}
-		const receivedAt = Date.now();
+		const receivedAt = this.evidence.clock();
 		const task = this.accepts(page)
 			.then((accepted) => {
-				if (accepted) this.evidence.write(event, receivedAt);
+				if (!accepted) return false;
+				const saved = this.evidence.write(event, receivedAt, false, noteDrain);
+				if (saved && noteDrain) this.evidence.flush();
+				return saved;
 			})
 			.catch(() => {
 				if (this.evidence.active) {
@@ -249,6 +563,7 @@ export class OwnedWindowEvents {
 						"Some browser events could not be matched to the recorded window";
 					this.evidence.active.metadata.dropped++;
 				}
+				return false;
 			});
 		this.pending.add(task);
 		task.finally(() => this.pending.delete(task));
@@ -260,16 +575,103 @@ export class OwnedWindowEvents {
 	}
 }
 
-export async function flushNativeNotes(browser, evidence, events, throughMs) {
-	await browser.flushPendingNotes({
-		fromMs: evidence.active.metadata.startedAtMs,
-		throughMs,
-		allowPage: (page) => events.accepts(page),
-	});
-	await events.flush();
+export async function prepareNativePause(browser, evidence, events) {
+	const active = evidence.active;
+	const epoch = evidence.clockEpoch;
+	const recordingId = active?.metadata.recordingId;
+	const generation = active?.metadata.generation;
+	const current = () =>
+		evidence.mode === "recording" &&
+		evidence.active === active &&
+		evidence.clockEpoch === epoch &&
+		active?.metadata.recordingId === recordingId &&
+		active?.metadata.generation === generation &&
+		active.metadata.state === "recording";
+	if (!current())
+		throw new Error("Browser source preflight belongs to another recording");
+	if (active.metadata.anchors.at(-1).paused) return;
+	try {
+		await browser.prepareNotePause({
+			timeoutMs: 1500,
+			allowPage: async (page) =>
+				current() && (await events.accepts(page)) && current(),
+		});
+		if (!current()) throw new Error("Browser source preflight owner changed");
+		active.metadata.noteSourceFencedEpoch = epoch;
+		evidence.save();
+	} catch (error) {
+		if (current())
+			evidence.finish(
+				active.metadata.journal,
+				"failed",
+				`Browser note source could not acknowledge Pause/Stop: ${redactBrowserText(error.message, 300)}`,
+			);
+		throw error;
+	}
 }
 
-export async function runNativeBrowser(captureId, workDir) {
+export async function resumeNativeNotes(browser, evidence, events) {
+	const active = evidence.active;
+	const epoch = evidence.clockEpoch;
+	const recordingId = active?.metadata.recordingId;
+	const generation = active?.metadata.generation;
+	const current = () =>
+		evidence.mode === "recording" &&
+		evidence.active === active &&
+		evidence.clockEpoch === epoch &&
+		active?.metadata.recordingId === recordingId &&
+		active?.metadata.generation === generation &&
+		active.metadata.state === "recording" &&
+		!active.metadata.anchors.at(-1).paused;
+	if (!current())
+		throw new Error("Browser source resume belongs to another recording");
+	try {
+		await browser.resumeNoteInput({
+			timeoutMs: 1500,
+			allowPage: async (page) =>
+				current() && (await events.accepts(page)) && current(),
+		});
+		if (!current()) throw new Error("Browser source resume owner changed");
+		delete active.metadata.noteSourceFencedEpoch;
+		evidence.save();
+	} catch (error) {
+		if (current())
+			evidence.finish(
+				active.metadata.journal,
+				"failed",
+				`Browser note source could not resume: ${redactBrowserText(error.message, 300)}`,
+			);
+		throw error;
+	}
+}
+
+export async function flushNativeNotes(
+	browser,
+	evidence,
+	events,
+	throughMs,
+	drain = evidence.noteDrain(throughMs),
+) {
+	if (!evidence.ownsNoteDrain(drain)) return;
+	if (events.noteDrain) throw new Error("Browser note drain is already active");
+	events.noteDrain = drain;
+	try {
+		await browser.flushPendingNotes({
+			fromMs: drain.fromMs,
+			throughMs: drain.throughMs,
+			writeNote: (event, page) => events.write(event, page, drain),
+			allowPage: async (page) =>
+				evidence.ownsNoteDrain(drain) &&
+				(await events.accepts(page)) &&
+				evidence.ownsNoteDrain(drain),
+		});
+	} finally {
+		await events.flush();
+		events.noteDrain = null;
+	}
+}
+
+export async function runNativeBrowser(captureId, workDir, external = false) {
 	if (
 		!/^[a-f\d-]{36}$/i.test(captureId) ||
 		!path.isAbsolute(workDir) ||
@@ -277,8 +679,12 @@ export async function runNativeBrowser(captureId, workDir) {
 		path.basename(path.dirname(workDir)) !== "walk-browser"
 	)
 		throw new Error("Invalid browser owner");
-	const { loadConfig } = await import(new URL("config.mjs", engine));
-	const { openBrowser } = await import(new URL("browser.mjs", engine));
+	const { loadConfig, CONFIG_DIR } = await import(
+		new URL("config.mjs", engine)
+	);
+	const openBrowser = external
+		? null
+		: (await import(new URL("browser.mjs", engine))).openBrowser;
 	const cfg = loadConfig();
 	const evidence = new NativeBrowserEvidence(captureId, workDir);
 	const events = new OwnedWindowEvents(evidence);
@@ -297,36 +703,47 @@ export async function runNativeBrowser(captureId, workDir) {
 			`<!doctype html><title>${marker}</title><body style="font:18px system-ui;padding:48px">Opening your UX Walk…`,
 		);
 	});
-	await new Promise((resolve) => bootstrap.listen(0, "127.0.0.1", resolve));
-	const browser = await openBrowser({
-		url: `http://127.0.0.1:${bootstrap.address().port}/walk/${captureId}`,
-		metadataOnly: false,
-		authFile: cfg.authFile,
-		windowSize: cfg.windowSize,
-		trace: false,
-		ignoreWrites: cfg.ignoreWrites,
-		write: (event, page) => events.write(event, page),
-		notesDir: () => evidence.notesDir(),
-		contextSelectors: cfg.contextSelectors,
-		canCapturePage: (page) => events.canCapturePage(page),
-		genericTestids: cfg.genericTestids,
-		onCommand: () =>
-			"Use Cap UX recording controls for notes, chapters and pause.",
-	}).catch((error) => {
-		bootstrap.closeAllConnections();
-		bootstrap.close();
-		throw error;
-	});
+	if (!external)
+		await new Promise((resolve) => bootstrap.listen(0, "127.0.0.1", resolve));
+	const browser = external
+		? {
+				saveAuth: async () => {},
+				close: async () => {},
+				browser: { once: () => {} },
+			}
+		: await openBrowser({
+				url: `http://127.0.0.1:${bootstrap.address().port}/walk/${captureId}`,
+				metadataOnly: false,
+				authFile: cfg.authFile,
+				windowSize: cfg.windowSize,
+				trace: false,
+				ignoreWrites: cfg.ignoreWrites,
+				write: (event, page) => events.write(event, page),
+				notesDir: () => evidence.notesDir(),
+				contextSelectors: cfg.contextSelectors,
+				canCapturePage: (page, operation) =>
+					events.canCapturePage(page, operation),
+				genericTestids: cfg.genericTestids,
+				onCommand: () =>
+					"Use Cap UX recording controls for notes, chapters and pause.",
+			}).catch((error) => {
+				bootstrap.closeAllConnections();
+				bootstrap.close();
+				throw error;
+			});
 	const saveAuth = browser.saveAuth.bind(browser);
 	browser.saveAuth = () =>
 		evidence.active && evidence.mode === "recording"
 			? saveAuth()
 			: Promise.resolve();
 	let closing = false;
+	let companionServer = null;
 	const close = async () => {
 		if (closing) return;
 		closing = true;
 		evidence.mode = "closing";
+		if (companionServer) await companionServer.close();
+		clearInterval(evidence.flushTimer);
 		try {
 			if (evidence.active) {
 				await saveAuth();
@@ -341,7 +758,7 @@ export async function runNativeBrowser(captureId, workDir) {
 				await browser.close();
 			} finally {
 				bootstrap.closeAllConnections();
-				bootstrap.close();
+				if (bootstrap.listening) bootstrap.close();
 				fs.rmSync(workDir, { recursive: true, force: true });
 			}
 		}
@@ -350,6 +767,19 @@ export async function runNativeBrowser(captureId, workDir) {
 	const input = readline.createInterface({ input: process.stdin });
 	let commands = Promise.resolve();
 	let noteFlush = Promise.resolve();
+	const queueNoteFlush = (throughMs) => {
+		if (external) return;
+		const drain = evidence.noteDrain(throughMs);
+		noteFlush = noteFlush
+			.then(() => flushNativeNotes(browser, evidence, events, throughMs, drain))
+			.catch((error) => {
+				if (evidence.ownsNoteDrain(drain)) {
+					evidence.active.metadata.dropped++;
+					evidence.active.metadata.reason = `Open browser note could not be saved: ${redactBrowserText(error.message, 300)}`;
+					evidence.save();
+				}
+			});
+	};
 	input.on("line", (line) => {
 		commands = commands
 			.then(async () => {
@@ -360,12 +790,23 @@ export async function runNativeBrowser(captureId, workDir) {
 					if (message.captureId !== captureId)
 						throw new Error("Browser owner mismatch");
 					switch (message.op) {
+						case "bind-external":
+							if (!external || evidence.windowId)
+								throw new Error(
+									"External evidence owner is already bound or unavailable",
+								);
+							evidence.windowId = message.windowId || "external";
+							break;
 						case "bind":
 							if (evidence.windowId || !/^\d+$/.test(message.windowId))
 								throw new Error("Browser window is already bound or invalid");
 							evidence.windowId = message.windowId;
 							break;
 						case "navigate": {
+							if (external)
+								throw new Error(
+									"External evidence collection does not control a browser",
+								);
 							if (!evidence.windowId)
 								throw new Error("Select the browser window before navigation");
 							const url = new URL(message.url);
@@ -385,42 +826,98 @@ export async function runNativeBrowser(captureId, workDir) {
 							break;
 						}
 						case "start":
-							evidence.start(message.file, message.windowId);
+							evidence.start(message.file, message.windowId || "external", {
+								mode: external ? "external" : "owned",
+							});
+							if (!external) await resumeNativeNotes(browser, evidence, events);
+							companionServer = await startCompanionServer({
+								configDir: CONFIG_DIR,
+								session: evidence.companion(),
+								recorderPid: process.ppid,
+								dispatch: (request) => {
+									const result = commands.then(() =>
+										evidence.companion().handle(request),
+									);
+									commands = result.catch(() => {});
+									return result;
+								},
+							});
+							break;
+						case "prepare-pause":
+							evidence.owned(message.file);
+							if (!external)
+								await prepareNativePause(browser, evidence, events);
+							break;
+						case "finishing":
+							if (
+								!external &&
+								!evidence.owned(message.file).metadata.anchors.at(-1).paused &&
+								evidence.active.metadata.noteSourceFencedEpoch !==
+									evidence.clockEpoch
+							)
+								throw new Error(
+									"Browser source must acknowledge preflight before Stop",
+								);
+							evidence.anchor(
+								message.file,
+								message.wallMs,
+								message.offsetMs,
+								true,
+							);
+							evidence.active.metadata.state = "finishing";
+							evidence.save();
+							queueNoteFlush(message.wallMs);
 							break;
 						case "clock": {
 							const wasPaused = evidence
 								.owned(message.file)
 								.metadata.anchors.at(-1).paused;
+							if (
+								!external &&
+								message.paused &&
+								!wasPaused &&
+								evidence.active.metadata.noteSourceFencedEpoch !==
+									evidence.clockEpoch
+							)
+								throw new Error(
+									"Browser source must acknowledge preflight before Pause",
+								);
+							if (!message.paused) await noteFlush;
 							evidence.anchor(
 								message.file,
 								message.wallMs,
 								message.offsetMs,
 								message.paused,
 							);
-							if (message.paused && !wasPaused) {
-								noteFlush = noteFlush
-									.then(() =>
-										flushNativeNotes(browser, evidence, events, message.wallMs),
-									)
-									.catch((error) => {
-										if (evidence.active) {
-											evidence.active.metadata.dropped++;
-											evidence.active.metadata.reason = `Open browser note could not be saved: ${redactBrowserText(error.message, 300)}`;
-											evidence.save();
-										}
-									});
+							if (
+								!external &&
+								!message.paused &&
+								(wasPaused ||
+									evidence.active.metadata.noteSourceFencedEpoch !== undefined)
+							) {
+								await resumeNativeNotes(browser, evidence, events);
 							}
+							if (message.paused && !wasPaused) queueNoteFlush(message.wallMs);
 							break;
 						}
 						case "stop":
 							evidence.owned(message.file);
 							await noteFlush;
-							await new Promise((resolve) => setTimeout(resolve, 3200));
+							if (!external)
+								await new Promise((resolve) => setTimeout(resolve, 3200));
 							await events.flush();
 							await browser.saveAuth();
+							if (companionServer) {
+								await companionServer.close();
+								companionServer = null;
+							}
 							evidence.finish(message.file);
 							break;
 						case "abort":
+							if (companionServer) {
+								await companionServer.close();
+								companionServer = null;
+							}
 							evidence.finish(
 								message.file,
 								"failed",
@@ -461,7 +958,7 @@ export async function runNativeBrowser(captureId, workDir) {
 	for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"])
 		process.once(signal, () => input.close());
 	await events.flush();
-	if (!events.initial) {
+	if (!events.initial && !external) {
 		await close();
 		throw new Error(
 			"The bundled browser engine cannot identify the recorded page",
@@ -482,7 +979,11 @@ function isMainModule() {
 }
 
 if (isMainModule()) {
-	runNativeBrowser(process.argv[2], process.argv[3]).catch((error) => {
+	runNativeBrowser(
+		process.argv[2],
+		process.argv[3],
+		process.argv[4] === "--external",
+	).catch((error) => {
 		process.stdout.write(
 			`${JSON.stringify({ ready: false, error: redactBrowserText(error.message, 500) })}\n`,
 		);

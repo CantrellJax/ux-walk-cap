@@ -41,6 +41,19 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  companion:
+    if: github.repository == 'CantrellJax/ux-walk-cap'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify pinned companion source
+        run: node --input-type=module -e 'import { verifyUxWalkSource } from "./scripts/sync-ux-walk.mjs"; await verifyUxWalkSource();'
+      - name: Exercise owner, native-host protocol, recovery and role guards
+        run: node --test --test-concurrency=1 apps/desktop-gpui/ux-walk/companion-*.test.mjs apps/desktop-gpui/ux-walk/browser-evidence.test.mjs vendor/ux-walk/test/unit/companion*.test.mjs vendor/ux-walk/test/unit/meet-attribution.test.mjs
   cloud:
     if: github.repository == 'CantrellJax/ux-walk-cap'
     runs-on: ubuntu-latest
@@ -61,6 +74,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.95.0
         with:
           components: rustfmt
+      - name: Exercise native source-fence ordering without desktop dependencies
+        run: |
+          rustc +1.95.0 --edition 2024 --test apps/desktop-gpui/src/ux_walk_note_control.rs -o "$RUNNER_TEMP/ux-walk-note-control"
+          "$RUNNER_TEMP/ux-walk-note-control"
       - name: Exercise existing journal and library contracts without desktop dependencies
         run: |
           python3 - <<'PY'
@@ -83,15 +100,28 @@ jobs:
           cargo test --manifest-path "$RUNNER_TEMP/ux-walk-library-contract/Cargo.toml" --test ux_walk_library_contract -- --test-threads=1
       - name: Format advisory ownership surfaces
         run: |
-          rustfmt +1.95.0 --edition 2024 --config skip_children=true apps/desktop-gpui/src/ux_walk_library.rs apps/desktop-gpui/src/ux_walk_window.rs apps/desktop-gpui/tests/ux_walk_library_contract.rs
+          rustfmt +1.95.0 --edition 2024 --config skip_children=true apps/desktop-gpui/src/ux_walk_library.rs apps/desktop-gpui/src/ux_walk_window.rs apps/desktop-gpui/tests/ux_walk_library_contract.rs apps/desktop-gpui/src/ux_walk_note_control.rs apps/desktop-gpui/src/ux_walk_browser.rs apps/desktop-gpui/src/session.rs
           git diff > "$RUNNER_TEMP/library-rustfmt.patch"
       - uses: actions/upload-artifact@v4
         with:
           name: library-rustfmt-corrections
           path: ${{ runner.temp }}/library-rustfmt.patch
       - run: git diff --exit-code
+  browser-smoke:
+    if: github.repository == 'CantrellJax/ux-walk-cap'
+    runs-on: macos-15
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --ignore-scripts --prefix vendor/ux-walk
+      - name: Exercise owned Chrome evidence and native handoff
+        timeout-minutes: 2
+        run: CAP_UX_BROWSER_SMOKE=1 node --test --test-force-exit apps/desktop-gpui/ux-walk/native-browser.test.mjs
   native:
-    needs: library-contract
+    needs: [library-contract, browser-smoke]
     if: github.repository == 'CantrellJax/ux-walk-cap'
     runs-on: macos-15
     timeout-minutes: 90
@@ -255,7 +285,6 @@ jobs:
         if: (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.preview))
         run: |
           npm ci --ignore-scripts --prefix vendor/ux-walk
-          CAP_UX_BROWSER_SMOKE=1 node --test apps/desktop-gpui/ux-walk/native-browser.test.mjs
           node --test vendor/ux-walk/test/unit/embedded-config.test.mjs vendor/ux-walk/test/unit/start-link.test.mjs vendor/ux-walk/test/unit/cap-editor-handoff.test.mjs
           node scripts/bundle-ux-walk.mjs 'apps/desktop-gpui/target/debug/bundle/macos/Cap UX Preview.app'
       - name: Verify and retain the preview

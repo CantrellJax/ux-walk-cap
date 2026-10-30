@@ -42,6 +42,7 @@ export async function bundleUxWalk(app) {
 		"prompts",
 		"assets",
 		"skills",
+		"extension",
 		"glossary.example.txt",
 		"package.json",
 		"package-lock.json",

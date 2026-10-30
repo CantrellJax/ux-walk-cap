@@ -32,6 +32,12 @@ Cap UX is currently a macOS 15+ developer preview. A signed public installer is 
 
 Fresh walk windows use Google Chrome. The walkthrough processor currently needs FFmpeg on your Mac. Optional chapter briefs need your configured Claude CLI; agent handoffs to cmux need cmux. Cloud transcription needs your own provider key. UX Walk does not automatically publish recordings.
 
+To record a walkthrough alongside Google Meet, keep the walkthrough in its own window, select that native window in Cap UX, and present the same window/tab in Meet. Enable microphone and computer audio in Cap UX and use headphones; computer audio includes other apps/tabs. Meeting video is optional and off in this workflow. Settings → UX Walk → **Set up browser companion** stages the existing extension and native host; load the opened folder in Chrome’s Extensions manager. Setup refuses an active recording and never reloads Chrome for you.
+
+The **Cap UX companion** has two independent selections: **Use this tab** for walkthrough text/clicks, and **Use this Meet tab** for captions, display-name evidence and caption health. It shows native recording/pause/disconnection, queued observations and acknowledged private-backup progress. The owned Cap UX browser already supplies clicks, errors and failed requests; external tabs supply bounded text/clicks, with no console/network/iframe coverage. Tab-to-native-video mapping remains unverified. Captions and names stay unconfirmed, source/chunk labels remain separate, and manual speaker corrections win. Delayed observations retain their original timestamps but uncertain timing is excluded from automatic name matching.
+
+Meet evidence enters the existing private checkpoint stream and can be restored with speech/notes/errors without a finalized video. Backup remains controlled by Settings → Sharing and is independent of publishing a video link. The extension preserves its existing ID and uses the plain transparent footprint artwork. Its first version uses the native audio tracks and adds no tabCapture/offscreen recording or Google Meet Media API dependency.
+
 For a source build, clone the repository:
 
 ```sh

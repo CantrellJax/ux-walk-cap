@@ -8,6 +8,56 @@ import { durableJson, sha256 } from "./checkpoint-store.mjs";
 import { CheckpointWorker } from "./checkpoint-worker.mjs";
 import { restoreRecovery } from "./restore-checkpoint.mjs";
 
+for (const renameBeforeStart of [false, true])
+	test(`journal and error backup continues after source loss (${renameBeforeStart ? "before" : "after"} worker start)`, async (t) => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "uxw-source-loss-"));
+		t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+		const sourceProject = path.join(root, "source.cap"),
+			file = path.join(root, "native-walk.json"),
+			raw = '{"ev":"pageerror","observedAt":2,"text":"keep me"}\n';
+		fs.mkdirSync(sourceProject);
+		durableJson(file, {
+			schemaVersion: 1,
+			state: "recording",
+			sourceProject,
+			request: { directory: root, topic: "Source loss", speakers: [] },
+			startedAtMs: 1,
+			events: [{ kind: "note", text: "keep note", offsetMs: 0 }],
+		});
+		durableJson(path.join(root, "checkpoint-heartbeat.json"), {
+			activeElapsedMs: 1000,
+			wallMs: 1001,
+			parentPid: process.pid,
+			generation: 1,
+			paused: false,
+		});
+		fs.writeFileSync(path.join(root, "browser-evidence.jsonl"), raw);
+		if (renameBeforeStart)
+			fs.renameSync(sourceProject, `${sourceProject}.moved`);
+		const worker = new CheckpointWorker(
+			file,
+			{ transcriber: "none" },
+			{ backupEnabled: false, server: "" },
+		);
+		if (!renameBeforeStart)
+			fs.renameSync(sourceProject, `${sourceProject}.moved`);
+		await worker.checkpoint({ force: true });
+		assert.equal(worker.store.state.sequence, 1);
+		assert.equal(
+			worker.fileCursors["browser-evidence.jsonl"],
+			Buffer.byteLength(raw),
+		);
+		const descriptor = worker.store.descriptors()[0];
+		assert.equal(
+			descriptor.objects.filter((object) => object.kind === "journal").length,
+			1,
+		);
+		assert.equal(
+			descriptor.objects.filter((object) => object.kind === "events").length,
+			1,
+		);
+	});
+
 test("local complete audio and log checkpoints advance while network is held; acknowledged sources restore and stop tail transcribes once", async (t) => {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "uxw-worker-"));
 	t.after(() => fs.rmSync(root, { recursive: true, force: true }));

@@ -17,6 +17,9 @@ use gpui::{App, AppContext as _, Context, Entity, Global, Task};
 use crate::app_sounds::AppSound;
 use crate::recording::{self, ActiveRecording, StartConfig};
 
+#[path = "ux_walk_note_control.rs"]
+mod note_control;
+
 /// `Idle -> Starting -> Recording -> Stopping -> Idle`; pause is a flag on
 /// `Recording`, matching the `recording`/`paused` variants of the Tauri bar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -450,6 +453,7 @@ pub struct RecordingSession {
     /// next start waits for it before locking the mic and camera again.
     discarding: Option<Task<Result<(), tokio::task::JoinError>>>,
     pause_control: PauseControlState,
+    walk_stop_fence: note_control::StopNoteFence,
     pause_control_error: Option<String>,
     #[cfg(target_os = "linux")]
     instant_attempt: Option<recording::InstantAttempt>,
@@ -511,6 +515,7 @@ impl RecordingSession {
             primed: None,
             discarding: None,
             pause_control: PauseControlState::default(),
+            walk_stop_fence: note_control::StopNoteFence::default(),
             pause_control_error: None,
             #[cfg(target_os = "linux")]
             instant_attempt: None,
@@ -578,7 +583,10 @@ impl RecordingSession {
     }
 
     pub fn pause_unavailable(&self) -> bool {
-        self.pause_pending() || self.pause_uncertain() || self.pipeline_failed
+        self.pause_pending()
+            || self.pause_uncertain()
+            || self.pipeline_failed
+            || self.walk_stop_fence.pending()
     }
 
     /// The live (or last) recording's mode -- the bar exposes mic mute for
@@ -986,6 +994,13 @@ impl RecordingSession {
                         _ => None,
                     });
                     if let Err(error) = crate::ux_walk_browser::begin(&journal, window_id) {
+                        if error.starts_with("Companion ownership conflict:") {
+                            self.error = Some(error);
+                            self.pipeline_failed = true;
+                            self.walk = Some(journal);
+                            self.stop(cx);
+                            return;
+                        }
                         self.walk_notice = format!(
                             "Recording and notes are saving. Browser evidence is unavailable: {error}"
                         );
@@ -1238,6 +1253,10 @@ impl RecordingSession {
     }
 
     pub fn stop(&mut self, cx: &mut Context<Self>) {
+        self.stop_after_source_fence(cx, false);
+    }
+
+    fn stop_after_source_fence(&mut self, cx: &mut Context<Self>, source_fenced: bool) {
         #[cfg(target_os = "linux")]
         if matches!(self.phase, Phase::Starting | Phase::Stopping)
             && let Some(attempt) = self.instant_attempt.clone()
@@ -1290,6 +1309,47 @@ impl RecordingSession {
         if !matches!(self.phase, Phase::Recording { .. }) {
             return;
         }
+        if !source_fenced
+            && !self.pipeline_failed
+            && !self.stopped_for_low_storage
+            && let Some(journal) = self.walk.clone()
+        {
+            let generation = self.recording_generation;
+            if !self.walk_stop_fence.begin(generation) {
+                return;
+            }
+            self.pause_control.cancel_for_stop();
+            let task =
+                gpui_tokio::Tokio::spawn(cx, crate::ux_walk_browser::prepare_note_pause(journal));
+            cx.notify();
+            cx.spawn(async move |this, cx| {
+                let result = task.await;
+                this.update(cx, |this, cx| {
+                    if this.recording_generation != generation
+                        || !this
+                            .walk_stop_fence
+                            .complete(generation, matches!(this.phase, Phase::Recording { .. }))
+                    {
+                        return;
+                    }
+                    let error = match result {
+                        Ok(Ok(())) => None,
+                        Ok(Err(error)) => Some(error),
+                        Err(error) => Some(format!("Browser note preflight task failed: {error}")),
+                    };
+                    if let Some(error) = error {
+                        this.walk_notice = format!(
+                            "Browser notes are incomplete: {error}. Recording is stopping."
+                        );
+                    }
+                    this.stop_after_source_fence(cx, true);
+                })
+                .ok();
+            })
+            .detach();
+            return;
+        }
+        self.walk_stop_fence.invalidate();
         self.storage_monitor = None;
         #[cfg(not(windows))]
         {
@@ -1394,9 +1454,10 @@ impl RecordingSession {
             self.stop_requested = false;
         }
         self.stopped_elapsed = Some(self.elapsed());
-        if let Some(walk) = self.walk.as_ref() {
-            crate::ux_walk_browser::clock(walk, self.elapsed().as_millis() as u64, true);
-        }
+        let browser_stop = self
+            .walk
+            .clone()
+            .map(|journal| (journal, self.elapsed().as_millis() as u64));
         self.pause_control.cancel_for_stop();
         self.phase = Phase::Stopping;
         self.preparing_studio_editor =
@@ -1410,7 +1471,15 @@ impl RecordingSession {
         cx.notify();
 
         let stop_sound = Arc::new(Once::new());
-        let task = gpui_tokio::Tokio::spawn(cx, stop_future);
+        let task = gpui_tokio::Tokio::spawn(cx, async move {
+            if let Some((journal, offset_ms)) = browser_stop {
+                let _ = tokio::task::spawn_blocking(move || {
+                    crate::ux_walk_browser::stopping(&journal, offset_ms)
+                })
+                .await;
+            }
+            stop_future.await
+        });
         if let Some(pending) = self.preparing_studio_editor.clone() {
             let stop_sound = stop_sound.clone();
             let finalization = pending.finalization.clone();
@@ -1555,7 +1624,7 @@ impl RecordingSession {
         let Some(active) = self.active.as_ref() else {
             return;
         };
-        if self.pipeline_failed {
+        if self.pipeline_failed || self.walk_stop_fence.pending() {
             return;
         }
         let Some((ticket, registration)) =
@@ -1568,6 +1637,18 @@ impl RecordingSession {
         } else {
             active.pause_handle()
         };
+        let fence_journal = if paused { None } else { self.walk.clone() };
+        let control = note_control::after_note_fence(
+            async move {
+                match fence_journal {
+                    Some(journal) => crate::ux_walk_browser::prepare_note_pause(journal)
+                        .await
+                        .map_err(anyhow::Error::msg),
+                    None => Ok(()),
+                }
+            },
+            control,
+        );
         let query_paused = active.is_paused_handle();
         cx.notify();
         let task = gpui_tokio::Tokio::spawn(
@@ -2257,6 +2338,7 @@ impl RecordingSession {
     }
 
     fn finish(&mut self, cx: &mut Context<Self>) {
+        self.walk_stop_fence.invalidate();
         if let Some(walk) = self.walk.as_mut()
             && walk.state == "recording"
         {

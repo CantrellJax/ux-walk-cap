@@ -1,6 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import {
+	browserEvidenceMatches,
+	projectMeetCaptions,
+} from "./browser-evidence.mjs";
+import {
 	CHECKPOINT_KINDS,
 	durableJson,
 	durableMkdir,
@@ -297,6 +301,30 @@ export async function restoreRecovery(transport, recordingId, destination) {
 			});
 		}
 	}
+	const sourceIdentity =
+		savedJournal.checkpointSourceIdentity?.schemaVersion === 1
+			? savedJournal.checkpointSourceIdentity
+			: {
+					journal: savedJournal.request?.directory
+						? path.join(savedJournal.request.directory, "native-walk.json")
+						: undefined,
+					sourceProject: savedJournal.sourceProject,
+				};
+	const browserOwner =
+		savedJournal.request?.directory &&
+		browserEvidenceMatches(
+			clockData.browser,
+			{ ...savedJournal, sourceProject: sourceIdentity.sourceProject },
+			sourceIdentity.journal,
+			(first, second) =>
+				typeof first === "string" &&
+				typeof second === "string" &&
+				path.isAbsolute(first) &&
+				path.isAbsolute(second) &&
+				path.resolve(first) === path.resolve(second),
+		)
+			? clockData.browser
+			: undefined;
 	const sourceProject = path.join(destination, "recovered.cap");
 	durableMkdir(sourceProject);
 	const journal = {
@@ -320,9 +348,10 @@ export async function restoreRecovery(transport, recordingId, destination) {
 			...clockData.browser,
 			journal: path.join(destination, "native-walk.json"),
 			sourceProject,
-			state: "aborted",
-			reason:
-				"Recovered critical evidence; video capture completeness is unverified",
+			state: browserOwner ? "aborted" : "unavailable",
+			reason: browserOwner
+				? "Recovered critical evidence; video capture completeness is unverified"
+				: "Recovered browser evidence recording identity mismatch; raw evidence is preserved",
 		});
 	durableJson(path.join(destination, "transcript-sources.json"), {
 		schemaVersion: 1,
@@ -346,9 +375,30 @@ export async function restoreRecovery(transport, recordingId, destination) {
 			),
 		)
 		.join("");
+	const meet = projectMeetCaptions(
+		fs
+			.readFileSync(eventFile, "utf8")
+			.split("\n")
+			.filter(Boolean)
+			.map((line) => JSON.parse(line)),
+		journal.startedAtMs,
+		active,
+		browserOwner,
+	);
+	durableWrite(
+		path.join(destination, "meet.jsonl"),
+		meet.map((event) => JSON.stringify(event)).join("\n") +
+			(meet.length ? "\n" : ""),
+	);
+	const meetHtml = meet
+		.map(
+			(event) =>
+				`<li>${escape(event.nativeOffsetMs)}ms · ${escape(event.name)} (unconfirmed): ${escape(event.text)}</li>`,
+		)
+		.join("");
 	durableWrite(
 		path.join(destination, "report.html"),
-		`<!doctype html><meta charset="utf-8"><title>Recovered walk evidence</title><h1>${escape(journal.request.topic)}</h1><p>Interrupted recording. Critical evidence was recovered without a finalized video. Audio and transcript timestamps are qualified by source; global alignment may be incomplete.</p><h2>Notes</h2><ul>${notes}</ul><h2>Audio</h2>${audio.map((item) => `<p>${escape(item.source)} · ${(item.sourceStartMs / 1000).toFixed(3)}s–${(item.sourceEndMs / 1000).toFixed(3)}s (source clock)</p><audio controls src="${item.relative}"></audio>`).join("")}<h2>Speech</h2><p>Speaker labels may change between chunks.</p><ul>${speech}</ul><p><a href="browser-evidence.jsonl">Click and error log</a> · <a href="transcript-sources.json">Transcript source data</a></p>`,
+		`<!doctype html><meta charset="utf-8"><title>Recovered walk evidence</title><h1>${escape(journal.request.topic)}</h1><p>Interrupted recording. Critical evidence was recovered without a finalized video. Audio and transcript timestamps are qualified by source; global alignment may be incomplete.</p><h2>Notes</h2><ul>${notes}</ul><h2>Audio</h2>${audio.map((item) => `<p>${escape(item.source)} · ${(item.sourceStartMs / 1000).toFixed(3)}s–${(item.sourceEndMs / 1000).toFixed(3)}s (source clock)</p><audio controls src="${item.relative}"></audio>`).join("")}<h2>Speech</h2><p>Speaker labels may change between chunks.</p><ul>${speech}</ul><h2>Meet caption evidence</h2><p>Names and caption timing are unconfirmed. Audio remains the speech source.</p><ul>${meetHtml}</ul><p><a href="browser-evidence.jsonl">Click, error and meeting evidence</a> · <a href="meet.jsonl">Projected Meet captions</a> · <a href="transcript-sources.json">Transcript source data</a></p>`,
 	);
 	durableJson(path.join(destination, "recovery-ready.json"), {
 		recordingId,

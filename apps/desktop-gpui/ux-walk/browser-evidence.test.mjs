@@ -3,11 +3,16 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import vm from "node:vm";
 import {
 	projectBrowserEvidence,
 	sanitizeBrowserEvent,
 } from "./browser-evidence.mjs";
-import { NativeBrowserEvidence } from "./native-browser.mjs";
+import {
+	flushNativeNotes,
+	NativeBrowserEvidence,
+	OwnedWindowEvents,
+} from "./native-browser.mjs";
 
 function fixture(t) {
 	const directory = fs.mkdtempSync(path.join(os.tmpdir(), "cap-ux-browser-"));
@@ -246,4 +251,502 @@ test("collector binds one journal/window, stops raw logging while paused, and fl
 		),
 		/Delayed first-load failure/,
 	);
+});
+
+test("Stop drains an owned pre-boundary draft into raw evidence and its original active timeline", async (t) => {
+	const f = fixture(t);
+	Object.assign(f.journal, {
+		schemaVersion: 1,
+		state: "recording",
+		durationMs: 1000,
+	});
+	fs.writeFileSync(f.file, JSON.stringify(f.journal));
+	let now = 100000;
+	const evidence = new NativeBrowserEvidence(
+		"owned-browser",
+		path.join(path.dirname(f.file), "prepared"),
+		() => now,
+	);
+	t.after(() => clearInterval(evidence.flushTimer));
+	evidence.windowId = "17";
+	evidence.start(f.file, "17");
+	const context = {
+		pages: () => [page],
+		newCDPSession: async () => ({ send: async () => ({ windowId: 17 }) }),
+	};
+	const page = { context: () => context };
+	const events = new OwnedWindowEvents(evidence);
+	now = 101000;
+	evidence.anchor(f.file, now, 1000, true);
+	evidence.active.metadata.state = "finishing";
+	now = 101010;
+	await flushNativeNotes(
+		{
+			async flushPendingNotes({ fromMs, throughMs, allowPage, writeNote }) {
+				assert.equal(fromMs, 100000);
+				assert.equal(throughMs, 101000);
+				assert.equal(await allowPage(page), true);
+				await writeNote(
+					{
+						ev: "note",
+						id: 7,
+						t: 100500,
+						text: "Unsaved note before Stop",
+						shot: "notes/07.png",
+					},
+					page,
+				);
+			},
+		},
+		evidence,
+		events,
+		101000,
+	);
+	evidence.finish(f.file);
+	const raw = fs
+		.readFileSync(
+			path.join(path.dirname(f.file), "browser-evidence.jsonl"),
+			"utf8",
+		)
+		.trim()
+		.split("\n")
+		.filter(Boolean)
+		.map(JSON.parse);
+	assert.equal(
+		raw.length,
+		1,
+		"the Stop draft must reach the durable source log",
+	);
+	assert.equal(raw[0].text, "Unsaved note before Stop");
+	assert.equal(raw[0].observedAt, 100500);
+	assert.equal(
+		raw[0].nativeOffsetMs,
+		500,
+		"use note creation time, excluding later pause/flush delay",
+	);
+	Object.assign(f.journal, { state: "complete" });
+	const projected = projectBrowserEvidence(f.file, f.journal);
+	assert.equal(projected.events.length, 1);
+	assert.equal(projected.events[0].t, 100500);
+	assert.equal(projected.events[0].text, "Unsaved note before Stop");
+});
+
+test("boundary note drains retain ownership and pause fences across asynchronous window checks", async (t) => {
+	for (const scenario of [
+		"ordinary",
+		"full-queue",
+		"foreign",
+		"after-boundary",
+		"previous-epoch",
+		"resume",
+		"new-owner",
+		"generation",
+		"abort",
+		"duplicate-pause",
+	]) {
+		const f = fixture(t);
+		Object.assign(f.journal, { schemaVersion: 1, state: "recording" });
+		fs.writeFileSync(f.file, JSON.stringify(f.journal));
+		let now = 100000;
+		const evidence = new NativeBrowserEvidence(
+			"owned-browser",
+			path.join(path.dirname(f.file), "prepared"),
+			() => now,
+		);
+		t.after(() => clearInterval(evidence.flushTimer));
+		evidence.windowId = "17";
+		evidence.start(f.file, "17");
+		const context = {
+			pages: () => [page],
+			newCDPSession: async (candidate) => ({
+				send: async () => ({ windowId: candidate.windowId }),
+			}),
+		};
+		const page = { windowId: 17, context: () => context };
+		const foreign = { windowId: 88, context: () => context };
+		const events = new OwnedWindowEvents(evidence);
+		if (scenario === "previous-epoch") {
+			evidence.anchor(f.file, 101000, 1000, true);
+			evidence.anchor(f.file, 103000, 1000, false);
+		}
+		const throughMs = scenario === "previous-epoch" ? 104000 : 101000;
+		now = throughMs;
+		evidence.anchor(f.file, throughMs, 2000, true);
+		now += 10;
+		await flushNativeNotes(
+			{
+				async flushPendingNotes({ allowPage, writeNote }) {
+					assert.equal(await allowPage(page), true, scenario);
+					const raw = {
+						ev: "note",
+						id: 1,
+						t: scenario === "after-boundary" ? throughMs + 1 : 100500,
+						text: "Retain accepted draft",
+					};
+					if (scenario === "full-queue") {
+						const previous = events.pending;
+						events.pending = new Set(
+							Array.from({ length: 512 }, () => Promise.resolve()),
+						);
+						try {
+							assert.equal(
+								await writeNote(raw, page),
+								false,
+								"a saturated writer must explicitly refuse the pending draft",
+							);
+						} finally {
+							events.pending = previous;
+						}
+						return;
+					}
+					if (scenario === "ordinary") {
+						assert.equal(
+							evidence.write(raw),
+							false,
+							"unscoped paused note remains refused",
+						);
+						await events.write(raw, page);
+						return;
+					}
+					const pending = writeNote(
+						raw,
+						scenario === "foreign" ? foreign : page,
+					);
+					if (scenario === "resume")
+						evidence.anchor(f.file, throughMs + 20, 2000, false);
+					if (scenario === "new-owner") {
+						evidence.finish(f.file);
+						const directory = path.join(path.dirname(f.file), "new-owner");
+						fs.mkdirSync(directory);
+						const file = path.join(directory, "native-walk.json");
+						fs.writeFileSync(
+							file,
+							JSON.stringify({
+								...f.journal,
+								startedAtMs: throughMs + 20,
+								request: { directory },
+							}),
+						);
+						evidence.start(file, "17");
+					}
+					if (scenario === "generation")
+						evidence.active.metadata.generation = "another-generation";
+					if (scenario === "abort") evidence.finish(f.file, "failed");
+					if (scenario === "duplicate-pause")
+						evidence.anchor(f.file, throughMs + 20, 2000, true);
+					const saved = await pending;
+					assert.equal(
+						saved,
+						scenario === "duplicate-pause",
+						`scoped writer outcome: ${scenario}`,
+					);
+					if (!["resume", "new-owner"].includes(scenario))
+						await events.write(
+							{ ev: "click", t: 100500, el: { text: "PAUSED_CLICK" } },
+							page,
+						);
+				},
+			},
+			evidence,
+			events,
+			throughMs,
+		);
+		const raw = fs
+			.readFileSync(
+				path.join(path.dirname(f.file), "browser-evidence.jsonl"),
+				"utf8",
+			)
+			.trim()
+			.split("\n")
+			.filter(Boolean)
+			.map(JSON.parse);
+		assert.equal(raw.length, scenario === "duplicate-pause" ? 1 : 0, scenario);
+		if (scenario === "new-owner") {
+			for (const name of ["browser-evidence.jsonl", "browser-preroll.jsonl"])
+				assert.equal(
+					fs.readFileSync(
+						path.join(path.dirname(f.file), "new-owner", name),
+						"utf8",
+					),
+					"",
+					`stale drain must not touch new owner ${name}`,
+				);
+		}
+		assert.equal(JSON.stringify(raw).includes("PAUSED_CLICK"), false, scenario);
+	}
+});
+
+test("trusted draft ingress survives only its immediate pause while asynchronous window ownership settles", async (t) => {
+	for (const scenario of [
+		"pause",
+		"same-ms",
+		"paused-entry",
+		"resume",
+		"generation",
+		"abort",
+	]) {
+		const f = fixture(t);
+		Object.assign(f.journal, { schemaVersion: 1, state: "recording" });
+		fs.writeFileSync(f.file, JSON.stringify(f.journal));
+		let now = 100000,
+			hold = false,
+			enteredResolve,
+			release;
+		const entered = new Promise((resolve) => {
+				enteredResolve = resolve;
+			}),
+			barrier = new Promise((resolve) => {
+				release = resolve;
+			});
+		const evidence = new NativeBrowserEvidence(
+			"owned-browser",
+			path.join(path.dirname(f.file), "prepared"),
+			() => now,
+		);
+		t.after(() => {
+			release();
+			clearInterval(evidence.flushTimer);
+		});
+		evidence.windowId = "17";
+		evidence.start(f.file, "17");
+		const events = new OwnedWindowEvents(evidence),
+			bindings = new Map();
+		const page = {
+			isClosed: () => false,
+			context: () => context,
+			on() {},
+			goto: async () => {},
+			screenshot: async ({ path: file }) =>
+				fs.writeFileSync(file, "synthetic screenshot"),
+			evaluate: async () => null,
+		};
+		const context = {
+			pages: () => [page],
+			newCDPSession: async () => ({
+				send: async () => {
+					if (hold) {
+						enteredResolve();
+						await barrier;
+					}
+					return { windowId: 17 };
+				},
+			}),
+			exposeBinding: async (name, fn) => bindings.set(name, fn),
+			addInitScript: async () => {},
+			on() {},
+			newPage: async () => page,
+		};
+		const source = fs.readFileSync(
+			process.env.CAP_UX_TEST_ENGINE_DIR
+				? path.join(process.env.CAP_UX_TEST_ENGINE_DIR, "src/browser.mjs")
+				: new URL("../../../vendor/ux-walk/src/browser.mjs", import.meta.url),
+			"utf8",
+		);
+		const open = vm.runInNewContext(
+			`(${source.slice(source.indexOf("export async function openBrowser")).replace(/^export /, "")})`,
+			{
+				chromium: { launch: async () => ({ newContext: async () => context }) },
+				fs,
+				path,
+				Date: { now: () => now },
+				pageHooks() {},
+				genericList: () => [],
+				watchNetwork() {},
+			},
+		);
+		const browser = await open({
+			url: "https://example.com",
+			authFile: path.join(path.dirname(f.file), "auth"),
+			windowSize: "800,600",
+			ignoreWrites: "$^",
+			write: (event, origin) => events.write(event, origin),
+			notesDir: () => evidence.notesDir(),
+			canCapturePage: (origin, operation) =>
+				events.canCapturePage(origin, operation),
+		});
+		const op = (data) => bindings.get("__uxwNote")({ page }, data);
+		const id = await op({ op: "new", box: { x: 0, y: 0, w: 10, h: 10 } });
+		now = 100010;
+		const text = `DRAFT_${scenario}`;
+		if (scenario === "paused-entry") {
+			evidence.anchor(f.file, now, 10, true);
+			await assert.rejects(
+				op({ op: "draft", id, text, t: 100000, receivedAt: 1, grant: true }),
+				/outside the recorded browser window/,
+			);
+		} else {
+			hold = true;
+			const draft = op({
+				op: "draft",
+				id,
+				text,
+				t: now,
+				receivedAt: 1,
+				grant: true,
+			});
+			draft.catch(() => {});
+			await entered;
+			now = scenario === "same-ms" ? 100010 : 100020;
+			evidence.anchor(f.file, now, 20, true);
+			if (scenario === "resume") evidence.anchor(f.file, 100030, 20, false);
+			if (scenario === "generation")
+				evidence.active.metadata.generation = "later-generation";
+			if (scenario === "abort") evidence.finish(f.file, "failed");
+			hold = false;
+			release();
+			if (["pause", "same-ms"].includes(scenario)) await draft;
+			else await assert.rejects(draft, /outside the recorded browser window/);
+		}
+		if (["pause", "same-ms", "paused-entry"].includes(scenario)) {
+			evidence.active.metadata.state = "finishing";
+			await flushNativeNotes(browser, evidence, events, now);
+		}
+		const raw = fs.readFileSync(
+			path.join(path.dirname(f.file), "browser-evidence.jsonl"),
+			"utf8",
+		);
+		if (["pause", "same-ms"].includes(scenario)) {
+			const rows = raw.trim().split("\n").map(JSON.parse);
+			assert.equal(rows.length, 1, scenario);
+			assert.equal(rows[0].text, text, scenario);
+			assert.equal(rows[0].observedAt, 100000, scenario);
+			assert.equal(rows[0].nativeOffsetMs, 0, scenario);
+		} else assert.equal(raw.includes(text), false, scenario);
+	}
+});
+
+test("native note preflight keeps the active boundary open until ACK and revokes failed or stale control", async (t) => {
+	const { prepareNativePause } = await import("./native-browser.mjs");
+	assert.equal(
+		typeof prepareNativePause,
+		"function",
+		"native Pause/Stop needs the real producer preflight",
+	);
+	for (const outcome of ["ack", "failure", "stale"]) {
+		const f = fixture(t);
+		Object.assign(f.journal, { schemaVersion: 1, state: "recording" });
+		fs.writeFileSync(f.file, JSON.stringify(f.journal));
+		let now = 100000,
+			release,
+			reject,
+			checkedResolve;
+		const checked = new Promise((resolve) => {
+			checkedResolve = resolve;
+		});
+		const gate = new Promise((resolve, fail) => {
+			release = resolve;
+			reject = fail;
+		});
+		const evidence = new NativeBrowserEvidence(
+			"owned-browser",
+			path.join(path.dirname(f.file), "prepared"),
+			() => now,
+		);
+		t.after(() => clearInterval(evidence.flushTimer));
+		evidence.windowId = "17";
+		evidence.start(f.file, "17");
+		const context = {
+			pages: () => [page],
+			newCDPSession: async () => ({ send: async () => ({ windowId: 17 }) }),
+		};
+		const page = { context: () => context };
+		const events = new OwnedWindowEvents(evidence);
+		const pending = prepareNativePause(
+			{
+				prepareNotePause: async ({ allowPage }) => {
+					assert.equal(await allowPage(page), true);
+					checkedResolve();
+					await gate;
+				},
+			},
+			evidence,
+			events,
+		);
+		pending.catch(() => {});
+		await checked;
+		assert.equal(evidence.active.metadata.state, "recording");
+		assert.equal(
+			evidence.active.metadata.anchors.at(-1).paused,
+			false,
+			"media/UI still Recording while prefix ACK is pending",
+		);
+		now = 100020;
+		if (outcome === "failure") reject(new Error("source ACK timed out"));
+		else {
+			if (outcome === "stale")
+				evidence.active.metadata.generation = "new-owner-generation";
+			release();
+		}
+		if (outcome === "ack") {
+			await pending;
+			assert.equal(
+				evidence.active.metadata.noteSourceFencedEpoch,
+				evidence.clockEpoch,
+			);
+			assert.equal(evidence.active.metadata.anchors.at(-1).paused, false);
+			evidence.anchor(f.file, now, 20, true);
+			evidence.active.metadata.state = "finishing";
+			assert.equal(
+				evidence.write({ ev: "note", id: 9, t: now, text: "PAUSED_UNSCOPED" }),
+				false,
+			);
+			await flushNativeNotes(
+				{
+					flushPendingNotes: async ({ writeNote }) => {
+						assert.equal(
+							await writeNote(
+								{ ev: "note", id: 1, t: now, text: "ACK_ORDERED_SAME_MS" },
+								page,
+							),
+							true,
+						);
+					},
+				},
+				evidence,
+				events,
+				now,
+			);
+			const rows = fs
+				.readFileSync(
+					path.join(path.dirname(f.file), "browser-evidence.jsonl"),
+					"utf8",
+				)
+				.trim()
+				.split("\n")
+				.map(JSON.parse);
+			assert.equal(rows.length, 1);
+			assert.equal(rows[0].nativeOffsetMs, 20);
+			assert.equal(rows[0].text, "ACK_ORDERED_SAME_MS");
+		} else {
+			await assert.rejects(pending, /ACK timed out|another recording|changed/);
+			if (outcome === "failure") {
+				assert.equal(evidence.active, null);
+				assert.equal(
+					JSON.parse(
+						fs.readFileSync(
+							path.join(path.dirname(f.file), "browser-evidence.json"),
+							"utf8",
+						),
+					).state,
+					"failed",
+				);
+			} else
+				assert.equal(
+					evidence.active.metadata.generation,
+					"new-owner-generation",
+				);
+		}
+		if (outcome !== "ack") {
+			await events.write(
+				{ ev: "note", id: 1, t: 100010, text: "LATE_OLD_PREFIX" },
+				page,
+			);
+			const raw = fs.readFileSync(
+				path.join(path.dirname(f.file), "browser-evidence.jsonl"),
+				"utf8",
+			);
+			if (outcome === "failure")
+				assert.equal(raw.includes("LATE_OLD_PREFIX"), false);
+		}
+	}
 });
