@@ -7,7 +7,11 @@ import {
 	projectBrowserEvidence,
 	sanitizeBrowserEvent,
 } from "./browser-evidence.mjs";
-import { NativeBrowserEvidence } from "./native-browser.mjs";
+import {
+	flushNativeNotes,
+	NativeBrowserEvidence,
+	OwnedWindowEvents,
+} from "./native-browser.mjs";
 
 function fixture(t) {
 	const directory = fs.mkdtempSync(path.join(os.tmpdir(), "cap-ux-browser-"));
@@ -246,4 +250,82 @@ test("collector binds one journal/window, stops raw logging while paused, and fl
 		),
 		/Delayed first-load failure/,
 	);
+});
+
+test("Stop drains an owned pre-boundary draft into raw evidence and its original active timeline", async (t) => {
+	const f = fixture(t);
+	Object.assign(f.journal, {
+		schemaVersion: 1,
+		state: "recording",
+		durationMs: 1000,
+	});
+	fs.writeFileSync(f.file, JSON.stringify(f.journal));
+	let now = 100000;
+	const evidence = new NativeBrowserEvidence(
+		"owned-browser",
+		path.join(path.dirname(f.file), "prepared"),
+		() => now,
+	);
+	t.after(() => clearInterval(evidence.flushTimer));
+	evidence.windowId = "17";
+	evidence.start(f.file, "17");
+	const context = {
+		pages: () => [page],
+		newCDPSession: async () => ({ send: async () => ({ windowId: 17 }) }),
+	};
+	const page = { context: () => context };
+	const events = new OwnedWindowEvents(evidence);
+	now = 101000;
+	evidence.anchor(f.file, now, 1000, true);
+	evidence.active.metadata.state = "finishing";
+	now = 101010;
+	await flushNativeNotes(
+		{
+			async flushPendingNotes({ fromMs, throughMs, allowPage }) {
+				assert.equal(fromMs, 100000);
+				assert.equal(throughMs, 101000);
+				assert.equal(await allowPage(page), true);
+				await events.write(
+					{
+						ev: "note",
+						id: 7,
+						t: 100500,
+						text: "Unsaved note before Stop",
+						shot: "notes/07.png",
+					},
+					page,
+				);
+			},
+		},
+		evidence,
+		events,
+		101000,
+	);
+	evidence.finish(f.file);
+	const raw = fs
+		.readFileSync(
+			path.join(path.dirname(f.file), "browser-evidence.jsonl"),
+			"utf8",
+		)
+		.trim()
+		.split("\n")
+		.filter(Boolean)
+		.map(JSON.parse);
+	assert.equal(
+		raw.length,
+		1,
+		"the Stop draft must reach the durable source log",
+	);
+	assert.equal(raw[0].text, "Unsaved note before Stop");
+	assert.equal(raw[0].observedAt, 100500);
+	assert.equal(
+		raw[0].nativeOffsetMs,
+		500,
+		"use note creation time, excluding later pause/flush delay",
+	);
+	Object.assign(f.journal, { state: "complete" });
+	const projected = projectBrowserEvidence(f.file, f.journal);
+	assert.equal(projected.events.length, 1);
+	assert.equal(projected.events[0].t, 100500);
+	assert.equal(projected.events[0].text, "Unsaved note before Stop");
 });
