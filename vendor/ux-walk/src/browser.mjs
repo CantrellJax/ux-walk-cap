@@ -828,8 +828,13 @@ export async function openBrowser({ url, metadataOnly = false, networkContext, a
   };
   let noteChain = Promise.resolve();
   await context.exposeBinding('__uxwNote', ({ page: p }, o) => {
+    const draftGrant = o?.op === 'draft' && canCapturePage
+      ? Promise.resolve(canCapturePage(p, { op: 'draft', receivedAt: Date.now() })).catch(() => false) : null;
     const run = noteChain.then(async () => {
-      if (canCapturePage && !(await canCapturePage(p))) throw new Error('This page is outside the recorded browser window');
+      if (canCapturePage) {
+        const permission = await (draftGrant ?? canCapturePage(p));
+        if (!(typeof permission === 'function' ? permission() === true : permission)) throw new Error('This page is outside the recorded browser window');
+      }
       return noteOp(p, o);
     });
     noteChain = run.catch(() => {});
