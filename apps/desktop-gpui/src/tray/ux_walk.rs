@@ -50,6 +50,9 @@ pub(super) enum Pill {
 }
 
 #[cfg(target_os = "macos")]
+pub(super) type Pills = std::sync::LazyLock<Vec<(Pill, TrayItem)>>;
+
+#[cfg(target_os = "macos")]
 impl PartialEq<Mode> for Pill {
     fn eq(&self, mode: &Mode) -> bool {
         *self == Pill::Mode(*mode)

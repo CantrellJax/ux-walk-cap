@@ -26,11 +26,8 @@ use objc2_foundation::{
 };
 use objc2_quartz_core::{CALayer, CATransaction, kCACornerCurveContinuous};
 
-use super::TrayItem;
 use super::mac::post;
-use super::ux_walk::{
-    Pill, mode_heading, mode_name, mode_picker_icon, picker_pills, set_status_mode, shown_pill,
-};
+use super::{TrayItem, ux_walk::*};
 use crate::i18n::tr;
 use crate::main_window::Mode;
 
@@ -39,8 +36,7 @@ const MODE_PILLS: [(Mode, TrayItem); 3] = [
     (Mode::Studio, TrayItem::ModeStudio),
     (Mode::Screenshot, TrayItem::ModeScreenshot),
 ];
-static PICKER_MODES: std::sync::LazyLock<Vec<(Pill, TrayItem)>> =
-    std::sync::LazyLock::new(|| picker_pills(&MODE_PILLS));
+static PICKER_MODES: Pills = Pills::new(|| picker_pills(&MODE_PILLS));
 
 const FLASH_INTERVAL: f64 = 0.08;
 const FLASH_ON_PICK: bool = true;
