@@ -4311,7 +4311,7 @@ impl MainWindow {
                         })
                         .when(
                             self.mode_choice(cx) == ModeChoice::UxWalk
-                                && self.session.read(cx).walk.is_some(),
+                                && self.session.read(cx).walk.journal.is_some(),
                             |this| {
                                 this.child(
                                     ui::Button::body(

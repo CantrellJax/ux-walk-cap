@@ -406,7 +406,7 @@ impl ControlsWindow {
         let paused = session.is_paused();
         let busy = !matches!(session.phase, Phase::Recording { .. }) || session.pause_unavailable();
         let pause_pending = session.pause_pending();
-        let has_walk = session.walk.is_some();
+        let has_walk = session.walk.journal.is_some();
         let pause_tooltip = if session.pause_uncertain() {
             tr::controls::pause::unconfirmed()
         } else if pause_pending {

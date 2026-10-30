@@ -19,7 +19,7 @@ pub fn prepare(cx: &mut App) -> Result<isize, String> {
     Ok(number)
 }
 pub fn open(cx: &mut App) {
-    let current_walk_present = RecordingSession::global(cx).read(cx).walk.is_some();
+    let current_walk_present = RecordingSession::global(cx).read(cx).walk.journal.is_some();
     let settings = crate::store::store_section(crate::store::RECORDING_SETTINGS);
     if let crate::ux_walk_library::NotesSource::Saved(file) = crate::ux_walk_library::notes_source(
         current_walk_present,
@@ -223,7 +223,7 @@ impl WalkWindow {
             if matches!(event, ui::TextInputEvent::Changed) {
                 let text = this.input.read(cx).text().to_string();
                 this.session
-                    .update(cx, |session, _| session.walk_note_draft = text);
+                    .update(cx, |session, _| session.walk.note_draft = text);
             }
             if matches!(event, ui::TextInputEvent::Confirmed) {
                 this.add("note", cx);
@@ -256,10 +256,11 @@ impl WalkWindow {
         let session = self.session.read(cx);
         let file = session
             .walk
+            .journal
             .as_ref()
             .filter(|walk| walk.state == "complete")
             .map(|walk| walk.file());
-        if session.walk_processing || file.is_none() {
+        if session.walk.processing || file.is_none() {
             self.current_notes_revision = self.current_notes_revision.wrapping_add(1);
             self.current_notes = None;
             self.current_notes_loading = None;
@@ -290,11 +291,12 @@ impl WalkWindow {
                 .await;
             this.update_in(cx, |this, window, cx| {
                 if this.current_notes_revision != revision
-                    || this.session.read(cx).walk_processing
+                    || this.session.read(cx).walk.processing
                     || this
                         .session
                         .read(cx)
                         .walk
+                        .journal
                         .as_ref()
                         .is_none_or(|walk| walk.file() != requested)
                 {
@@ -503,6 +505,7 @@ impl WalkWindow {
                     .session
                     .read(cx)
                     .walk
+                    .journal
                     .as_ref()
                     .is_some_and(|walk| walk.file() == selected)
                 {
@@ -559,6 +562,7 @@ impl WalkWindow {
                         .session
                         .read(cx)
                         .walk
+                        .journal
                         .as_ref()
                         .is_none_or(|walk| walk.file() != selected)
                 {
@@ -590,7 +594,7 @@ impl Render for WalkWindow {
         let walk = if saved_view {
             self.saved.clone()
         } else {
-            session.walk.clone()
+            session.walk.journal.clone()
         };
         let notes = if saved_view {
             self.saved_notes.as_ref()
@@ -619,7 +623,7 @@ impl Render for WalkWindow {
                 .as_ref()
                 .is_some_and(|walk| walk.status == crate::ux_walk_library::WalkStatus::Processing)
         } else {
-            session.walk_processing || session.phase == Phase::Stopping
+            session.walk.processing || session.phase == Phase::Stopping
         };
         let notice = self.notice.clone().unwrap_or_else(|| {
             if saved_view {
@@ -627,11 +631,11 @@ impl Render for WalkWindow {
                     .as_ref()
                     .map(|summary| summary.status.notice())
                     .unwrap_or_else(|| "Loading saved notes…".into())
-            } else if session.walk_notice.is_empty() {
+            } else if session.walk.notice.is_empty() {
                 "Start a UX Walk from the recorder. Use its existing capture and audio controls."
                     .into()
             } else {
-                session.walk_notice.clone()
+                session.walk.notice.clone()
             }
         });
         div()
@@ -666,7 +670,7 @@ impl Render for WalkWindow {
                         .text_size(px(12.))
                         .line_height(px(18.))
                         .text_color(theme.gray_10)
-                        .child(session.walk_checkpoint_notice.clone()),
+                        .child(session.walk.checkpoint_notice.clone()),
                 )
             })
             .when(!capture_active, |this| {
