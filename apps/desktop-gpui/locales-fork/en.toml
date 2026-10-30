@@ -1,0 +1,71 @@
+[onboarding.modes.instant]
+description = "Record a ready-to-play video locally. Share it through your chosen server when you are ready."
+feature_1 = "Ready-to-play local video"
+feature_2 = "Choose when to share"
+feature_3 = "Your own sharing server"
+
+[onboarding.faq.free]
+question = "Is Cap free to use?"
+answer = "Cap is open source under AGPLv3, including for personal and commercial work. Connected cloud services have their own terms and costs."
+
+[onboarding.faq.instant_vs_studio]
+question = "How do the recording modes differ?"
+answer = "Instant records a ready-to-play local video. Studio records locally for editing. Screenshot captures a still image. UX Walk opens a fresh browser window and keeps its recording, notes, chapters and transcripts together."
+
+[onboarding.faq.storage]
+answer = "All recordings stay on your computer. Nothing uploads automatically. Choose a server in Settings → Sharing, then share individual videos or screenshots."
+
+[onboarding.faq.sharing]
+answer = "Choose your server and link expiry in Settings → Sharing. Use Share on a recording or screenshot to create an expiring link. You can also export files and use any sharing service you prefer."
+
+[onboarding.overview]
+subtitle = "Share a quick capture, edit a polished recording, or walk through your product with notes and chapters."
+
+[onboarding.customize.s3]
+description = "Host your own sharing server with private storage, including Cloudflare R2"
+
+[onboarding.customize.domain]
+description = "Use your own server and domain for shareable links"
+
+[settings.general.self_host]
+description = "Only change this if you are running your own instance of the upstream web service."
+
+[settings.shortcuts.effect]
+cycle_mode = "switch between Studio, Instant, Screenshot and UX Walk mode"
+
+[settings.shortcuts.sentence]
+cycle_mode = "Switch between Studio, Instant, Screenshot and UX Walk mode."
+
+[settings.feedback.diagnostic]
+send = "Send to upstream"
+
+[settings.integrations]
+google_drive_description = "Connect Google Drive for new shareable link uploads. Cap stores new videos in a private cloud folder in your Drive and continues serving them through Cap after normal access checks."
+
+[settings.integrations.gdrive]
+connection_description = "Google Drive stores new uploads in a private cloud folder in your Drive. Existing upstream-hosted and S3 videos keep using their current storage."
+
+[permission.onboarding.hint]
+drag_into_list = "Drag this Cap app into the list. If an older preview entry is already enabled, remove it and add this app again."
+
+[permission.onboarding.relaunch]
+hint = "Already enabled but still denied? Remove the old Cap entry, add this app again, then relaunch."
+
+[main.sign_in]
+pending_message = "Finish signing in to %upstream% in your browser. Cap returns to the recorder when you're done."
+
+[settings.quality.instant]
+free_plan = "Instant recordings can use any resolution up to 4K."
+
+[settings.license]
+desktop_description = "Cap is open source under AGPLv3 for personal and commercial recording and editing."
+explore_pro = "Sharing · Share recordings through the server you choose in Settings → Sharing."
+sign_in_hint = "Sharing uses the server you choose in Settings → Sharing."
+opens_pricing = "Opens the project page in your browser."
+
+[settings.sign_in_required]
+body = "Please sign in to continue. Alternatively, report the problem on the project's GitHub issues page."
+
+[dialog.update]
+failed = "{message}\n\nYou can always download the latest version from %releases%."
+package_not_installed = "The package wasn't installed. Approve the system prompt, or install it from %releases%."

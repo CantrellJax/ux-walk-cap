@@ -30,7 +30,7 @@ fn capture_filter(
     content: arc::R<sc::ShareableContent>,
     excluded: &[WindowId],
     phase: &'static str,
-) -> anyhow::Result<arc::R<sc::ContentFilter>> {
+) -> anyhow::Result<(arc::R<sc::ContentFilter>, bool)> {
     let windows = content.windows();
     let available: Vec<_> = windows.iter().map(|window| window.id()).collect();
     let excluded_ids: Vec<_> = excluded
@@ -47,8 +47,9 @@ fn capture_filter(
             .map(|window| window.retained())
             .ok_or_else(|| anyhow!("Selected capture window is unavailable"))?;
         info!(window_id = id, phase, "Using isolated window capture");
-        return Ok(sc::ContentFilter::with_desktop_independent_window(
-            window.as_ref(),
+        return Ok((
+            sc::ContentFilter::with_desktop_independent_window(window.as_ref()),
+            true,
         ));
     }
     let display = Display::from_id(&config.display)
@@ -57,7 +58,40 @@ fn capture_filter(
     display
         .raw_handle()
         .as_content_filter_excluding_windows(content, excluded_windows)
+        .map(|filter| (filter, false))
         .ok_or_else(|| SourceError::AsContentFilter.into())
+}
+
+/// A single window at the display's full pixel density, filling the frame.
+/// Left to themselves, window captures pick their resolution automatically,
+/// which can read a Retina window at 1x and upscale it, and do not scale the
+/// window to the output, leaving it in a corner of a larger frame.
+fn configure_window_capture(settings: &mut sc::StreamCfg) {
+    settings.set_scales_to_fit(true);
+    // Both arrived in macOS 14; Cap runs from 12.3.
+    if cidre::api::macos_available("14.0") {
+        unsafe {
+            settings.set_capture_resolution(sc::CaptureResolution::Best);
+            settings.set_preserves_aspect_ratio(true);
+        }
+    }
+}
+
+/// What the stream reads. A display capture crops to `crop_bounds`; a window
+/// capture reads the window itself, inside its rounded corners, where
+/// `crop_bounds` is the window already trimmed by `WINDOW_CORNER_TRIM`.
+fn source_rect(captures_window: bool, crop_bounds: super::CropBounds) -> cg::Rect {
+    let (x, y) = if captures_window {
+        (super::WINDOW_CORNER_TRIM, super::WINDOW_CORNER_TRIM)
+    } else {
+        (crop_bounds.position().x(), crop_bounds.position().y())
+    };
+    cg::Rect::new(
+        x,
+        y,
+        crop_bounds.size().width(),
+        crop_bounds.size().height(),
+    )
 }
 
 fn excluded_shareable_windows(
@@ -240,7 +274,7 @@ impl ScreenCaptureConfig<CMSampleBufferCapture> {
         let (video_tx, video_rx) = flume::bounded(buffer_size);
         let drop_counter: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
 
-        let content_filter = capture_filter(
+        let (content_filter, captures_window) = capture_filter(
             &self.config,
             self.shareable_content.clone(),
             &self.excluded_windows,
@@ -273,15 +307,13 @@ impl ScreenCaptureConfig<CMSampleBufferCapture> {
 
         settings.set_pixel_format(cv::PixelFormat::_420V);
         settings.set_color_space_name(cg::color_space::names::srgb());
+        if captures_window {
+            configure_window_capture(&mut settings);
+        }
 
         if let Some(crop_bounds) = self.config.crop_bounds {
             debug!("crop bounds: {:?}", crop_bounds);
-            settings.set_src_rect(cg::Rect::new(
-                crop_bounds.position().x(),
-                crop_bounds.position().y(),
-                crop_bounds.size().width(),
-                crop_bounds.size().height(),
-            ));
+            settings.set_src_rect(source_rect(captures_window, crop_bounds));
         }
         cap_fail::fail_err!(
             "macos::ScreenCaptureActor::new",
@@ -894,7 +926,7 @@ async fn rebuild_capturer(params: &CapturerRebuildParams) -> anyhow::Result<Capt
         .await
         .map_err(|e| anyhow!("Failed to get shareable content during restart: {e}"))?;
 
-    let content_filter = capture_filter(
+    let (content_filter, captures_window) = capture_filter(
         &params.config,
         shareable_content,
         &params.excluded_windows,
@@ -921,14 +953,12 @@ async fn rebuild_capturer(params: &CapturerRebuildParams) -> anyhow::Result<Capt
 
     settings.set_pixel_format(cv::PixelFormat::_420V);
     settings.set_color_space_name(cg::color_space::names::srgb());
+    if captures_window {
+        configure_window_capture(&mut settings);
+    }
 
     if let Some(crop_bounds) = params.config.crop_bounds {
-        settings.set_src_rect(cg::Rect::new(
-            crop_bounds.position().x(),
-            crop_bounds.position().y(),
-            crop_bounds.size().width(),
-            crop_bounds.size().height(),
-        ));
+        settings.set_src_rect(source_rect(captures_window, crop_bounds));
     }
 
     let expected_width = params.video_info.width as usize;

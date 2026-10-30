@@ -68,13 +68,7 @@ export async function buildDesktopBinaries(
 	}
 	const profile = options.debug ? "debug" : "release";
 	const ext = target.includes("windows") ? ".exe" : "";
-	const destination = path.join(
-		root,
-		"apps",
-		"desktop",
-		"src-tauri",
-		"binaries",
-	);
+	const destination = path.join(root, "apps", "desktop-gpui", "binaries");
 	await fs.mkdir(destination, { recursive: true });
 
 	for (const sidecar of [

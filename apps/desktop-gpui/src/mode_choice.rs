@@ -1,4 +1,4 @@
-use crate::{app_windows, main_window::Mode, settings_window::Page};
+use crate::{app_windows, i18n::tr, main_window::Mode, settings_window::Page};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModeChoice {
@@ -52,7 +52,17 @@ impl ModeChoice {
 
     pub fn panel_description(self) -> &'static str {
         match self {
-            Self::Capture(mode) => mode.panel_description(),
+            Self::Capture(Mode::Instant) => {
+                "Record a ready-to-play video locally. Share it through your chosen server when you are ready."
+            }
+            Self::Capture(Mode::Studio) => {
+                "Record locally in the highest quality for editing later. Perfect for \
+                 creating polished content with effects and transitions."
+            }
+            Self::Capture(Mode::Screenshot) => {
+                "Capture and annotate screenshots instantly. Great for quick captures, bug \
+                 reports, and visual communication."
+            }
             Self::UxWalk => {
                 "Open a new browser window, record a product walkthrough, and keep notes, chapters and transcripts ready for your agent."
             }
@@ -88,6 +98,31 @@ impl ModeChoice {
             Self::UxWalk => {
                 "Opens a new browser window and selects it for recording. Keep Cap UX’s camera, microphone and capture options, then review notes, chapters and transcripts."
             }
+        }
+    }
+
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Self::Capture(mode) => mode.display_name(),
+            Self::UxWalk => "UX Walk",
+        }
+    }
+
+    pub fn settings_label(self) -> &'static str {
+        match self {
+            Self::Capture(_) => tr::main::mode::hover::quality_settings(),
+            Self::UxWalk => "UX Walk settings",
+        }
+    }
+
+    pub fn localized_hover_description(self) -> &'static str {
+        match self {
+            Self::Capture(Mode::Studio) => tr::main::mode::hover::studio_description(),
+            Self::Capture(Mode::Screenshot) => tr::main::mode::hover::screenshot_description(),
+            Self::Capture(Mode::Instant) if !cfg!(feature = "ux-walk") => {
+                tr::main::mode::hover::instant_description()
+            }
+            _ => self.hover_description(),
         }
     }
 

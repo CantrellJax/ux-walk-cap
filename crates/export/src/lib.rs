@@ -168,6 +168,12 @@ impl ExporterBuilder {
         let output_path = self
             .output_path
             .unwrap_or_else(|| recording_meta.output_path());
+
+        if let Some(parent) = output_path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| ExporterBuildError::IO(parent.to_path_buf(), e))?;
+        }
+
         let streaming_output = prepare_streaming_output(
             &output_path,
             cancellation.is_some() && ExportAudioRenderer::eligible(&project_config, studio_meta),
@@ -184,6 +190,7 @@ impl ExporterBuilder {
             .map_err(Error::RendererSetup)?,
         );
 
+        let user_cancellation = cancellation.clone();
         let audio_cancellation = if stream_audio {
             cancellation.map(ExportAudioCancellation::new)
         } else {
@@ -236,11 +243,6 @@ impl ExporterBuilder {
             }
         }
 
-        if let Some(parent) = output_path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| ExporterBuildError::IO(parent.to_path_buf(), e))?;
-        }
-
         Ok(ExporterBase {
             output_path,
             studio_meta: studio_meta.clone(),
@@ -253,10 +255,13 @@ impl ExporterBuilder {
             streaming_audio,
             streaming_output,
             audio_cancellation,
+            user_cancellation,
             sample_windows: None,
             sample_timing: None,
             #[cfg(feature = "test-hooks")]
             video_encoder_failure_at: None,
+            #[cfg(feature = "test-hooks")]
+            turbo_chunk_failure: None,
         })
     }
 }
@@ -448,6 +453,12 @@ impl Mp4ExporterBase {
     pub fn fail_video_encoder_at(&mut self, frames: u32) {
         self.0.fail_video_encoder_at(frames);
     }
+
+    /// Makes this turbo chunk's encoder fail after a few frames.
+    #[cfg(feature = "test-hooks")]
+    pub fn fail_turbo_chunk(&mut self, chunk: usize) {
+        self.0.turbo_chunk_failure = Some(chunk);
+    }
 }
 
 pub struct ExporterBase {
@@ -462,10 +473,13 @@ pub struct ExporterBase {
     streaming_audio: Option<ExportAudioRenderer>,
     streaming_output: Option<mp4::TemporaryExportOutput>,
     audio_cancellation: Option<ExportAudioCancellation>,
+    user_cancellation: Option<Arc<AtomicBool>>,
     sample_windows: Option<cap_rendering::FrameWindows>,
     sample_timing: Option<Arc<estimates::SampleTiming>>,
     #[cfg(feature = "test-hooks")]
     video_encoder_failure_at: Option<u32>,
+    #[cfg(feature = "test-hooks")]
+    turbo_chunk_failure: Option<usize>,
 }
 
 impl ExporterBase {
@@ -853,6 +867,7 @@ mod clip_offset_tests {
             start_time: Some(start),
             device_id: None,
             gap_summary: None,
+            digital_silence_ms: None,
         };
         StudioRecordingMeta::MultipleSegments {
             inner: MultipleSegments {

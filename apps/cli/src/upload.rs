@@ -116,7 +116,9 @@ impl UploadArgs {
     async fn run_inner(self, format: OutputFormat) -> Result<(), String> {
         if cfg!(feature = "ux-walk") {
             if self.video_id.is_some() {
-                return Err("Cap UX creates a new expiring link for each share. Use cap sharing revoke to revoke a previous link.".into());
+                return Err(fork_brand::text(
+                    "Cap creates a new expiring link for each share. Use cap sharing revoke to revoke a previous link.",
+                ));
             }
             let client = cap_cloud_sharing::SharingClient::configured()?;
             let file_path = self.resolve_upload_file().await?;
@@ -124,7 +126,7 @@ impl UploadArgs {
                 .name
                 .as_deref()
                 .or_else(|| file_path.file_stem()?.to_str())
-                .unwrap_or("Cap UX recording");
+                .unwrap_or(fork_brand::text_static("Cap recording"));
             let item = client
                 .upload_file(
                     &file_path,
