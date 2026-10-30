@@ -3,6 +3,9 @@
 
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+mod fork;
+use fork::*;
+
 mod app_sounds;
 mod app_windows;
 mod assets;
@@ -41,14 +44,8 @@ mod editor_sidebar;
 mod editor_tabs;
 mod editor_timeline;
 mod editor_window;
-mod entitlement;
 mod feeds;
 mod focus_border;
-mod foreign_window;
-#[cfg(all(test, feature = "ux-walk"))]
-mod fork_identity_tests;
-#[cfg(debug_assertions)]
-mod glass_probe;
 mod hotkeys;
 mod i18n;
 mod import;
@@ -66,7 +63,6 @@ mod linux_wallpaper;
 mod main_window;
 mod media_access;
 mod menus;
-mod mode_choice;
 mod mode_select_window;
 mod onboarding_audio;
 mod onboarding_doodles;
@@ -77,6 +73,8 @@ mod permissions;
 mod permissions_ui;
 #[cfg(test)]
 mod picker_benchmark;
+#[cfg(debug_assertions)]
+mod glass_probe;
 #[cfg(debug_assertions)]
 mod picker_probe;
 #[cfg(debug_assertions)]
@@ -93,8 +91,6 @@ mod screenshot_export;
 mod script_text;
 mod session;
 mod settings_pages;
-mod settings_sharing;
-mod settings_ux_walk;
 mod settings_window;
 mod sign_in;
 mod single_instance;
@@ -110,14 +106,7 @@ mod tray;
 mod ui;
 mod updates;
 mod upload;
-mod ux_walk;
-mod ux_walk_browser;
-mod ux_walk_browser_target;
-mod ux_walk_checkpoints;
-mod ux_walk_journal;
-mod ux_walk_library;
-mod ux_walk_preferences;
-mod ux_walk_window;
+mod foreign_window;
 mod window_arrange;
 
 use gpui::{App, AppContext as _, Bounds, WindowBounds, WindowOptions, px, size};
@@ -955,9 +944,7 @@ mod logging_tests {
             tracing_subscriber::fmt::layer()
                 .with_ansi(false)
                 .with_writer(move || writer.clone())
-                .with_filter(tracing_subscriber::EnvFilter::new(
-                    super::DEFAULT_LOG_FILTER,
-                )),
+                .with_filter(tracing_subscriber::EnvFilter::new(super::DEFAULT_LOG_FILTER)),
         );
         tracing::subscriber::with_default(subscriber, || {
             tracing::warn!(target: "zbus::proxy", "Failed to populate properties cache");
@@ -966,15 +953,9 @@ mod logging_tests {
             tracing::info!(target: "cap_gpui::session", "recording started");
         });
         let logged = String::from_utf8(lines.0.lock().unwrap().clone()).unwrap();
-        assert!(
-            !logged.contains("Failed to populate properties cache"),
-            "{logged}"
-        );
+        assert!(!logged.contains("Failed to populate properties cache"), "{logged}");
         assert!(logged.contains("a zbus error still shows"), "{logged}");
-        assert!(
-            logged.contains("other zbus warnings still show"),
-            "{logged}"
-        );
+        assert!(logged.contains("other zbus warnings still show"), "{logged}");
         assert!(logged.contains("recording started"), "{logged}");
     }
 

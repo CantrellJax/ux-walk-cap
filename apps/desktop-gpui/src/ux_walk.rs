@@ -2,6 +2,7 @@ use std::process::{Command, Stdio};
 
 pub use crate::ux_walk_preferences::*;
 
+#[path = "ux_walk/assets.rs"]
 pub(crate) mod assets;
 
 pub fn start(cx: &mut gpui::App) {
