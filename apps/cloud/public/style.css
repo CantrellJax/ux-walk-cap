@@ -114,3 +114,42 @@ a:focus-visible {
 	background: transparent;
 	border-radius: 10px;
 }
+
+.account h1 {
+	font-size: 36px;
+	margin-top: 40px;
+}
+.account button.button {
+	border: 0;
+	cursor: pointer;
+	font: inherit;
+	font-weight: 650;
+}
+.account .secondary {
+	background: #526078;
+}
+.account .danger {
+	background: #b42318;
+}
+.account form {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 12px;
+	margin-top: 16px;
+}
+.account label {
+	font-weight: 650;
+}
+.account input {
+	font: inherit;
+	padding: 10px 12px;
+	border-radius: 10px;
+	border: 1px solid #b8c2d6;
+	min-width: 0;
+}
+button:focus-visible,
+input:focus-visible {
+	outline: 3px solid #245de8;
+	outline-offset: 3px;
+}

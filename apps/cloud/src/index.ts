@@ -1,6 +1,20 @@
+import {
+	markReady,
+	markRevoked,
+	OWNER_KEY,
+	type Principal,
+	purge,
+	quotaFor,
+	reserve,
+	shareOwner,
+	sharesOf,
+	storedBytesExcept,
+	usage,
+	userKey,
+} from "./accounts";
+import { type Auth, createAuth } from "./auth";
+import type { RuntimeEnv } from "./env";
 import { recovery } from "./recovery";
-
-type RuntimeEnv = Env & { UPLOAD_TOKEN?: string };
 
 interface Share {
 	id: string;
@@ -22,6 +36,7 @@ class HttpError extends Error {
 	constructor(
 		public status: number,
 		message: string,
+		public code?: string,
 	) {
 		super(message);
 	}
@@ -59,7 +74,59 @@ async function owner(request: Request, env: RuntimeEnv): Promise<string> {
 	const token = bearer(request);
 	if (!(await equal(token, env.UPLOAD_TOKEN)))
 		throw new HttpError(401, "Invalid upload credential.");
-	return "self-hosted-owner";
+	return OWNER_KEY;
+}
+
+function accounts(env: RuntimeEnv): Auth | undefined {
+	return createAuth(env, {
+		beforeDeleteUser: (id) => purge(env, userKey(id)),
+	});
+}
+
+async function principal(
+	request: Request,
+	env: RuntimeEnv,
+): Promise<Principal> {
+	const token = bearer(request);
+	const ownerConfigured = !!env.UPLOAD_TOKEN && env.UPLOAD_TOKEN.length >= 32;
+	if (
+		ownerConfigured &&
+		token &&
+		(await equal(token, env.UPLOAD_TOKEN as string))
+	)
+		return { kind: "owner", key: OWNER_KEY };
+	const auth = accounts(env);
+	if (!auth) {
+		await owner(request, env);
+		return { kind: "owner", key: OWNER_KEY };
+	}
+	const session = await auth.api.getSession({ headers: request.headers });
+	if (!session) {
+		if (!ownerConfigured && !token)
+			throw new HttpError(401, "Sign in to share recordings.");
+		throw new HttpError(401, "Invalid upload credential.");
+	}
+	if (
+		!token &&
+		!["GET", "HEAD"].includes(request.method) &&
+		request.headers.get("Origin") !==
+			new URL(env.BETTER_AUTH_URL as string).origin
+	)
+		throw new HttpError(403, "Cross-origin request refused.");
+	const { id, email, name } = session.user;
+	const plan = (session.user as { plan?: string | null }).plan ?? "free";
+	return { kind: "user", key: userKey(id), user: { id, email, name, plan } };
+}
+
+async function limited(limiter: RateLimit, actor: Principal): Promise<void> {
+	if (actor.kind !== "user") return;
+	const { success } = await limiter.limit({ key: actor.key });
+	if (!success)
+		throw new HttpError(
+			429,
+			"Too many requests. Try again in a minute.",
+			"rate_limited",
+		);
 }
 
 async function boundedBody(
@@ -130,7 +197,9 @@ async function readable(request: Request, share: Share): Promise<string> {
 }
 
 async function create(request: Request, env: RuntimeEnv): Promise<Response> {
-	const ownerId = await owner(request, env);
+	const actor = await principal(request, env);
+	await limited(env.SHARE_CREATE_LIMITER, actor);
+	const ownerId = actor.key;
 	const body = await json(request);
 	const { title, size, contentType } = body;
 	const days = body.expiresInDays ?? 7;
@@ -157,21 +226,45 @@ async function create(request: Request, env: RuntimeEnv): Promise<Response> {
 	const token = Array.from(crypto.getRandomValues(new Uint8Array(32)), (byte) =>
 		byte.toString(16).padStart(2, "0"),
 	).join("");
-	const upload = await env.MEDIA.createMultipartUpload(`media/${id}`, {
-		httpMetadata: { contentType },
-	});
-	const share: Share = {
+	const createdAt = Date.now();
+	const record = {
 		id,
 		owner: ownerId,
-		readHash: await hash(token),
 		title: title.trim() || "Cap UX recording",
 		contentType,
 		size,
-		uploadId: upload.uploadId,
-		expiresAt: Date.now() + days * 86400000,
-		ready: false,
+		createdAt,
+		expiresAt: createdAt + days * 86400000,
 	};
-	await env.MEDIA.put(`shares/${id}.json`, JSON.stringify(share));
+	const quota =
+		actor.kind === "user" ? quotaFor(env, actor.user.plan) : undefined;
+	if (!(await reserve(env, record, quota)))
+		throw new HttpError(
+			403,
+			"This share would exceed your account's storage or active share limit.",
+			"quota_exceeded",
+		);
+	let share: Share;
+	try {
+		const upload = await env.MEDIA.createMultipartUpload(`media/${id}`, {
+			httpMetadata: { contentType },
+		});
+		share = {
+			id,
+			owner: ownerId,
+			readHash: await hash(token),
+			title: record.title,
+			contentType,
+			size,
+			uploadId: upload.uploadId,
+			expiresAt: record.expiresAt,
+			ready: false,
+		};
+		await env.MEDIA.put(`shares/${id}.json`, JSON.stringify(share));
+	} catch (error) {
+		await markRevoked(env, id);
+		throw error;
+	}
 	return response(
 		{
 			id,
@@ -248,15 +341,122 @@ async function media(
 	);
 }
 
+async function me(request: Request, env: RuntimeEnv): Promise<Response> {
+	const actor = await principal(request, env);
+	const current = await usage(env, actor.key);
+	if (actor.kind === "owner")
+		return response({
+			principal: "owner",
+			user: null,
+			plan: null,
+			usage: current,
+			quota: null,
+		});
+	const { plan, ...user } = actor.user;
+	return response({
+		principal: "user",
+		user,
+		plan,
+		usage: current,
+		quota: quotaFor(env, plan),
+	});
+}
+
+async function exportAccount(
+	request: Request,
+	env: RuntimeEnv,
+): Promise<Response> {
+	const actor = await principal(request, env);
+	const origin = new URL(request.url).origin;
+	const shares = (await sharesOf(env, actor.key)).map((share) => ({
+		id: share.id,
+		title: share.title,
+		contentType: share.contentType,
+		size: share.size,
+		status:
+			share.status !== "revoked" && share.expiresAt <= Date.now()
+				? "expired"
+				: share.status,
+		createdAt: share.createdAt,
+		expiresAt: share.expiresAt,
+		completedAt: share.completedAt,
+		revokedAt: share.revokedAt,
+		viewerUrl: `${origin}/s/${share.id}`,
+	}));
+	return new Response(
+		JSON.stringify({
+			exportedAt: Date.now(),
+			principal: actor.kind,
+			user: actor.kind === "user" ? actor.user : null,
+			shares,
+		}),
+		{
+			headers: {
+				"Content-Type": "application/json",
+				"Content-Disposition": 'attachment; filename="cap-ux-account.json"',
+			},
+		},
+	);
+}
+
+async function deleteAccount(
+	request: Request,
+	env: RuntimeEnv,
+): Promise<Response> {
+	const actor = await principal(request, env);
+	const auth = accounts(env);
+	if (actor.kind !== "user" || !auth)
+		throw new HttpError(
+			403,
+			"Only a signed-in account can be deleted.",
+			"not_an_account",
+		);
+	const result = await auth.api.deleteUser({
+		headers: request.headers,
+		body: {},
+		asResponse: true,
+	});
+	if (!result.ok) return result;
+	return new Response(null, { status: 204 });
+}
+
+const PAGES: Record<string, string> = {
+	"/": "/index.html",
+	"/signin": "/signin.html",
+	"/device": "/device.html",
+	"/account": "/account.html",
+};
+
 async function route(request: Request, env: RuntimeEnv): Promise<Response> {
 	const url = new URL(request.url);
+	if (url.pathname.startsWith("/api/auth/")) {
+		const auth = accounts(env);
+		if (!auth) throw new HttpError(404, "Accounts are not enabled.");
+		return auth.handler(request);
+	}
+	if (url.pathname === "/api/v1/me") {
+		if (request.method === "GET") return me(request, env);
+		if (request.method === "DELETE") return deleteAccount(request, env);
+		throw new HttpError(405, "Method not allowed.");
+	}
+	if (url.pathname === "/api/v1/me/export" && request.method === "GET")
+		return exportAccount(request, env);
 	if (
 		url.pathname === "/api/v1/recovery" ||
 		url.pathname.startsWith("/api/v1/recovery/")
 	)
 		return recovery(request, env.MEDIA, await owner(request, env));
 	if (url.pathname === "/healthz")
-		return response({ product: "capux", protocol: 1 });
+		return response({
+			product: "capux",
+			protocol: 2,
+			accounts: !!accounts(env),
+			signup: env.SIGNUP_ENABLED === "true",
+			providers: [
+				...(env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET ? ["github"] : []),
+				...(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET ? ["google"] : []),
+			],
+		});
 	if (url.pathname === "/api/v1/shares" && request.method === "POST")
 		return create(request, env);
 	const match =
@@ -269,12 +469,22 @@ async function route(request: Request, env: RuntimeEnv): Promise<Response> {
 			request.method === "DELETE" ||
 			action === "complete" ||
 			part !== undefined;
-		const ownerId = writing ? await owner(request, env) : undefined;
+		const actor = writing ? await principal(request, env) : undefined;
+		if (actor && (part !== undefined || action === "complete"))
+			await limited(env.UPLOAD_LIMITER, actor);
+		const recordedOwner = actor ? await shareOwner(env, id) : undefined;
 		const share = await load(env, id);
-		if (ownerId && !(await equal(ownerId, share.owner)))
+		if (
+			actor &&
+			(!(await equal(actor.key, share.owner)) ||
+				(recordedOwner === undefined
+					? actor.kind !== "owner"
+					: !(await equal(actor.key, recordedOwner))))
+		)
 			throw new HttpError(404, "Share unavailable.");
 		if (request.method === "DELETE" && !action) {
 			await env.MEDIA.put(`revoked/${id}`, "revoked");
+			await markRevoked(env, id);
 			if (!share.ready)
 				await env.MEDIA.resumeMultipartUpload(
 					`media/${id}`,
@@ -325,9 +535,26 @@ async function route(request: Request, env: RuntimeEnv): Promise<Response> {
 			).complete(parts);
 			if (object.size !== share.size)
 				throw new HttpError(409, "Uploaded size does not match.");
+			if (actor?.kind === "user") {
+				const quota = quotaFor(env, actor.user.plan);
+				if (
+					(await storedBytesExcept(env, actor.key, id)) + object.size >
+					quota.maxStoredBytes
+				) {
+					await env.MEDIA.put(`revoked/${id}`, "revoked");
+					await markRevoked(env, id);
+					await env.MEDIA.delete(`media/${id}`);
+					throw new HttpError(
+						403,
+						"This upload would exceed your account's storage limit.",
+						"quota_exceeded",
+					);
+				}
+			}
 			await load(env, id);
 			share.ready = true;
 			await env.MEDIA.put(`shares/${id}.json`, JSON.stringify(share));
+			await markReady(env, id, object.size);
 			return response({ id, ready: true });
 		}
 		if (request.method === "POST" && action === "access") {
@@ -356,7 +583,7 @@ async function route(request: Request, env: RuntimeEnv): Promise<Response> {
 	}
 	if (url.pathname.startsWith("/api/")) throw new HttpError(404, "Not found.");
 	if (/^\/s\/[a-f0-9-]{36}$/.test(url.pathname)) url.pathname = "/viewer.html";
-	if (url.pathname === "/") url.pathname = "/index.html";
+	if (PAGES[url.pathname]) url.pathname = PAGES[url.pathname];
 	return env.ASSETS.fetch(new Request(url, request));
 }
 
@@ -366,9 +593,13 @@ export default {
 		try {
 			result = await route(request, env);
 		} catch (error) {
-			if (error instanceof HttpError)
-				result = response({ error: error.message }, error.status);
-			else {
+			if (error instanceof HttpError) {
+				result = response(
+					{ error: error.message, ...(error.code ? { code: error.code } : {}) },
+					error.status,
+				);
+				if (error.status === 429) result.headers.set("Retry-After", "60");
+			} else {
 				console.error(
 					JSON.stringify({
 						event: "sharing_failed",

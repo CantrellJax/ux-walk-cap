@@ -1,34 +1,20 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import { after, before, test } from "node:test";
-import { fileURLToPath } from "node:url";
-import { convertV4MiniflareOptions, Miniflare } from "miniflare";
+import { Miniflare } from "miniflare";
+import { migrate, workerOptions } from "./support.mjs";
 
 let runtime;
 const owner = "synthetic-owner-token-with-at-least-32-bytes";
 const headers = { Authorization: `Bearer ${owner}` };
-const deployment = JSON.parse(
-	readFileSync(new URL("../wrangler.jsonc", import.meta.url), "utf8"),
-);
 function runtimeOptions(uploadToken = owner) {
-	return convertV4MiniflareOptions({
+	return workerOptions({
 		name: "capux-test",
-		modules: true,
-		scriptPath: fileURLToPath(new URL("../dist/index.js", import.meta.url)),
-		compatibilityDate: "2026-10-25",
-		r2Buckets: ["MEDIA"],
-		assets: {
-			routerConfig: { has_user_worker: true },
-			assetConfig: { html_handling: deployment.assets.html_handling },
-			directory: fileURLToPath(new URL("../public", import.meta.url)),
-			binding: "ASSETS",
-			run_worker_first: true,
-		},
 		bindings: { UPLOAD_TOKEN: uploadToken },
 	});
 }
 before(async () => {
 	runtime = new Miniflare(runtimeOptions());
+	await migrate(runtime);
 });
 after(async () => runtime?.dispose());
 
