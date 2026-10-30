@@ -24,6 +24,8 @@ use std::{
 use tokio::sync::Notify;
 use tracing::{info, trace, warn};
 
+pub mod turbo;
+
 enum Mp4PipelineError {
     Interrupted,
     Failure(String),
@@ -207,6 +209,64 @@ impl Mp4ExportSettings {
         on_progress: impl FnMut(u32) -> bool + Send + 'static,
     ) -> impl std::future::Future<Output = Result<PathBuf, String>> {
         self.export(base.0, on_progress)
+    }
+
+    /// Exports with every core: see [`turbo`]. Falls back to the standard
+    /// export when the turbo pipeline fails, unless it was cancelled or its
+    /// destination appeared while it ran.
+    pub async fn export_prepared_turbo(
+        self,
+        base: Mp4ExporterBase,
+        options: turbo::TurboOptions,
+        on_progress: impl FnMut(u32) -> bool + Send + 'static,
+    ) -> Result<PathBuf, String> {
+        let mut base = base.0;
+        let on_progress = Arc::new(Mutex::new(on_progress));
+        let user_cancellation = base
+            .audio_cancellation
+            .as_ref()
+            .map(|control| control.user.clone());
+        let destination_exists = |path: &std::path::Path| {
+            std::fs::symlink_metadata(path).map_or_else(
+                |error| error.kind() != std::io::ErrorKind::NotFound,
+                |_| true,
+            )
+        };
+        let destination_was_free = !destination_exists(&base.output_path);
+        match turbo::export(self, &mut base, options, on_progress.clone()).await {
+            Ok(path) => Ok(path),
+            Err(turbo::TurboError::Cancelled) => Err("Export cancelled".to_string()),
+            Err(turbo::TurboError::Publish(error)) => Err(error),
+            Err(turbo::TurboError::Failed(error)) if options.strict => Err(error),
+            Err(turbo::TurboError::Failed(error)) => {
+                warn!(%error, "Turbo export failed, exporting with the standard pipeline");
+                base.reopen_streaming(user_cancellation).await?;
+                // Turbo staged its output, but a standard export that is not
+                // staged writes in place and would truncate a file created
+                // at the destination meanwhile.
+                if destination_was_free
+                    && base.streaming_output.is_none()
+                    && destination_exists(&base.output_path)
+                {
+                    return Err(error);
+                }
+                let output_size = ProjectUniforms::get_output_size(
+                    &base.render_constants.options,
+                    &base.project_config,
+                    self.resolution_base,
+                );
+                self.export_nv12(
+                    base,
+                    output_size,
+                    self.fps,
+                    move |frame| {
+                        (on_progress.lock().unwrap_or_else(PoisonError::into_inner))(frame)
+                    },
+                    ExportNv12Mode::default(),
+                )
+                .await
+            }
+        }
     }
 
     pub async fn export(
@@ -755,7 +815,9 @@ impl Mp4ExportSettings {
             nv12_render_startup_breakdown_ms,
             audio_cancellation.is_some(),
             on_progress,
-            base.project_path.clone(),
+            base.sample_windows
+                .is_none()
+                .then(|| base.project_path.clone()),
         )
         .then(move |v| async move {
             let result = v.map_err(|error| match &error {
@@ -1260,31 +1322,55 @@ impl TemporaryExportOutput {
         self.path.to_path_buf()
     }
 
+    #[cfg(unix)]
+    fn restore_permissions(&self, output: Option<&std::path::Path>) -> std::io::Result<()> {
+        use std::os::unix::fs::MetadataExt;
+        let path_metadata = std::fs::symlink_metadata(&self.path)?;
+        let file_metadata = self.file.metadata()?;
+        if !path_metadata.is_file()
+            || path_metadata.dev() != file_metadata.dev()
+            || path_metadata.ino() != file_metadata.ino()
+        {
+            return Err(std::io::Error::other("Export temporary file was replaced"));
+        }
+        let existing_permissions = match output {
+            Some(path) => match std::fs::symlink_metadata(path) {
+                Ok(metadata) if metadata.is_file() => Some(metadata.permissions()),
+                Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
+                _ => None,
+            },
+            None => None,
+        };
+        self.file
+            .set_permissions(existing_permissions.unwrap_or_else(|| self.final_permissions.clone()))
+    }
+
     pub(crate) fn persist_noclobber(
         self,
         output: &std::path::Path,
     ) -> Result<(), tempfile::PathPersistError> {
         #[cfg(unix)]
-        let prepare_permissions = || {
-            use std::os::unix::fs::MetadataExt;
-            let path_metadata = std::fs::symlink_metadata(&self.path)?;
-            let file_metadata = self.file.metadata()?;
-            if !path_metadata.is_file()
-                || path_metadata.dev() != file_metadata.dev()
-                || path_metadata.ino() != file_metadata.ino()
-            {
-                return Err(std::io::Error::other("Export temporary file was replaced"));
-            }
-            self.file.set_permissions(self.final_permissions.clone())
-        };
-        #[cfg(unix)]
-        if let Err(error) = prepare_permissions() {
+        if let Err(error) = self.restore_permissions(None) {
             return Err(tempfile::PathPersistError {
                 error,
                 path: self.path,
             });
         }
         self.path.persist_noclobber(output)
+    }
+
+    pub(crate) fn persist_replace(
+        self,
+        output: &std::path::Path,
+    ) -> Result<(), tempfile::PathPersistError> {
+        #[cfg(unix)]
+        if let Err(error) = self.restore_permissions(Some(output)) {
+            return Err(tempfile::PathPersistError {
+                error,
+                path: self.path,
+            });
+        }
+        self.path.persist(output)
     }
 }
 
@@ -1552,11 +1638,10 @@ async fn export_render_to_channel(
     startup_breakdown_ms: Option<Arc<Mutex<Option<cap_rendering::Nv12RenderStartupBreakdownMs>>>>,
     stop_on_encoder_drop: bool,
     mut on_progress: impl FnMut(u32) -> bool + Send + 'static,
-    project_path: PathBuf,
+    screenshot_project_path: Option<PathBuf>,
 ) -> Result<(), cap_rendering::RenderingError> {
     let (tx_image_data, mut video_rx) = tokio::sync::mpsc::channel::<(Nv12RenderedFrame, u32)>(8);
 
-    let screenshot_project_path = frame_windows.is_none().then_some(project_path);
     let sampling = frame_windows.is_some();
 
     let render_result = {

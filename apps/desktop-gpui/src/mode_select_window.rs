@@ -13,6 +13,8 @@ use gpui::{
     div, prelude::FluentBuilder, px, svg,
 };
 
+use crate::i18n::tr;
+use crate::theme::LocaleFont as _;
 use crate::{main_window::Mode, mode_choice::ModeChoice, theme::Theme, ui::keyboard_nav};
 
 /// `.inner_size(580.0, 340.0)` / `.min_inner_size(580.0, 340.0)` /
@@ -27,6 +29,17 @@ pub const MODE_SELECT_HEIGHT: f32 = 340.;
 
 /// `max-w-lg` on the wrapper around `<ModeSelect />`: 32rem.
 const CONTENT_MAX_WIDTH: f32 = MODE_SELECT_WIDTH - 48.;
+
+fn card_description(mode: ModeChoice) -> &'static str {
+    match mode {
+        ModeChoice::Capture(Mode::Instant) if !cfg!(feature = "ux-walk") => {
+            tr::dialog::mode_select::instant()
+        }
+        ModeChoice::Capture(Mode::Studio) => tr::dialog::mode_select::studio(),
+        ModeChoice::Capture(Mode::Screenshot) => tr::dialog::mode_select::screenshot(),
+        _ => mode.card_description(),
+    }
+}
 
 pub struct ModeSelectWindow {
     theme: Theme,
@@ -112,7 +125,7 @@ impl ModeSelectWindow {
             .when(self.keyboard_nav, keyboard_nav::stop)
             .role(Role::Button)
             .aria_label(mode.title())
-            .aria_description(mode.card_description())
+            .aria_description(card_description(mode))
             .aria_selected(selected)
             .relative()
             .flex()
@@ -236,7 +249,7 @@ impl ModeSelectWindow {
                             .line_height(px(12. * 1.625))
                             .line_clamp(3)
                             .text_color(Hsla::from(theme.gray_11))
-                            .child(mode.card_description()),
+                            .child(card_description(mode)),
                     ),
             )
             .on_click(cx.listener(move |this, _, _window, cx| {
@@ -269,6 +282,7 @@ impl Render for ModeSelectWindow {
             .items_center()
             .bg(Hsla::from(theme.gray_1))
             .font_family(crate::theme::UI_FONT)
+            .locale_font()
             // `body { font-weight: 500 }` (`ui-solid/src/main.css:189-192`).
             .font_weight(FontWeight::MEDIUM)
             .text_color(theme.text_primary)
@@ -298,14 +312,14 @@ impl Render for ModeSelectWindow {
                                     .text_size(px(20.))
                                     .font_weight(FontWeight::BOLD)
                                     .text_color(Hsla::from(theme.gray_12))
-                                    .child("Choose Recording Mode"),
+                                    .child(tr::dialog::mode_select::title()),
                             )
                             .child(
                                 // `text-sm text-gray-11`
                                 div()
                                     .text_size(px(14.))
                                     .text_color(Hsla::from(theme.gray_11))
-                                    .child("Select how you want to capture your screen"),
+                                    .child(tr::dialog::mode_select::subtitle()),
                             ),
                     )
                     .child(

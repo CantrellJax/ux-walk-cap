@@ -579,7 +579,7 @@ pub(crate) fn install_deb(package: &Path) -> Result<(), String> {
     if status.success() {
         Ok(())
     } else {
-        Err("The package wasn't installed. Approve the system prompt, or install it from cap.so/download.".to_string())
+        Err(crate::i18n::tr::dialog::update::package_not_installed().to_string())
     }
 }
 

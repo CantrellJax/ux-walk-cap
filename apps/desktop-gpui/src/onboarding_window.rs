@@ -7,6 +7,8 @@ use gpui::{
     linear_gradient, prelude::FluentBuilder, px, relative, rgb, rgba, svg,
 };
 
+use crate::i18n::tr;
+use crate::theme::LocaleFont as _;
 use crate::{
     main_window::Mode,
     mode_choice::ModeChoice,
@@ -181,67 +183,94 @@ impl Step {
     }
 }
 
-struct ModeDetail {
+pub(crate) struct ModeDetail {
     mode: ModeChoice,
-    title: &'static str,
-    tagline: &'static str,
-    description: &'static str,
+    pub(crate) title: fn() -> &'static str,
+    pub(crate) tagline: fn() -> &'static str,
+    description: fn() -> &'static str,
     icon: &'static str,
-    features: [&'static str; 4],
+    pub(crate) features: [fn() -> &'static str; 4],
 }
 
-const MODES: &[ModeDetail] = &[
+pub(crate) fn mode_detail(mode: ModeChoice) -> &'static ModeDetail {
+    MODES
+        .iter()
+        .find(|detail| detail.mode == mode)
+        .unwrap_or(&MODES[0])
+}
+
+static MODES: &[ModeDetail] = &[
     ModeDetail {
         mode: ModeChoice::Capture(Mode::Instant),
-        title: "Instant Mode",
-        tagline: "Record & share in seconds",
-        description: "Record a ready-to-play video locally. Share it through your chosen server when you are ready.",
+        title: tr::onboarding::modes::instant::title,
+        tagline: tr::onboarding::modes::instant::tagline,
+        description: || {
+            crate::menus::fork_text(
+                "Record a ready-to-play video locally. Share it through your chosen server when you are ready.",
+                tr::onboarding::modes::instant::description,
+            )
+        },
         icon: "icons/instant.svg",
         features: [
-            "Ready-to-play local video",
-            "Choose when to share",
-            "Your own sharing server",
-            "Browser-based playback",
+            || {
+                crate::menus::fork_text(
+                    "Ready-to-play local video",
+                    tr::onboarding::modes::instant::feature_1,
+                )
+            },
+            || {
+                crate::menus::fork_text(
+                    "Choose when to share",
+                    tr::onboarding::modes::instant::feature_2,
+                )
+            },
+            || {
+                crate::menus::fork_text(
+                    "Your own sharing server",
+                    tr::onboarding::modes::instant::feature_3,
+                )
+            },
+            tr::onboarding::modes::instant::feature_4,
         ],
     },
     ModeDetail {
         mode: ModeChoice::Capture(Mode::Studio),
-        title: "Studio Mode",
-        tagline: "Professional editing tools",
-        description: "Record in full quality locally, then use the built-in editor to add backgrounds, padding, cursor effects, and more.",
+        title: tr::onboarding::modes::studio::title,
+        tagline: tr::onboarding::modes::studio::tagline,
+        description: tr::onboarding::modes::studio::description,
         icon: "icons/film-cut.svg",
         features: [
-            "Full quality local recording",
-            "Built-in editor & effects",
-            "Custom backgrounds & padding",
-            "Export or share when ready",
+            tr::onboarding::modes::studio::feature_1,
+            tr::onboarding::modes::studio::feature_2,
+            tr::onboarding::modes::studio::feature_3,
+            tr::onboarding::modes::studio::feature_4,
         ],
     },
     ModeDetail {
         mode: ModeChoice::Capture(Mode::Screenshot),
-        title: "Screenshot Mode",
-        tagline: "Capture & beautify instantly",
-        description: "Take screenshots with a single hotkey, add annotations and beautiful backgrounds, then share or copy instantly.",
+        title: tr::onboarding::modes::screenshot::title,
+        tagline: tr::onboarding::modes::screenshot::tagline,
+        description: tr::onboarding::modes::screenshot::description,
         icon: "icons/screenshot.svg",
         features: [
-            "Instant hotkey capture",
-            "Annotation & drawing tools",
-            "Beautiful backgrounds",
-            "Copy, save, or share",
+            tr::onboarding::modes::screenshot::feature_1,
+            tr::onboarding::modes::screenshot::feature_2,
+            tr::onboarding::modes::screenshot::feature_3,
+            tr::onboarding::modes::screenshot::feature_4,
         ],
     },
     #[cfg(target_os = "macos")]
     ModeDetail {
         mode: ModeChoice::UxWalk,
-        title: "UX Walk Mode",
-        tagline: "Record, note & review",
-        description: "Open a fresh browser window, already selected for recording. Walk through your product with native capture controls, notes, chapters and transcripts.",
+        title: || "UX Walk Mode",
+        tagline: || "Record, note & review",
+        description: || "Open a fresh browser window, already selected for recording. Walk through your product with native capture controls, notes, chapters and transcripts.",
         icon: "icons/ux-walk.svg",
         features: [
-            "Fresh browser window, ready to record",
-            "Timestamped notes & chapters",
-            "Your transcription provider",
-            "Evidence for your agent",
+            || "Fresh browser window, ready to record",
+            || "Timestamped notes & chapters",
+            || "Your transcription provider",
+            || "Evidence for your agent",
         ],
     },
 ];
@@ -269,27 +298,51 @@ impl ModeSelection {
     }
 }
 
-const FAQ: [(&str, &str); 5] = [
+const FAQ: [(fn() -> &'static str, fn() -> &'static str); 5] = [
     (
-        "Is Cap UX free to use?",
-        "Cap UX is open source under AGPLv3, including for personal and commercial work. Connected cloud services have their own terms and costs.",
+        || {
+            crate::menus::fork_text(
+                "Is Cap UX free to use?",
+                tr::onboarding::faq::free::question,
+            )
+        },
+        || {
+            crate::menus::fork_text(
+                "Cap UX is open source under AGPLv3, including for personal and commercial work. Connected cloud services have their own terms and costs.",
+                tr::onboarding::faq::free::answer,
+            )
+        },
     ),
     (
-        "How do the recording modes differ?",
-        "Instant records a ready-to-play local video. Studio records locally for editing. Screenshot captures a still image. UX Walk opens a fresh browser window and keeps its recording, notes, chapters and transcripts together.",
+        || {
+            crate::menus::fork_text(
+                "How do the recording modes differ?",
+                tr::onboarding::faq::instant_vs_studio::question,
+            )
+        },
+        || {
+            crate::menus::fork_text(
+                "Instant records a ready-to-play local video. Studio records locally for editing. Screenshot captures a still image. UX Walk opens a fresh browser window and keeps its recording, notes, chapters and transcripts together.",
+                tr::onboarding::faq::instant_vs_studio::answer,
+            )
+        },
     ),
+    (tr::onboarding::faq::storage::question, || {
+        crate::menus::fork_text(
+            "All recordings stay on your computer. Nothing uploads automatically. Choose a server in Settings → Sharing, then share individual videos or screenshots.",
+            tr::onboarding::faq::storage::answer,
+        )
+    }),
     (
-        "Where are my recordings stored?",
-        "All recordings stay on your computer. Nothing uploads automatically. Choose a server in Settings → Sharing, then share individual videos or screenshots.",
+        tr::onboarding::faq::shortcuts::question,
+        tr::onboarding::faq::shortcuts::answer,
     ),
-    (
-        "Can I change my shortcuts later?",
-        "Head to Settings → Shortcuts at any time to customize all your keyboard shortcuts.",
-    ),
-    (
-        "How does sharing work?",
-        "Choose your server and link expiry in Settings → Sharing. Use Share on a recording or screenshot to create an expiring link. You can also export files and use any sharing service you prefer.",
-    ),
+    (tr::onboarding::faq::sharing::question, || {
+        crate::menus::fork_text(
+            "Choose your server and link expiry in Settings → Sharing. Use Share on a recording or screenshot to create an expiring link. You can also export files and use any sharing service you prefer.",
+            tr::onboarding::faq::sharing::answer,
+        )
+    }),
 ];
 
 pub struct OnboardingWindow {
@@ -523,7 +576,7 @@ impl OnboardingWindow {
             return;
         }
         if !store::set_has_completed_onboarding(true) || !store::set_has_completed_startup(true) {
-            self.error = Some("Could not save onboarding progress. Please try again.".into());
+            self.error = Some(tr::onboarding::error::save_progress().into());
             cx.notify();
             return;
         }
@@ -552,7 +605,7 @@ impl OnboardingWindow {
             return;
         }
         if !store::set_has_completed_startup(true) {
-            self.error = Some("Could not save onboarding progress. Please try again.".into());
+            self.error = Some(tr::onboarding::error::save_progress().into());
             cx.notify();
             return;
         }
@@ -732,7 +785,7 @@ impl OnboardingWindow {
             "isMuted",
             serde_json::Value::Bool(self.muted),
         ) {
-            self.error = Some("Could not save the sound preference.".into());
+            self.error = Some(tr::onboarding::error::save_sound().into());
         }
         cx.notify();
     }
@@ -840,7 +893,7 @@ impl OnboardingWindow {
     }
 }
 
-fn mode_doodle(mode: ModeChoice) -> &'static crate::doodle::Doodle {
+pub(crate) fn mode_doodle(mode: ModeChoice) -> &'static crate::doodle::Doodle {
     match mode {
         ModeChoice::Capture(Mode::Instant) => &crate::onboarding_doodles::UPLOAD,
         ModeChoice::Capture(Mode::Studio) => &crate::onboarding_doodles::TRACKS,
@@ -1288,7 +1341,7 @@ impl OnboardingWindow {
                     )),
             )
             .child(
-                copy("Get Started", 16., ink)
+                copy(tr::onboarding::welcome::get_started(), 16., ink)
                     .line_height(px(20.))
                     .font_weight(FontWeight::MEDIUM),
             )
@@ -1299,12 +1352,16 @@ impl OnboardingWindow {
                     .justify_center()
                     .gap(px(4.))
                     .child(
-                        copy("Click here, or press", 11., ink.opacity(0.55))
-                            .font_weight(FontWeight::NORMAL)
-                            .line_height(px(14.)),
+                        copy(
+                            tr::onboarding::welcome::click_or_press(),
+                            11.,
+                            ink.opacity(0.55),
+                        )
+                        .font_weight(FontWeight::NORMAL)
+                        .line_height(px(14.)),
                     )
                     .child(
-                        copy("Space", 10., ink.opacity(0.7))
+                        copy(tr::onboarding::welcome::space_key(), 10., ink.opacity(0.7))
                             .font_weight(FontWeight::MEDIUM)
                             .line_height(px(14.))
                             .px(px(4.))
@@ -1343,18 +1400,14 @@ impl OnboardingWindow {
                     .child(welcome_script(written, title_opacity)),
             )
             .child(
-                copy(
-                    "The open source screen sharing app for everyone.",
-                    22.,
-                    ink.opacity(0.75),
-                )
-                .relative()
-                .top(px(subtitle_y))
-                .opacity(subtitle_opacity)
-                .font_family("Source Serif 4")
-                .font_weight(FontWeight::LIGHT)
-                .line_height(px(32.))
-                .whitespace_nowrap(),
+                copy(tr::onboarding::welcome::tagline(), 22., ink.opacity(0.75))
+                    .relative()
+                    .top(px(subtitle_y))
+                    .opacity(subtitle_opacity)
+                    .font_family("Source Serif 4")
+                    .font_weight(FontWeight::LIGHT)
+                    .line_height(px(32.))
+                    .whitespace_nowrap(),
             )
             .child(button)
             .when_some(self.error.clone(), |el, error| {
@@ -1395,18 +1448,67 @@ impl OnboardingWindow {
 
     fn render_overview(&self) -> AnyElement {
         let theme = self.theme;
-        div().flex().flex_col().items_center().justify_center().min_h_full().px(px(40.)).gap(px(32.))
-            .child(self.heading("One app, every workflow", "Share a quick capture, edit a polished recording, or walk through your product with notes and chapters."))
-            .child(div().flex().gap(px(16.)).w_full().max_w(px(if cfg!(target_os = "macos") { 720. } else { 540. })).children(MODES.iter().enumerate().map(|(index, mode)| {
-                let paper = stage::Paper::new(&theme);
-                let card = self.paper_card().flex_1().min_w_0().flex().flex_col().items_center().gap(px(10.)).px(px(20.)).pt(px(22.)).pb(px(24.))
-                    .child(crate::doodle::doodle(mode_doodle(mode.mode), paper.palette(), self.step_at + Duration::from_millis(index as u64 * 180), !self.animated, 96., 84.))
-                    .child(copy(mode.title, 15., paper.ink).font_weight(FontWeight::MEDIUM).text_center().mt(px(4.)))
-                    .child(copy(mode.tagline, 12., paper.soft).font_weight(FontWeight::NORMAL).line_height(px(16.)).text_center());
-                if !self.animated { return card.into_any_element(); }
-                card.with_animation(("overview-card", index), Animation::new(Duration::from_millis(700 + index as u64 * 100)),
-                        |el, t| el.relative().top(px(16. * (1. - ease(t)))).opacity(ease(t))).into_any_element()
-            }))).into_any_element()
+        div()
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .min_h_full()
+            .px(px(40.))
+            .gap(px(32.))
+            .child(self.heading(
+                tr::onboarding::overview::title(),
+                crate::menus::fork_text(
+                    "Share a quick capture, edit a polished recording, or walk through your product with notes and chapters.",
+                    tr::onboarding::overview::subtitle,
+                ),
+            ))
+            .child(div().flex().gap(px(16.)).w_full().max_w(px(if cfg!(target_os = "macos") { 720. } else { 540. })).children(
+                MODES.iter().enumerate().map(|(index, mode)| {
+                    let paper = stage::Paper::new(&theme);
+                    let card = self
+                        .paper_card()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .gap(px(10.))
+                        .px(px(20.))
+                        .pt(px(22.))
+                        .pb(px(24.))
+                        .child(crate::doodle::doodle(
+                            mode_doodle(mode.mode),
+                            paper.palette(),
+                            self.step_at + Duration::from_millis(index as u64 * 180),
+                            !self.animated,
+                            96.,
+                            84.,
+                        ))
+                        .child(
+                            copy((mode.title)(), 15., paper.ink)
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_center()
+                                .mt(px(4.)),
+                        )
+                        .child(
+                            copy((mode.tagline)(), 12., paper.soft)
+                                .font_weight(FontWeight::NORMAL)
+                                .line_height(px(16.))
+                                .text_center(),
+                        );
+                    if !self.animated {
+                        return card.into_any_element();
+                    }
+                    card.with_animation(
+                        ("overview-card", index),
+                        Animation::new(Duration::from_millis(700 + index as u64 * 100)),
+                        |el, t| el.relative().top(px(16. * (1. - ease(t)))).opacity(ease(t)),
+                    )
+                    .into_any_element()
+                }),
+            ))
+            .into_any_element()
     }
 
     fn render_detail(&self, index: usize) -> AnyElement {
@@ -1445,17 +1547,17 @@ impl OnboardingWindow {
                                     .flex_col()
                                     .gap(px(3.))
                                     .child(
-                                        copy(mode.title, 20., paper.ink)
+                                        copy((mode.title)(), 20., paper.ink)
                                             .font_weight(FontWeight::MEDIUM),
                                     )
                                     .child(
-                                        copy(mode.tagline, 12., paper.soft)
+                                        copy((mode.tagline)(), 12., paper.soft)
                                             .font_weight(FontWeight::NORMAL),
                                     ),
                             ),
                     )
                     .child(
-                        copy(mode.description, 13., paper.soft)
+                        copy((mode.description)(), 13., paper.soft)
                             .font_weight(FontWeight::NORMAL)
                             .line_height(px(20.)),
                     )
@@ -1474,7 +1576,7 @@ impl OnboardingWindow {
                                     18.,
                                 ))
                                 .child(
-                                    copy(*feature, 13., paper.ink).font_weight(FontWeight::NORMAL),
+                                    copy(feature(), 13., paper.ink).font_weight(FontWeight::NORMAL),
                                 )
                         }),
                     )),
@@ -1517,8 +1619,8 @@ impl OnboardingWindow {
             .px(px(48.))
             .gap(px(32.))
             .child(self.heading(
-                "Switch modes anytime",
-                "Toggle between modes with a single click from the main Cap UX window.",
+                tr::onboarding::toggle::title(),
+                crate::menus::branded_static(tr::onboarding::toggle::subtitle()),
             ))
             .child(
                 div()
@@ -1572,7 +1674,7 @@ impl OnboardingWindow {
                     .child(div().flex().gap(px(24.)).px(px(16.)).children(
                         MODES.iter().enumerate().map(|(index, mode)| {
                             copy(
-                                mode.title,
+                                (mode.title)(),
                                 14.,
                                 if active == index {
                                     theme.gray_12
@@ -1596,19 +1698,67 @@ impl OnboardingWindow {
 
     fn render_shortcuts(&self) -> AnyElement {
         let theme = self.theme;
-        div().flex().flex_col().items_center().justify_center().min_h_full().px(px(48.)).gap(px(24.))
-            .child(self.heading("Make Cap UX yours", "Customize everything from keyboard shortcuts to storage. Cap UX adapts to your workflow."))
-            .child(div().flex().flex_col().w_full().max_w(px(420.)).gap(px(8.)).children([
-                ("Keyboard Shortcuts", "Global hotkeys for recording, screenshots, and switching modes"),
-                ("Custom S3 Storage", "Host your own sharing server with private storage, including Cloudflare R2"),
-                ("Custom Domain", "Use your own server and domain for shareable links"),
-                ("Recording Preferences", "FPS, quality, countdown timer, cursor effects, and more"),
-            ].into_iter().map(|(title, description)| {
-                self.paper_card().rounded(px(16.)).px(px(18.)).py(px(13.)).flex().flex_col().gap(px(4.))
-                    .child(copy(title, 13., theme.gray_12).font_weight(FontWeight::MEDIUM))
-                    .child(copy(description, 11., theme.gray_10).line_height(px(15.)))
-            })))
-            .child(copy("Change any of these at any time in Settings", 12., theme.gray_9))
+        div()
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .min_h_full()
+            .px(px(48.))
+            .gap(px(24.))
+            .child(self.heading(
+                crate::menus::branded_static(tr::onboarding::customize::title()),
+                crate::menus::branded_static(tr::onboarding::customize::subtitle()),
+            ))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .w_full()
+                    .max_w(px(420.))
+                    .gap(px(8.))
+                    .children(
+                        [
+                            (
+                                tr::onboarding::customize::shortcuts::title(),
+                                tr::onboarding::customize::shortcuts::description(),
+                            ),
+                            (
+                                tr::onboarding::customize::s3::title(),
+                                crate::menus::fork_text(
+                                    "Host your own sharing server with private storage, including Cloudflare R2",
+                                    tr::onboarding::customize::s3::description,
+                                ),
+                            ),
+                            (
+                                tr::onboarding::customize::domain::title(),
+                                crate::menus::fork_text(
+                                    "Use your own server and domain for shareable links",
+                                    tr::onboarding::customize::domain::description,
+                                ),
+                            ),
+                            (
+                                tr::onboarding::customize::preferences::title(),
+                                tr::onboarding::customize::preferences::description(),
+                            ),
+                        ]
+                        .into_iter()
+                        .map(|(title, description)| {
+                            self.paper_card()
+                                .rounded(px(16.))
+                                .px(px(18.))
+                                .py(px(13.))
+                                .flex()
+                                .flex_col()
+                                .gap(px(4.))
+                                .child(
+                                    copy(title, 13., theme.gray_12).font_weight(FontWeight::MEDIUM),
+                                )
+                                .child(copy(description, 11., theme.gray_10).line_height(px(15.)))
+                        }),
+                    ),
+            )
+            .child(copy(tr::onboarding::customize::footer(), 12., theme.gray_9))
             .into_any_element()
     }
 
@@ -1624,8 +1774,8 @@ impl OnboardingWindow {
             .py(px(24.))
             .gap(px(24.))
             .child(self.heading(
-                "Frequently Asked Questions",
-                "Everything you need to know to get started.",
+                tr::onboarding::faq::title(),
+                tr::onboarding::faq::subtitle(),
             ))
             .child(
                 self.paper_card()
@@ -1654,7 +1804,7 @@ impl OnboardingWindow {
                                         cx.notify();
                                     }))
                                     .child(
-                                        copy(*question, 13., theme.gray_12)
+                                        copy(question(), 13., theme.gray_12)
                                             .font_weight(FontWeight::MEDIUM),
                                     )
                                     .child(glyph(
@@ -1673,17 +1823,21 @@ impl OnboardingWindow {
                                         .px(px(20.))
                                         .pb(px(16.))
                                         .child(
-                                            copy(*answer, 13., theme.gray_10).line_height(px(20.)),
+                                            copy(answer(), 13., theme.gray_10).line_height(px(20.)),
                                         )
                                         .when(!cfg!(feature = "ux-walk") && index == 0, |el| {
                                             el.child(
-                                                copy("View pricing plans", 13., theme.blue_10)
-                                                    .id("onboarding-faq-pricing")
-                                                    .cursor_pointer()
-                                                    .mt(px(8.))
-                                                    .on_click(|_, _, cx| {
-                                                        cx.open_url(crate::auth::PRICING_URL)
-                                                    }),
+                                                copy(
+                                                    tr::onboarding::faq::pricing(),
+                                                    13.,
+                                                    theme.blue_10,
+                                                )
+                                                .id("onboarding-faq-pricing")
+                                                .cursor_pointer()
+                                                .mt(px(8.))
+                                                .on_click(|_, _, cx| {
+                                                    cx.open_url(crate::auth::PRICING_URL)
+                                                }),
                                             )
                                         }),
                                 )
@@ -1692,7 +1846,7 @@ impl OnboardingWindow {
             )
             .when(!cfg!(feature = "ux-walk"), |el| {
                 el.child(
-                    copy("View pricing plans ↗", 13., theme.blue_10)
+                    copy(tr::onboarding::faq::pricing_link(), 13., theme.blue_10)
                         .id("onboarding-pricing")
                         .cursor_pointer()
                         .on_click(|_, _, cx| cx.open_url(crate::auth::PRICING_URL)),
@@ -1714,13 +1868,13 @@ impl OnboardingWindow {
         let last = self.permissions_only || self.step == Step::Faq;
         let relaunch = self.step == Step::Permissions && !disabled && self.needs_relaunch();
         let label = if relaunch {
-            "Relaunch Cap UX"
+            crate::menus::branded_static(tr::onboarding::nav::relaunch())
         } else if self.permissions_only {
-            "Continue to Cap UX"
+            crate::menus::branded_static(tr::onboarding::nav::continue_to_cap())
         } else if last {
-            "Start Using Cap UX"
+            crate::menus::branded_static(tr::onboarding::nav::start())
         } else {
-            "Continue"
+            tr::onboarding::nav::next()
         };
         div()
             .flex()
@@ -1739,7 +1893,7 @@ impl OnboardingWindow {
                     .w_full()
                     .child(div().flex_1().when(current > 0, |el| {
                         el.child(
-                            copy("←  Back", 13., paper.soft)
+                            copy(tr::onboarding::nav::back(), 13., paper.soft)
                                 .id("onboarding-back")
                                 .cursor_pointer()
                                 .hover(move |el| el.text_color(paper.ink))
@@ -1823,9 +1977,9 @@ impl OnboardingWindow {
                     .gap(px(14.))
                     .child(copy(
                         if disabled {
-                            "Allow the required permissions to continue"
+                            tr::onboarding::nav::permissions_needed()
                         } else {
-                            "Press Enter ↵ or use ← → arrow keys"
+                            tr::onboarding::nav::keyboard_hint()
                         },
                         11.,
                         paper.soft,
@@ -1834,7 +1988,7 @@ impl OnboardingWindow {
                         self.state.necessary_granted() && !self.permissions_only && !last,
                         |el| {
                             el.child(
-                                copy("Skip the tour", 11., paper.soft)
+                                copy(tr::onboarding::nav::skip(), 11., paper.soft)
                                     .id("onboarding-skip")
                                     .cursor_pointer()
                                     .hover(move |el| el.text_color(paper.ink))
@@ -1970,12 +2124,17 @@ impl OnboardingWindow {
                                     .flex()
                                     .flex_col()
                                     .child(
-                                        copy("Start Recording", 15., gpui::white())
-                                            .font_weight(FontWeight::MEDIUM)
-                                            .whitespace_nowrap(),
+                                        copy(
+                                            tr::onboarding::demo::start_recording(),
+                                            15.,
+                                            gpui::white(),
+                                        )
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .whitespace_nowrap(),
                                     )
                                     .child(
-                                        copy(MODES[index].title, 11., gpui::white()).opacity(0.9),
+                                        copy((MODES[index].title)(), 11., gpui::white())
+                                            .opacity(0.9),
                                     ),
                             ),
                     )
@@ -2033,7 +2192,11 @@ impl OnboardingWindow {
                                 el.child(glyph("icons/stop-circle.svg", 20., rgb(0xf87171)))
                             })
                             .child(copy(
-                                if stopped { "Stopped".into() } else { time },
+                                if stopped {
+                                    tr::onboarding::demo::stopped().into()
+                                } else {
+                                    time
+                                },
                                 14.,
                                 if stopped {
                                     Hsla::from(theme.gray_10)
@@ -2132,7 +2295,7 @@ impl OnboardingWindow {
                             .justify_center()
                             .child(glyph("icons/check.svg", 12., self.success_palette().2)),
                     )
-                    .child(copy("Link ready to share!", 12., theme.gray_12)),
+                    .child(copy(tr::onboarding::demo::link_ready(), 12., theme.gray_12)),
             )
             .child(
                 div()
@@ -2176,7 +2339,11 @@ impl OnboardingWindow {
                                 },
                             ))
                             .child(copy(
-                                if copied { "Copied!" } else { "Copy" },
+                                if copied {
+                                    tr::onboarding::demo::copied()
+                                } else {
+                                    tr::onboarding::demo::copy()
+                                },
                                 11.,
                                 if copied {
                                     self.success_palette().2
@@ -2265,10 +2432,14 @@ impl OnboardingWindow {
                             .items_center()
                             .gap(px(8.))
                             .child(self.demo_window_dots())
-                            .child(copy("Cap UX Editor", 10., theme.gray_11)),
+                            .child(copy(
+                                crate::menus::branded_static(tr::onboarding::demo::editor()),
+                                10.,
+                                theme.gray_11,
+                            )),
                     )
                     .child(
-                        copy("Export", 9., gpui::white())
+                        copy(tr::onboarding::demo::export(), 9., gpui::white())
                             .px(px(10.))
                             .py(px(4.))
                             .rounded(px(6.))
@@ -2306,7 +2477,7 @@ impl OnboardingWindow {
                             .flex()
                             .flex_col()
                             .gap(px(6.))
-                            .child(copy("STYLE", 8., theme.gray_9))
+                            .child(copy(tr::onboarding::demo::style(), 8., theme.gray_9))
                             .child(
                                 div()
                                     .h(px(20.))
@@ -2315,7 +2486,10 @@ impl OnboardingWindow {
                                     .border_color(theme.gray_3)
                                     .bg(theme.body_fill(2)),
                             )
-                            .child(copy("BACKGROUND", 8., theme.gray_9).mt(px(4.)))
+                            .child(
+                                copy(tr::onboarding::demo::background(), 8., theme.gray_9)
+                                    .mt(px(4.)),
+                            )
                             .child(div().flex().gap(px(4.)).children(
                                 [0x667eea, 0xf78c88, 0xcccccc].map(|color| {
                                     div()
@@ -2359,9 +2533,9 @@ impl OnboardingWindow {
                                                 })
                                                 .child(copy(
                                                     if phase >= 11 {
-                                                        "Export complete!"
+                                                        tr::onboarding::demo::export_complete()
                                                     } else {
-                                                        "Exporting..."
+                                                        tr::onboarding::demo::exporting()
                                                     },
                                                     14.,
                                                     theme.gray_12,
@@ -2548,14 +2722,14 @@ impl OnboardingWindow {
                             .flex()
                             .gap(px(4.))
                             .child(
-                                copy("Copy", 9., theme.gray_12)
+                                copy(tr::onboarding::demo::copy(), 9., theme.gray_12)
                                     .px(px(6.))
                                     .py(px(4.))
                                     .rounded(px(4.))
                                     .bg(theme.body_fill(3)),
                             )
                             .child(
-                                copy("Save", 9., gpui::white())
+                                copy(tr::onboarding::demo::save(), 9., gpui::white())
                                     .px(px(6.))
                                     .py(px(4.))
                                     .rounded(px(4.))
@@ -2607,7 +2781,11 @@ impl OnboardingWindow {
                                                 12.,
                                                 self.success_palette().2,
                                             ))
-                                            .child(copy("Copied to clipboard", 11., theme.gray_12)),
+                                            .child(copy(
+                                                tr::onboarding::demo::copied_to_clipboard(),
+                                                11.,
+                                                theme.gray_12,
+                                            )),
                                     ),
                             )
                         }),
@@ -2667,7 +2845,11 @@ impl OnboardingWindow {
         let phase = self.demo_phase;
         let (labels, active) = match index {
             0 => (
-                ["Record", "Stop", "Share link"],
+                [
+                    tr::onboarding::demo::steps::record(),
+                    tr::onboarding::demo::steps::stop(),
+                    tr::onboarding::demo::steps::share_link(),
+                ],
                 if phase <= 5 {
                     0
                 } else if phase == 6 {
@@ -2677,7 +2859,11 @@ impl OnboardingWindow {
                 },
             ),
             1 => (
-                ["Record", "Edit", "Export"],
+                [
+                    tr::onboarding::demo::steps::record(),
+                    tr::onboarding::demo::steps::edit(),
+                    tr::onboarding::demo::export(),
+                ],
                 if phase < 7 {
                     0
                 } else if phase < 9 {
@@ -2687,7 +2873,11 @@ impl OnboardingWindow {
                 },
             ),
             _ => (
-                ["Select area", "Beautify", "Copy"],
+                [
+                    tr::onboarding::demo::steps::select_area(),
+                    tr::onboarding::demo::steps::beautify(),
+                    tr::onboarding::demo::copy(),
+                ],
                 if phase <= 5 {
                     0
                 } else if phase <= 8 {
@@ -2860,6 +3050,7 @@ impl Render for OnboardingWindow {
             .rounded(px(16.))
             .bg(theme.shell_bg())
             .font_family(crate::theme::UI_FONT)
+            .locale_font()
             .font_weight(FontWeight::MEDIUM)
             .text_color(theme.body_text());
         if self.welcome {

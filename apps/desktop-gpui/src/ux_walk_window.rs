@@ -808,7 +808,7 @@ impl Render for WalkWindow {
                                 ui::ButtonSize::Sm,
                             )
                             .label("Show files")
-                            .on_click(move |_, _, _| crate::library::reveal_in_folder(&folder)),
+                            .on_click(move |_, _, cx| crate::library::reveal_path(&folder, cx)),
                         )
                         .child(
                             ui::Button::plain(

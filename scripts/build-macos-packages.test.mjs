@@ -11,7 +11,7 @@ import {
 } from "./build-macos-packages.mjs";
 
 const target = "x86_64-apple-darwin";
-const config = ["--config", "src-tauri/tauri.prod.conf.json"];
+const config = ["--config", "release.conf.json"];
 const intelTimestampFailure = [
 	"/Users/runner/work/Cap/Cap/target/x86_64-apple-darwin/release/bundle/macos/Cap.app/Contents/Frameworks/Spacedrive.framework/Versions/Current/Libraries/libavdevice.61.3.100.dylib: replacing existing signature",
 	"/Users/runner/work/Cap/Cap/target/x86_64-apple-darwin/release/bundle/macos/Cap.app/Contents/Frameworks/Spacedrive.framework/Versions/Current/Libraries/libavdevice.61.3.100.dylib: A timestamp was expected but was not found.",
@@ -62,7 +62,7 @@ function harness(results) {
 
 test("Cap-UX requires macOS 15 while the underlying capture pipeline keeps its baseline", () => {
 	const minimum = resolveMacosDeploymentTarget();
-	assert.equal(minimum, "12.3");
+	assert.equal(minimum, "15.0");
 	assert.equal(resolveMacosDeploymentTarget(""), minimum);
 	const gpui = JSON.parse(
 		readFileSync(
@@ -87,10 +87,7 @@ test("the GPUI app is packaged by rebundling its prebuilt binary on every attemp
 	const result = await buildMacosPackages(
 		target,
 		["--bundles", "app,dmg", "--verbose"],
-		{
-			...fixture.options,
-			bundleOnly: true,
-		},
+		fixture.options,
 	);
 	assert.equal(result.code, 0);
 	const bundle = [
@@ -108,7 +105,7 @@ test("the GPUI app is packaged by rebundling its prebuilt binary on every attemp
 		"app,dmg",
 		"--verbose",
 		"--config",
-		JSON.stringify({ bundle: { macOS: { minimumSystemVersion: "12.3" } } }),
+		JSON.stringify({ bundle: { macOS: { minimumSystemVersion: "15.0" } } }),
 	];
 	assert.deepEqual(
 		fixture.calls.map((call) => call.args),
@@ -120,10 +117,10 @@ test("the GPUI app is packaged by rebundling its prebuilt binary on every attemp
 });
 
 test("macOS deployment targets preserve compatible overrides and reject unsafe versions", () => {
-	for (const version of ["12.3", "12.3.0", "12.3.1", "12.10", "13", "15.7"]) {
+	for (const version of ["15.0", "15.0.0", "15.0.1", "15.10", "26", "15.7"]) {
 		assert.equal(resolveMacosDeploymentTarget(version), version);
 	}
-	for (const version of ["10.13", "11.0", "12", "12.2.99"]) {
+	for (const version of ["10.13", "11.0", "12.3", "14.9"]) {
 		assert.throws(
 			() => resolveMacosDeploymentTarget(version),
 			/below Cap's minimum/,
@@ -149,15 +146,15 @@ test("a higher macOS target reaches every build and rebundle with matching insta
 			{ code: 1, output: intelTimestampFailure },
 			{ code: 0 },
 		]);
-		fixture.options.env.MACOSX_DEPLOYMENT_TARGET = "14.0";
+		fixture.options.env.MACOSX_DEPLOYMENT_TARGET = "26.0";
 		assert.equal(
 			(await buildMacosPackages(architecture, config, fixture.options)).code,
 			0,
 		);
 		for (const call of fixture.calls) {
-			assert.equal(call.env.MACOSX_DEPLOYMENT_TARGET, "14.0");
+			assert.equal(call.env.MACOSX_DEPLOYMENT_TARGET, "26.0");
 			assert.deepEqual(JSON.parse(call.args.at(-1)), {
-				bundle: { macOS: { minimumSystemVersion: "14.0" } },
+				bundle: { macOS: { minimumSystemVersion: "26.0" } },
 			});
 		}
 		assert.equal(fixture.options.env.RUST_TARGET_TRIPLE, "previous-target");
@@ -169,13 +166,13 @@ test("an unsupported macOS override fails before starting a compiler or packager
 	fixture.options.env.MACOSX_DEPLOYMENT_TARGET = "10.13";
 	await assert.rejects(
 		buildMacosPackages(target, config, fixture.options),
-		/below Cap's minimum macOS version 12.3/,
+		/below Cap's minimum macOS version 15.0/,
 	);
 	assert.deepEqual(fixture.calls, []);
 });
 
 test("caller configs cannot lower the validated build target in final bundle metadata", async () => {
-	for (const deploymentTarget of [undefined, "14.0"]) {
+	for (const deploymentTarget of [undefined, "26.0"]) {
 		const fixture = harness([
 			{ code: 1, output: intelTimestampFailure },
 			{ code: 0 },
@@ -199,13 +196,13 @@ test("caller configs cannot lower the validated build target in final bundle met
 				"--config",
 				JSON.stringify({
 					bundle: {
-						macOS: { minimumSystemVersion: deploymentTarget ?? "12.3" },
+						macOS: { minimumSystemVersion: deploymentTarget ?? "15.0" },
 					},
 				}),
 			]);
 			assert.equal(
 				call.env.MACOSX_DEPLOYMENT_TARGET,
-				deploymentTarget ?? "12.3",
+				deploymentTarget ?? "15.0",
 			);
 		}
 	}
@@ -243,7 +240,7 @@ test("only retries exact timestamp diagnostics with a terminal Tauri signing err
 			"failed to bundle project: failed to sign app\n",
 			"/Users/runner/work/Cap/Cap/target/x86_64-apple-darwin/release/bundle/macos/Cap.app: The specified item could not be found in the keychain.\nfailed to bundle project: failed to sign app\n",
 		),
-		`${intelTimestampFailure}error: could not compile cap-desktop\n`,
+		`${intelTimestampFailure}error: could not compile cap-desktop-gpui\n`,
 		"warning: A timestamp was expected but was not found.\nError failed to bundle project: failed to sign app\n",
 	]) {
 		assert.equal(isTimestampSigningFailure(output), false, output);
@@ -260,7 +257,7 @@ test("successful builds never retry even if their output contains a timestamp di
 	assert.deepEqual(fixture.delays, []);
 });
 
-test("timestamp retries only rebundle and preserve the target, config and signing environment", async () => {
+test("timestamp retries rebundle and preserve the target, config and signing environment", async () => {
 	const fixture = harness([
 		{ code: 1, output: intelTimestampFailure },
 		{ code: 1, output: armTimestampFailure },
@@ -271,7 +268,7 @@ test("timestamp retries only rebundle and preserve the target, config and signin
 	assert.equal(result.code, 0);
 	const minimumConfig = [
 		"--config",
-		JSON.stringify({ bundle: { macOS: { minimumSystemVersion: "12.3" } } }),
+		JSON.stringify({ bundle: { macOS: { minimumSystemVersion: "15.0" } } }),
 	];
 	const bundleArguments = [
 		"dotenv",
@@ -289,17 +286,13 @@ test("timestamp retries only rebundle and preserve the target, config and signin
 	];
 	assert.deepEqual(
 		fixture.calls.map((call) => call.args),
-		[
-			["build:tauri", "--target", target, ...args, ...minimumConfig],
-			bundleArguments,
-			bundleArguments,
-		],
+		[bundleArguments, bundleArguments, bundleArguments],
 	);
 	for (const call of fixture.calls) {
 		assert.deepEqual(call.env, {
 			...fixture.options.env,
 			RUST_TARGET_TRIPLE: target,
-			MACOSX_DEPLOYMENT_TARGET: "12.3",
+			MACOSX_DEPLOYMENT_TARGET: "15.0",
 		});
 	}
 	assert.deepEqual(fixture.delays, [15_000, 30_000]);
@@ -334,7 +327,7 @@ test("a retry cannot reuse the previous attempt's timestamp diagnostic", async (
 
 test("compiler, certificate, notarization and signal failures are terminal", async () => {
 	for (const result of [
-		{ code: 1, output: "error: could not compile cap-desktop\n" },
+		{ code: 1, output: "error: could not compile cap-desktop-gpui\n" },
 		{
 			code: 1,
 			output:
@@ -471,7 +464,7 @@ test("the executor cancels the child process group and waits for close", async (
 	const kills = [];
 	const output = [];
 	let settled = false;
-	const operation = executeMacosCommand(["build:tauri"], {
+	const operation = executeMacosCommand(["tauri", "bundle"], {
 		env: {},
 		signal: controller.signal,
 		onOutput: (stream, chunk) => output.push({ stream, chunk }),
@@ -526,7 +519,7 @@ test("unsupported platforms and arguments fail before executing bun", async () =
 
 test("timestamp signing retries tolerate nested Bun script failure messages", () => {
 	const failure =
-		'/Applications/Cap.app: A timestamp was expected but was not found.\nError failed to bundle project: failed to sign app\nerror: script "tauri" exited with code 1\nerror: script "build:tauri" exited with code 1';
+		'/Applications/Cap.app: A timestamp was expected but was not found.\nError failed to bundle project: failed to sign app\nerror: script "tauri" exited with code 1\nerror: script "gpui:build" exited with code 1';
 	assert.equal(isTimestampSigningFailure(failure), true);
 	assert.equal(
 		isTimestampSigningFailure(`${failure}\nError unrelated packaging failure`),
@@ -542,7 +535,6 @@ test("native debug packaging omits the target argument on every bundle attempt",
 	fixture.options.env.CARGO_BUILD_TARGET = "foreign-target";
 	await buildMacosPackages(target, ["--debug", "--bundles", "app"], {
 		...fixture.options,
-		bundleOnly: true,
 		native: true,
 	});
 	assert.equal(fixture.calls.length, 2);
@@ -563,8 +555,9 @@ test("native packaging cannot silently select release, and targeted debug remain
 	assert.equal(invalid.calls.length, 0);
 	const fixture = harness([{ code: 0 }]);
 	await buildMacosPackages(target, ["--debug"], fixture.options);
-	assert.deepEqual(fixture.calls[0].args.slice(0, 4), [
-		"build:tauri",
+	assert.deepEqual(fixture.calls[0].args.slice(6, 11), [
+		"tauri",
+		"bundle",
 		"--target",
 		target,
 		"--debug",
