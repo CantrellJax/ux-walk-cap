@@ -505,7 +505,7 @@ export class OwnedWindowEvents {
 	write(event, page, noteDrain = null) {
 		if (this.pending.size >= 512) {
 			if (this.evidence.active) this.evidence.active.metadata.dropped++;
-			return Promise.resolve();
+			return Promise.resolve(false);
 		}
 		const receivedAt = this.evidence.clock();
 		const task = this.accepts(page)
