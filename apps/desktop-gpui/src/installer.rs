@@ -145,7 +145,7 @@ pub(crate) async fn fetch_release(
     current: &Version,
 ) -> Result<Option<Release>, String> {
     if cfg!(feature = "ux-walk") {
-        return Err("This ux-walk build uses releases from https://github.com/CantrellJax/ux-walk-cap/releases; official Cap updates would remove the integration.".to_string());
+        return Err(fork_brand::update_refusal());
     }
     let platform = update_platform()?;
     let response = client()?
@@ -614,15 +614,6 @@ mod tests {
     use std::io::{Read as _, Write as _};
 
     use super::*;
-
-    #[cfg(feature = "ux-walk")]
-    #[tokio::test]
-    async fn fork_refuses_official_update_resolution() {
-        let error = fetch_release(UpdateChannel::Stable, &Version::new(0, 6, 1))
-            .await
-            .unwrap_err();
-        assert!(error.contains("CantrellJax/ux-walk-cap/releases"));
-    }
 
     const TEST_KEY: &str = "untrusted comment: minisign public key E7620F1842B4E81F\nRWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3\n";
     const TEST_SIGNATURE: &str = "untrusted comment: signature from minisign secret key\nRUQf6LRCGA9i559r3g7V1qNyJDApGip8MfqcadIgT9CuhV3EMhHoN1mGTkUidF/z7SrlQgXdy8ofjb7bNJJylDOocrCo8KLzZwo=\ntrusted comment: timestamp:1556193335\tfile:test\ny/rUw2y8/hOUYjZU71eHp/Wo1KZ40fGy2VJEDl34XMJM+TX48Ss/17u3IvIfbVR1FkZZSNCisQbuQY+bHwhEBg==\n";

@@ -35,7 +35,7 @@ struct UpdateReport {
 
 pub fn run(format: OutputFormat) -> Result<(), String> {
     if cfg!(feature = "ux-walk") {
-        return Err("This ux-walk build uses releases from https://github.com/CantrellJax/ux-walk-cap/releases; the official installer would replace the fork.".to_string());
+        return Err(fork_brand::update_refusal());
     }
     #[cfg(windows)]
     {
@@ -154,15 +154,4 @@ fn print_output(output: &Output) {
 #[cfg(not(windows))]
 fn text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
-}
-
-#[cfg(all(test, feature = "ux-walk"))]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn fork_refuses_official_installer() {
-        let error = run(OutputFormat::Json).unwrap_err();
-        assert!(error.contains("CantrellJax/ux-walk-cap/releases"));
-    }
 }

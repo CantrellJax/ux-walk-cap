@@ -1085,6 +1085,7 @@ dependencies = [
  "dirs 6.0.0",
  "ffmpeg-next",
  "flume",
+ "fork-brand",
  "futures",
  "image 0.25.8",
  "include_dir",

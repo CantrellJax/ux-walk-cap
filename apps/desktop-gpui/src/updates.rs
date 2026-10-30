@@ -185,7 +185,7 @@ fn set_status(status: UpdateStatus, cx: &mut App) {
 
 pub(crate) fn check_manually(cx: &mut App) {
     if cfg!(feature = "ux-walk") {
-        cx.open_url("https://github.com/CantrellJax/ux-walk-cap/releases");
+        cx.open_url(fork_brand::RELEASES_URL);
         return;
     }
     if !cx.has_global::<UpdateScheduler>() {
@@ -689,13 +689,7 @@ fn start_download(release: Release, cx: &mut App) {
 
 fn update_failed(message: &str, cx: &mut App) {
     set_status(UpdateStatus::Idle, cx);
-    let message = if cfg!(feature = "ux-walk") {
-        format!(
-            "{message}\n\nFind Cap UX releases at https://github.com/CantrellJax/ux-walk-cap/releases."
-        )
-    } else {
-        tr::dialog::update::failed(message)
-    };
+    let message = tr::dialog::update::failed(message);
     cx.spawn(async move |_| {
         crate::platform::activate_app();
         crate::platform::alert_dialog(tr::dialog::update::title(), &message);
