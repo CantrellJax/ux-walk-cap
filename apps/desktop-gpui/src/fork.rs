@@ -8,6 +8,9 @@ pub mod fork_identity_tests;
 pub mod fork_link_tests;
 #[path = "fork_policy.rs"]
 pub mod fork_policy;
+#[cfg(all(test, feature = "ux-walk"))]
+#[path = "i18n_shipped.rs"]
+pub mod i18n_shipped;
 #[path = "mode_choice.rs"]
 pub mod mode_choice;
 #[path = "settings_sharing.rs"]

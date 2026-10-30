@@ -164,7 +164,7 @@ fn hooks_that_hide_upstream_links_are_still_in_place() {
 
 #[test]
 fn compiled_catalogs_name_no_upstream_service() {
-    let catalogs = include_str!(concat!(env!("OUT_DIR"), "/i18n.rs"));
+    let catalogs = include_str!(concat!(env!("OUT_DIR"), "/i18n_shipped.rs"));
     let leaks: Vec<&str> = catalogs
         .lines()
         .filter(|line| upstream_service_host(line).is_some())

@@ -53,7 +53,6 @@ const FORMATTED: &[&str] = &[
 ];
 
 #[test]
-#[cfg_attr(feature = "ux-walk", ignore = "the fork brands these strings")]
 fn settings_surfaces_match_the_literals_they_replaced() {
     let pairs: &[(&str, &str)] = &[
         (tr::settings::prompt::ok(), "Ok"),
@@ -1409,7 +1408,6 @@ fn settings_surfaces_match_the_literals_they_replaced() {
 }
 
 #[test]
-#[cfg_attr(feature = "ux-walk", ignore = "the fork brands these strings")]
 fn settings_surface_messages_format_like_the_code_they_replaced() {
     let version = "0.6.2";
     assert_eq!(

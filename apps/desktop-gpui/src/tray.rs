@@ -2184,12 +2184,7 @@ mod tests {
         let menu = build_onboarding_menu("0.1.0");
         assert_eq!(
             titles(&menu),
-            vec![
-                "Request Permissions",
-                "-",
-                fork_brand::text_static("Cap v0.1.0"),
-                fork_brand::text_static("Quit Cap"),
-            ]
+            vec!["Request Permissions", "-", "Cap v0.1.0", "Quit Cap",]
         );
     }
 
@@ -2222,15 +2217,9 @@ mod tests {
         // The version row is a section header below Quit on macOS and a
         // disabled row above it everywhere else.
         if cfg!(target_os = "macos") {
-            expected.extend([
-                fork_brand::text_static("Quit Cap"),
-                fork_brand::text_static("Cap v0.1.0"),
-            ]);
+            expected.extend(["Quit Cap", "Cap v0.1.0"]);
         } else {
-            expected.extend([
-                fork_brand::text_static("Cap v0.1.0"),
-                fork_brand::text_static("Quit Cap"),
-            ]);
+            expected.extend(["Cap v0.1.0", "Quit Cap"]);
         }
         assert_eq!(titles(&menu), expected);
     }
@@ -2352,7 +2341,7 @@ mod tests {
             if cfg!(target_os = "macos") {
                 vec!["Upload Logs"]
             } else {
-                vec!["Upload Logs", fork_brand::text_static("Cap v0.1.0")]
+                vec!["Upload Logs", "Cap v0.1.0"]
             }
         );
     }

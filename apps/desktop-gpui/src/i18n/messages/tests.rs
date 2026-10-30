@@ -2,7 +2,6 @@ use super::*;
 use crate::i18n::{KEYS, LOCALE_ENV, Locale, init};
 
 #[test]
-#[cfg_attr(feature = "ux-walk", ignore = "the fork brands these strings")]
 fn english_messages_read_exactly_as_before() {
     for (english, translate) in EXACT {
         assert_eq!(translate(), *english);
@@ -68,7 +67,6 @@ fn unknown_and_hostile_text_passes_through() {
 }
 
 #[test]
-#[cfg_attr(feature = "ux-walk", ignore = "the fork brands these strings")]
 fn messages_follow_the_language() {
     const CHILD: &str = "CAP_GPUI_TEST_MESSAGES_LANGUAGE";
     if std::env::var_os(CHILD).is_none() {

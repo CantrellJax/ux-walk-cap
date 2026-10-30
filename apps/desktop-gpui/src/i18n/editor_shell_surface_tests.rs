@@ -82,7 +82,6 @@ const FORMATTED: &[&str] = &[
 ];
 
 #[test]
-#[cfg_attr(feature = "ux-walk", ignore = "the fork brands these strings")]
 fn editor_shell_surfaces_match_the_literals_they_replaced() {
     let pairs: &[(&str, &str)] = &[
         (tr::editor::canvas::camera(), "Camera"),

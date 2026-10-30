@@ -38,7 +38,6 @@ const FORMATTED: &[&str] = &[
 ];
 
 #[test]
-#[cfg_attr(feature = "ux-walk", ignore = "the fork brands these strings")]
 fn main_surfaces_match_the_literals_they_replaced() {
     let pairs: &[(&str, &str)] = &[
         (tr::main::device::fallback_camera(), "Camera"),
@@ -633,7 +632,6 @@ fn main_surfaces_match_the_literals_they_replaced() {
 }
 
 #[test]
-#[cfg_attr(feature = "ux-walk", ignore = "the fork brands these strings")]
 fn main_surface_messages_format_like_the_code_they_replaced() {
     for count in [0, 3, 4, 8] {
         assert_eq!(

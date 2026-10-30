@@ -8367,10 +8367,7 @@ mod tests {
                 "open UX Walk setup with the recorder’s capture and audio controls".into()
             }
             "openUxWalkNotes" => "open notes for your current or most recent UX Walk".into(),
-            "openRecordingPicker" => fork_brand::text("open Cap so you can choose what to record"),
-            "cycleRecordingMode" if cfg!(feature = "ux-walk") => {
-                "switch between Studio, Instant, Screenshot and UX Walk mode".into()
-            }
+            "openRecordingPicker" => "open Cap so you can choose what to record".into(),
             "cycleRecordingMode" => "switch between Studio, Instant and Screenshot mode".into(),
             "stopRecording" => "stop the current recording".into(),
             "togglePauseRecording" => "pause the current recording, or resume it".into(),

@@ -1,4 +1,5 @@
-use crate::i18n::{LOCALE_ENV, Locale, init, tr};
+use crate::i18n::{LOCALE_ENV, init};
+use crate::i18n_shipped::{Locale, tr};
 use crate::installer::fetch_release;
 use crate::store::UpdateChannel;
 
@@ -181,7 +182,7 @@ fn catalog_strings_carry_the_fork_name() {
 
 #[test]
 fn no_locale_offers_cap_pro() {
-    let tables = include_str!(concat!(env!("OUT_DIR"), "/i18n.rs"));
+    let tables = include_str!(concat!(env!("OUT_DIR"), "/i18n_shipped.rs"));
     for name in [fork_brand::UPSTREAM_NAME, fork_brand::APP_NAME] {
         assert!(!tables.contains(&format!("{name} Pro")), "{name} Pro");
     }

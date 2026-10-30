@@ -66,7 +66,6 @@ const FORMATTED: &[&str] = &[
 ];
 
 #[test]
-#[cfg_attr(feature = "ux-walk", ignore = "the fork brands these strings")]
 fn dialog_surfaces_match_the_literals_they_replaced() {
     let pairs: &[(&str, &str)] = &[
         (
@@ -1124,7 +1123,6 @@ fn dialog_messages_format_like_the_code_they_replaced() {
 }
 
 #[test]
-#[cfg_attr(feature = "ux-walk", ignore = "the fork brands these strings")]
 fn update_and_quit_messages_format_like_the_code_they_replaced() {
     assert_eq!(
         tr::dialog::teleprompter::words_per_minute(150),
