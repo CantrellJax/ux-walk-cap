@@ -281,6 +281,45 @@ mod owned {
         }
     }
 
+    pub fn preflight(journal: &crate::ux_walk_journal::Journal) -> Result<(), String> {
+        let mut browsers = match browsers().lock() {
+            Ok(browsers) => browsers,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        let Some(browser) = browsers
+            .iter_mut()
+            .find(|browser| browser.journal.as_ref() == Some(&journal.file()))
+        else {
+            return Ok(());
+        };
+        if browser.external {
+            return Ok(());
+        }
+        if let Err(error) = browser.command(
+            json!({ "op": "prepare-pause", "file": journal.file() }),
+            Duration::from_secs(2),
+        ) {
+            drop(browser.input.take());
+            unavailable(journal, &error);
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    pub fn revoke(journal: &crate::ux_walk_journal::Journal, reason: &str) {
+        let mut browsers = match browsers().lock() {
+            Ok(browsers) => browsers,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if let Some(browser) = browsers
+            .iter_mut()
+            .find(|browser| browser.journal.as_ref() == Some(&journal.file()))
+        {
+            drop(browser.input.take());
+        }
+        unavailable(journal, reason);
+    }
+
     pub fn clock(journal: &crate::ux_walk_journal::Journal, offset_ms: u64, paused: bool) {
         let Ok(mut browsers) = browsers().lock() else {
             return;
@@ -479,3 +518,25 @@ pub fn interrupt(_journal: &crate::ux_walk_journal::Journal, _reason: &str) {}
 pub fn health(_journal: &crate::ux_walk_journal::Journal) -> Option<String> {
     None
 }
+
+
+pub async fn prepare_note_pause(journal: crate::ux_walk_journal::Journal) -> Result<(), String> {
+    let failed_journal = journal.clone();
+    match tokio::task::spawn_blocking(move || preflight(&journal)).await {
+        Ok(result) => result,
+        Err(error) => {
+            let reason = format!("Browser note preflight failed: {error}");
+            let failure = reason.clone();
+            let _ = tokio::task::spawn_blocking(move || revoke(&failed_journal, &failure)).await;
+            Err(reason)
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn preflight(_journal: &crate::ux_walk_journal::Journal) -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn revoke(_journal: &crate::ux_walk_journal::Journal, _reason: &str) {}

@@ -208,6 +208,8 @@ export class NativeBrowserEvidence {
 			boundary,
 			fromMs: anchors[start].wallMs,
 			throughMs: boundary.wallMs,
+			sourceFenced:
+				active.metadata.noteSourceFencedEpoch === this.clockEpoch - 1,
 		};
 	}
 
@@ -255,7 +257,8 @@ export class NativeBrowserEvidence {
 			event.ev === "note" &&
 			this.ownsNoteDrain(noteDrain) &&
 			event.observedAt >= noteDrain.fromMs &&
-			event.observedAt < noteDrain.throughMs;
+			(event.observedAt < noteDrain.throughMs ||
+				(noteDrain.sourceFenced && event.observedAt === noteDrain.throughMs));
 		if (
 			!drainingNote &&
 			(latest.paused || this.active.metadata.state !== "recording")
@@ -268,7 +271,13 @@ export class NativeBrowserEvidence {
 			event.ev === "click"
 		)
 			return false;
-		const anchor = this.active.metadata.anchors.findLast(
+		const anchors = drainingNote
+			? this.active.metadata.anchors.slice(
+					0,
+					this.active.metadata.anchors.indexOf(noteDrain.boundary),
+				)
+			: this.active.metadata.anchors;
+		const anchor = anchors.findLast(
 			(entry) => entry.wallMs <= event.observedAt,
 		);
 		event.nativeOffsetMs = drainingNote
@@ -566,6 +575,76 @@ export class OwnedWindowEvents {
 	}
 }
 
+export async function prepareNativePause(browser, evidence, events) {
+	const active = evidence.active;
+	const epoch = evidence.clockEpoch;
+	const recordingId = active?.metadata.recordingId;
+	const generation = active?.metadata.generation;
+	const current = () =>
+		evidence.mode === "recording" &&
+		evidence.active === active &&
+		evidence.clockEpoch === epoch &&
+		active?.metadata.recordingId === recordingId &&
+		active?.metadata.generation === generation &&
+		active.metadata.state === "recording";
+	if (!current())
+		throw new Error("Browser source preflight belongs to another recording");
+	if (active.metadata.anchors.at(-1).paused) return;
+	try {
+		await browser.prepareNotePause({
+			timeoutMs: 1500,
+			allowPage: async (page) =>
+				current() && (await events.accepts(page)) && current(),
+		});
+		if (!current()) throw new Error("Browser source preflight owner changed");
+		active.metadata.noteSourceFencedEpoch = epoch;
+		evidence.save();
+	} catch (error) {
+		if (current())
+			evidence.finish(
+				active.metadata.journal,
+				"failed",
+				`Browser note source could not acknowledge Pause/Stop: ${redactBrowserText(error.message, 300)}`,
+			);
+		throw error;
+	}
+}
+
+export async function resumeNativeNotes(browser, evidence, events) {
+	const active = evidence.active;
+	const epoch = evidence.clockEpoch;
+	const recordingId = active?.metadata.recordingId;
+	const generation = active?.metadata.generation;
+	const current = () =>
+		evidence.mode === "recording" &&
+		evidence.active === active &&
+		evidence.clockEpoch === epoch &&
+		active?.metadata.recordingId === recordingId &&
+		active?.metadata.generation === generation &&
+		active.metadata.state === "recording" &&
+		!active.metadata.anchors.at(-1).paused;
+	if (!current())
+		throw new Error("Browser source resume belongs to another recording");
+	try {
+		await browser.resumeNoteInput({
+			timeoutMs: 1500,
+			allowPage: async (page) =>
+				current() && (await events.accepts(page)) && current(),
+		});
+		if (!current()) throw new Error("Browser source resume owner changed");
+		delete active.metadata.noteSourceFencedEpoch;
+		evidence.save();
+	} catch (error) {
+		if (current())
+			evidence.finish(
+				active.metadata.journal,
+				"failed",
+				`Browser note source could not resume: ${redactBrowserText(error.message, 300)}`,
+			);
+		throw error;
+	}
+}
+
 export async function flushNativeNotes(
 	browser,
 	evidence,
@@ -750,6 +829,7 @@ export async function runNativeBrowser(captureId, workDir, external = false) {
 							evidence.start(message.file, message.windowId || "external", {
 								mode: external ? "external" : "owned",
 							});
+							if (!external) await resumeNativeNotes(browser, evidence, events);
 							companionServer = await startCompanionServer({
 								configDir: CONFIG_DIR,
 								session: evidence.companion(),
@@ -763,7 +843,21 @@ export async function runNativeBrowser(captureId, workDir, external = false) {
 								},
 							});
 							break;
+						case "prepare-pause":
+							evidence.owned(message.file);
+							if (!external)
+								await prepareNativePause(browser, evidence, events);
+							break;
 						case "finishing":
+							if (
+								!external &&
+								!evidence.owned(message.file).metadata.anchors.at(-1).paused &&
+								evidence.active.metadata.noteSourceFencedEpoch !==
+									evidence.clockEpoch
+							)
+								throw new Error(
+									"Browser source must acknowledge preflight before Stop",
+								);
 							evidence.anchor(
 								message.file,
 								message.wallMs,
@@ -778,12 +872,31 @@ export async function runNativeBrowser(captureId, workDir, external = false) {
 							const wasPaused = evidence
 								.owned(message.file)
 								.metadata.anchors.at(-1).paused;
+							if (
+								!external &&
+								message.paused &&
+								!wasPaused &&
+								evidence.active.metadata.noteSourceFencedEpoch !==
+									evidence.clockEpoch
+							)
+								throw new Error(
+									"Browser source must acknowledge preflight before Pause",
+								);
+							if (!message.paused) await noteFlush;
 							evidence.anchor(
 								message.file,
 								message.wallMs,
 								message.offsetMs,
 								message.paused,
 							);
+							if (
+								!external &&
+								!message.paused &&
+								(wasPaused ||
+									evidence.active.metadata.noteSourceFencedEpoch !== undefined)
+							) {
+								await resumeNativeNotes(browser, evidence, events);
+							}
 							if (message.paused && !wasPaused) queueNoteFlush(message.wallMs);
 							break;
 						}

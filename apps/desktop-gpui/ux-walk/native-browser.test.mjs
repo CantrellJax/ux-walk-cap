@@ -13,6 +13,8 @@ import {
 	flushNativeNotes,
 	NativeBrowserEvidence,
 	OwnedWindowEvents,
+	prepareNativePause,
+	resumeNativeNotes,
 } from "./native-browser.mjs";
 import { finishNativeWalk, nativeWalkPrompt } from "./native-walk.mjs";
 
@@ -335,6 +337,7 @@ document.querySelector("button").onclick = () => {
 					fs.readFileSync(path.join(evidence.notesDir(), name)).toString("hex"),
 				]);
 		const beforePauseFiles = noteFiles();
+		await prepareNativePause(browser, evidence, windowEvents);
 		const pausedAt = Date.now();
 		evidence.anchor(file, pausedAt, pausedAt - startedAtMs, true);
 		await page.evaluate(() => console.error("PAUSED_PRIVATE_SENTINEL"));
@@ -361,6 +364,7 @@ document.querySelector("button").onclick = () => {
 		await new Promise((resolve) => setTimeout(resolve, 40));
 		const resumedAt = Date.now();
 		evidence.anchor(file, resumedAt, pausedAt - startedAtMs, false);
+		await resumeNativeNotes(browser, evidence, windowEvents);
 		await page.evaluate(() => console.warn("Resumed synthetic warning"));
 		await new Promise((resolve) => setTimeout(resolve, 40));
 		phase("flush unsaved annotation at Stop");
@@ -372,6 +376,7 @@ document.querySelector("button").onclick = () => {
 			Number.isInteger(window.__uxwOpenNote?.()?.id),
 		);
 		await same.locator("uxw-overlay input").fill("Unsaved note before Stop");
+		await prepareNativePause(browser, evidence, windowEvents);
 		const stoppedAt = Date.now();
 		diagnostics.push({
 			phase: "Stop boundary",
@@ -521,7 +526,9 @@ test(
 					path.join(engine, "src", name),
 				);
 		const entered = path.join(root, "drain-entered"),
-			release = path.join(root, "drain-release");
+			release = path.join(root, "drain-release"),
+			prefixEntered = path.join(root, "prefix-entered"),
+			prefixRelease = path.join(root, "prefix-release");
 		const file = path.join(directory, "native-walk.json"),
 			startedAtMs = Date.now() - 5000;
 		fs.writeFileSync(
@@ -544,7 +551,11 @@ export async function openBrowser(options) {
  const context={pages:()=>[page],newCDPSession:async()=>({send:async()=>({windowId:17})})};
  const page={context:()=>context};
  await options.write({ev:"nav",url:"https://example.com"},page);
- return {context,browser:{once(){}},saveAuth:async()=>{},close:async()=>{},async flushPendingNotes({allowPage,writeNote}) {
+ return {context,browser:{once(){}},saveAuth:async()=>{},close:async()=>{},async prepareNotePause({allowPage}) {
+ fs.writeFileSync(${JSON.stringify(prefixEntered)},"entered");
+ while(!fs.existsSync(${JSON.stringify(prefixRelease)})) await new Promise(resolve=>setTimeout(resolve,10));
+ if(!await allowPage(page)) throw new Error("Prefix owner changed");
+},resumeNoteInput:async()=>{},async flushPendingNotes({allowPage,writeNote}) {
   fs.writeFileSync(${JSON.stringify(entered)},"entered");
   while(!fs.existsSync(${JSON.stringify(release)})) await new Promise(resolve=>setTimeout(resolve,10));
   if(!saved && await allowPage(page)) {
@@ -614,6 +625,26 @@ export async function openBrowser(options) {
 		await ready;
 		await command("bind", { windowId: "17" });
 		await command("start", { file, windowId: "17" });
+		let prefixAcked = false;
+		const preparing = command("prepare-pause", { file }).then(() => {
+			prefixAcked = true;
+		});
+		const prefixDeadline = Date.now() + 1500;
+		while (!fs.existsSync(prefixEntered) && Date.now() < prefixDeadline)
+			await new Promise((resolve) => setTimeout(resolve, 10));
+		assert.equal(
+			fs.existsSync(prefixEntered),
+			true,
+			"owned preflight must start the source prefix fence",
+		);
+		assert.equal(prefixAcked, false);
+		const live = JSON.parse(
+			fs.readFileSync(path.join(directory, "browser-evidence.json"), "utf8"),
+		);
+		assert.equal(live.state, "recording");
+		assert.equal(live.anchors.at(-1).paused, false);
+		fs.writeFileSync(prefixRelease, "ACK");
+		await preparing;
 		await command("finishing", {
 			file,
 			wallMs: startedAtMs + 2000,

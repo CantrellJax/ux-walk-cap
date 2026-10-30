@@ -1,3 +1,45 @@
+use std::future::Future;
+
+#[derive(Default)]
+pub(crate) struct StopNoteFence {
+    generation: Option<u64>,
+}
+
+impl StopNoteFence {
+    pub(crate) fn begin(&mut self, generation: u64) -> bool {
+        if self.generation.is_some() {
+            return false;
+        }
+        self.generation = Some(generation);
+        true
+    }
+
+    pub(crate) fn pending(&self) -> bool {
+        self.generation.is_some()
+    }
+
+    pub(crate) fn complete(&mut self, generation: u64, recording: bool) -> bool {
+        if !recording || self.generation != Some(generation) {
+            return false;
+        }
+        self.generation = None;
+        true
+    }
+
+    pub(crate) fn invalidate(&mut self) {
+        self.generation = None;
+    }
+}
+
+pub(crate) async fn after_note_fence<E>(
+    fence: impl Future<Output = Result<(), E>>,
+    control: impl Future<Output = Result<(), E>>,
+) -> Result<(), E> {
+    let source = fence.await;
+    let media = control.await;
+    media.and(source)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
