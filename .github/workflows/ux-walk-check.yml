@@ -74,6 +74,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.95.0
         with:
           components: rustfmt
+      - name: Exercise native source-fence ordering without desktop dependencies
+        run: |
+          rustc +1.95.0 --edition 2024 --test apps/desktop-gpui/src/ux_walk_note_control.rs -o "$RUNNER_TEMP/ux-walk-note-control"
+          "$RUNNER_TEMP/ux-walk-note-control"
       - name: Exercise existing journal and library contracts without desktop dependencies
         run: |
           python3 - <<'PY'
