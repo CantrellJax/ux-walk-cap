@@ -21,6 +21,13 @@ mod tests {
         include_str!("../ux_walk_preferences.rs"),
         include_str!("../settings_ux_walk.rs"),
         include_str!("../onboarding_window.rs"),
+        include_str!("../onboarding_window/ux_walk.rs"),
+        include_str!("../main_window/ux_walk.rs"),
+        include_str!("../settings_window/fork.rs"),
+        include_str!("../settings_pages/fork.rs"),
+        include_str!("../tray/ux_walk.rs"),
+        include_str!("../library/ux_walk.rs"),
+        include_str!("../session/ux_walk.rs"),
     ];
 
     fn referenced(prefix: &str) -> Vec<String> {
