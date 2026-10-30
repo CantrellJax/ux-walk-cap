@@ -487,7 +487,7 @@ mod owned {
 }
 
 #[cfg(target_os = "macos")]
-pub use owned::{begin, clock, finish, health, interrupt, open, stopping};
+pub use owned::{begin, clock, finish, health, interrupt, open, preflight, revoke, stopping};
 
 #[cfg(not(target_os = "macos"))]
 pub fn open() -> Result<crate::devices::WindowOption, String> {
