@@ -45,6 +45,8 @@ use crate::{
     ui,
 };
 
+mod fork;
+
 /// `.inner_size(782.0, 775.0)` / `.min_inner_size(780.0, 560.0)` on the
 /// `ShowCapWindow::Settings` builder in `windows.rs`.
 pub const SETTINGS_WIDTH: f32 = 782.;
@@ -436,9 +438,7 @@ struct Recordings {
     /// The 2s poll, armed only while something in the list is still being
     /// written (`refetchInterval`).
     tick: Option<gpui::Task<()>>,
-    notice: Option<String>,
-    copy_selection: crate::ux_walk_library::WalkSelection,
-    sharing_busy: std::collections::HashSet<PathBuf>,
+    fork: fork::RecordingsFork,
 }
 
 impl Recordings {
@@ -452,9 +452,7 @@ impl Recordings {
             scan: None,
             decode: None,
             tick: None,
-            notice: None,
-            copy_selection: crate::ux_walk_library::WalkSelection::default(),
-            sharing_busy: std::collections::HashSet::new(),
+            fork: fork::RecordingsFork::default(),
         }
     }
 
@@ -488,20 +486,15 @@ impl Recordings {
 
 /// One row against the tab and the already-lowercased, already-trimmed query.
 fn matches_recording_filters(item: &RecordingItem, tab: RecordingsTab, query: &str) -> bool {
-    let matches_tab = match tab {
-        RecordingsTab::All => true,
-        RecordingsTab::Instant => item.mode == RecordingMode::Instant && item.walk.is_none(),
-        RecordingsTab::Studio => item.mode == RecordingMode::Studio && item.walk.is_none(),
-        #[cfg(all(target_os = "macos", feature = "ux-walk"))]
-        RecordingsTab::UxWalk => item.walk.is_some(),
-    };
-    matches_tab
-        && (query.is_empty()
-            || item.pretty_name.to_lowercase().contains(query)
-            || item
-                .walk
-                .as_ref()
-                .is_some_and(|walk| walk.topic.to_lowercase().contains(query)))
+    if let Some(matched) = fork::recording_filter(item, tab, query) {
+        return matched;
+    }
+    if let Some(mode) = tab.mode()
+        && item.mode != mode
+    {
+        return false;
+    }
+    query.is_empty() || item.pretty_name.to_lowercase().contains(query)
 }
 
 struct ScreenshotRow {
@@ -1960,19 +1953,10 @@ impl SettingsWindow {
                         window.start_window_move();
                     }),
             )
-            .when(cfg!(feature = "ux-walk"), |this| {
-                this.child(
-                    div()
-                        .px(px(14.))
-                        .pb(px(16.))
-                        .text_size(px(18.))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .child(fork_brand::APP_NAME),
-                )
-            })
-            .when(!cfg!(feature = "ux-walk"), |this| {
-                this.child(self.render_profile(cx))
-            })
+            .children(fork::sidebar_title())
+            .children(crate::fork_policy::upstream_only(|| {
+                self.render_profile(cx)
+            }))
             .child(self.render_nav(cx))
             .child(self.render_account(cx))
     }
@@ -2174,24 +2158,14 @@ impl SettingsWindow {
                     .px(px(4.))
                     .py(px(2.))
                     .rounded(px(4.))
-                    .child(format!(
-                        "{} v{}",
-                        fork_brand::APP_NAME,
-                        env!("CARGO_PKG_VERSION")
-                    )),
+                    .child(fork::version_label()),
             )
             .child(
                 div()
                     .id("settings-previous-versions")
                     .child(tr::settings::sidebar::previous_versions())
                     .hover(|style| style.text_color(theme.settings_text()))
-                    .on_click(|_, _, cx| {
-                        cx.open_url(if cfg!(feature = "ux-walk") {
-                            fork_brand::RELEASES_URL
-                        } else {
-                            "https://cap.so/download/versions"
-                        })
-                    }),
+                    .on_click(|_, _, cx| cx.open_url(fork::PREVIOUS_VERSIONS_URL)),
             )
             .child(
                 div()
@@ -2225,31 +2199,29 @@ impl SettingsWindow {
             .border_t_1()
             .border_color(theme.settings_border())
             .child(update_links)
-            .when(!cfg!(feature = "ux-walk"), |this| {
-                this.child({
-                    let signed_in = store::auth_snapshot().signed_in();
-                    let (variant, label) = if SignIn::global(cx).read(cx).is_pending() {
-                        (
-                            ui::ButtonVariant::Gray,
-                            tr::settings::sidebar::cancel_sign_in(),
-                        )
-                    } else if signed_in {
-                        (ui::ButtonVariant::Gray, tr::settings::sidebar::sign_out())
-                    } else {
-                        (ui::ButtonVariant::Primary, tr::settings::sidebar::sign_in())
-                    };
-                    self.button(
-                        "settings-sign-in",
-                        (variant, None),
-                        label,
-                        false,
-                        cx,
-                        |this, window, cx| this.toggle_sign_in(window, cx),
+            .children(crate::fork_policy::upstream_only(|| {
+                let signed_in = store::auth_snapshot().signed_in();
+                let (variant, label) = if SignIn::global(cx).read(cx).is_pending() {
+                    (
+                        ui::ButtonVariant::Gray,
+                        tr::settings::sidebar::cancel_sign_in(),
                     )
-                    .full_width()
-                    .height(px(34.))
-                })
-            })
+                } else if signed_in {
+                    (ui::ButtonVariant::Gray, tr::settings::sidebar::sign_out())
+                } else {
+                    (ui::ButtonVariant::Primary, tr::settings::sidebar::sign_in())
+                };
+                self.button(
+                    "settings-sign-in",
+                    (variant, None),
+                    label,
+                    false,
+                    cx,
+                    |this, window, cx| this.toggle_sign_in(window, cx),
+                )
+                .full_width()
+                .height(px(34.))
+            }))
     }
 
     fn toggle_sign_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -2881,14 +2853,7 @@ impl SettingsWindow {
             .border_color(theme.settings_border())
             .child(tabs)
             .child(search)
-            .when_some(self.recordings.notice.clone(), |this, notice| {
-                this.child(
-                    div()
-                        .text_size(px(12.))
-                        .text_color(theme.settings_muted())
-                        .child(notice),
-                )
-            })
+            .children(self.recordings.fork.notice(&theme))
     }
 
     /// The list: `flex relative flex-col flex-1 rounded-xl border bg-gray-2
@@ -2973,10 +2938,7 @@ impl SettingsWindow {
         let item = &row.item;
         // `studioCompleteCheck()`: the only rows whose body is a button.
         let opens_editor = item.opens_editor();
-        let opens_local = cfg!(feature = "ux-walk")
-            && item.mode == RecordingMode::Instant
-            && !item.status.is_in_progress()
-            && item.status.error().is_none();
+        let opens_local = fork::opens_local(item);
         let path = item.path.clone();
 
         let thumbnail = match row.thumbnail.clone() {
@@ -3018,12 +2980,11 @@ impl SettingsWindow {
                     .gap(px(8.))
                     .min_w_0()
                     .child(
-                        div().w_full().truncate().text_size(px(14.)).child(
-                            item.walk
-                                .as_ref()
-                                .map(|walk| walk.topic.clone())
-                                .unwrap_or_else(|| item.pretty_name.clone()),
-                        ),
+                        div()
+                            .w_full()
+                            .truncate()
+                            .text_size(px(14.))
+                            .child(fork::row_title(item)),
                     )
                     .child(self.render_recording_badges(item)),
             );
@@ -3105,20 +3066,10 @@ impl SettingsWindow {
                     RecordingMode::Instant => Hsla::from(theme.blue_100),
                     RecordingMode::Studio => theme.settings_fill(),
                 })
-                .child(glyph(if item.walk.is_some() {
-                    "icons/ux-walk.svg"
-                } else {
-                    item.mode.icon()
-                }))
-                .child(if item.walk.is_some() {
-                    "UX Walk"
-                } else {
-                    item.mode.label()
-                }),
+                .child(glyph(fork::row_icon(item)))
+                .child(fork::row_label(item)),
             )
-            .when_some(item.walk.as_ref(), |this, walk| {
-                this.child(pill(theme.settings_fill()).child(walk.status.label()))
-            })
+            .children(fork::walk_status(item).map(|label| pill(theme.settings_fill()).child(label)))
             .when_some(item.upload.clone(), |this, upload| {
                 let label = upload.label();
                 let message = upload
@@ -3182,30 +3133,7 @@ impl SettingsWindow {
         let in_progress = item.status.is_in_progress();
 
         let mut actions = div().flex().flex_row().items_center().gap(px(8.));
-
-        if let Some(walk) = &item.walk {
-            let notes = walk.file.clone();
-            actions = actions.child(self.row_button(
-                "recording-walk-notes",
-                "icons/ux-walk.svg",
-                "View walk notes",
-                false,
-                cx,
-                move |_, _, cx| {
-                    let file = notes.clone();
-                    cx.defer(move |cx| crate::ux_walk_window::open_saved(file, cx));
-                },
-            ));
-            let prompt = walk.file.clone();
-            actions = actions.child(self.row_button(
-                "recording-walk-copy",
-                "icons/copy.svg",
-                "Copy agent prompt",
-                false,
-                cx,
-                move |this, window, cx| this.copy_walk_prompt(prompt.clone(), window, cx),
-            ));
-        }
+        actions = self.fork_walk_actions(actions, item, cx);
 
         if mode == RecordingMode::Studio {
             if let Some(link) = sharing.clone() {
@@ -3232,7 +3160,8 @@ impl SettingsWindow {
             ));
         }
 
-        if !cfg!(feature = "ux-walk") && mode == RecordingMode::Instant {
+        actions = self.fork_share_actions(actions, item, in_progress || failed, cx);
+        if !crate::fork_policy::FORK && mode == RecordingMode::Instant {
             let retry_path = path.clone();
             actions = actions.child(
                 self.row_button(
@@ -3265,7 +3194,7 @@ impl SettingsWindow {
                     },
                 ),
             );
-            if let Some(link) = sharing.clone() {
+            if let Some(link) = sharing {
                 actions = actions.child(self.row_button(
                     "recording-instant-link",
                     "icons/link.svg",
@@ -3273,45 +3202,6 @@ impl SettingsWindow {
                     false,
                     cx,
                     move |_this, _window, cx| cx.open_url(&link),
-                ));
-            }
-        }
-
-        if cfg!(feature = "ux-walk") {
-            if mode == RecordingMode::Instant {
-                let play_path = path.clone();
-                actions = actions.child(self.row_button(
-                    "recording-play",
-                    "icons/play.svg",
-                    "Play video",
-                    in_progress || failed,
-                    cx,
-                    move |_, _, cx| library::ux_walk::play_instant_recording(&play_path, cx),
-                ));
-            }
-            let share_path = path.clone();
-            actions = actions.child(self.row_button(
-                "recording-share",
-                "icons/upload-arrow.svg",
-                "Share video",
-                in_progress || failed || self.recordings.sharing_busy.contains(&path),
-                cx,
-                move |this, window, cx| this.share_recording(share_path.clone(), false, window, cx),
-            ));
-            if sharing
-                .as_ref()
-                .is_some_and(|link| cap_cloud_sharing::is_owned_link(link))
-            {
-                let revoke_path = path.clone();
-                actions = actions.child(self.row_button(
-                    "recording-revoke",
-                    "icons/unplug.svg",
-                    "Revoke sharing link",
-                    self.recordings.sharing_busy.contains(&path),
-                    cx,
-                    move |this, window, cx| {
-                        this.share_recording(revoke_path.clone(), true, window, cx)
-                    },
                 ));
             }
         }
@@ -3329,107 +3219,10 @@ impl SettingsWindow {
             "recording-delete",
             "icons/trash.svg",
             tr::settings::recordings::delete(),
-            self.recordings.sharing_busy.contains(&path),
+            self.recordings.fork.busy(&path),
             cx,
             move |this, window, cx| this.delete_recording(path.clone(), window, cx),
         ))
-    }
-
-    fn share_recording(
-        &mut self,
-        path: PathBuf,
-        revoke: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if !cap_cloud_sharing::load().is_ok_and(|settings| settings.enabled) {
-            self.set_page(Page::Sharing, window, cx);
-            return;
-        }
-        if !revoke
-            && cap_project::RecordingMeta::load_for_project(&path).is_ok_and(|meta| {
-                matches!(meta.inner, cap_project::RecordingMetaInner::Studio(_))
-                    && !meta.output_path().is_file()
-            })
-        {
-            self.recordings.notice = Some(
-                "Export this recording in the editor, then choose Create shareable link.".into(),
-            );
-            self.open_editor_confirmed(path, false, window, cx);
-            return;
-        }
-        if !self.recordings.sharing_busy.insert(path.clone()) {
-            return;
-        }
-        self.recordings.notice = Some(
-            if revoke {
-                "Revoking link…"
-            } else {
-                "Sharing video only. Walk notes and browser traces stay local…"
-            }
-            .into(),
-        );
-        cx.notify();
-        cx.spawn_in(window, async move |this, cx| {
-            let task_path = path.clone();
-            let Ok(task) = cx.update(|_, cx| gpui_tokio::Tokio::spawn(cx, async move {
-                if revoke {
-                    let client = cap_cloud_sharing::SharingClient::configured()?;
-                    let mut meta = cap_project::RecordingMeta::load_for_project(&task_path).map_err(|_| "Could not read this recording.")?;
-                    let sharing = meta.sharing.as_ref().ok_or("This recording has no sharing link.")?;
-                    cap_cloud_sharing::validate_configured_link(&sharing.link)?;
-                    client.revoke(&sharing.id).await?;
-                    meta.sharing = None;
-                    meta.save_for_project().map_err(|_| "Link revoked, but its local metadata could not be updated.")?;
-                    Ok(None)
-                } else {
-                    match crate::upload::upload_exported_video(task_path, None, |_| {}, Arc::new(std::sync::atomic::AtomicBool::new(false))).await? {
-                        crate::upload::UploadResult::Success(link) => Ok(Some(link)),
-                        _ => Err("Check your sharing server and upload credential in Settings → Sharing.".into()),
-                    }
-                }
-            })) else { return; };
-            let result = task.await.unwrap_or_else(|_| Err("Sharing task stopped. Your local recording is safe.".into()));
-            let _ = this.update_in(cx, |this, window, cx| {
-                this.recordings.sharing_busy.remove(&path);
-                this.recordings.notice = Some(match result {
-                    Ok(Some(link)) => { if !this.settings.disable_auto_open_links { cx.open_url(&link); } cx.write_to_clipboard(gpui::ClipboardItem::new_string(link)); "Sharing link copied. Anyone with the full link can view it until it expires or is revoked.".into() },
-                    Ok(None) => "Sharing link revoked.".into(),
-                    Err(error) => error,
-                });
-                this.refresh_recordings(window, cx);
-                cx.notify(); window.refresh();
-            });
-        }).detach();
-    }
-
-    fn copy_walk_prompt(&mut self, file: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
-        let revision = self.recordings.copy_selection.choose(Some(file.clone()));
-        self.recordings.notice = Some("Preparing agent prompt…".into());
-        cx.notify();
-        cx.spawn_in(window, async move |this, cx| {
-            let selected = file.clone();
-            let result = cx
-                .background_executor()
-                .spawn(async move { crate::ux_walk::run_engine("prompt", &file) })
-                .await;
-            this.update_in(cx, |this, window, cx| {
-                if !this.recordings.copy_selection.accepts(&selected, revision) {
-                    return;
-                }
-                this.recordings.notice = Some(match result {
-                    Ok(prompt) => {
-                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(prompt));
-                        "Agent prompt copied".into()
-                    }
-                    Err(error) => format!("Could not copy the agent prompt: {error}"),
-                });
-                cx.notify();
-                window.refresh();
-            })
-            .ok();
-        })
-        .detach();
     }
 
     /// `TooltipIconButton`: `p-2.5 opacity-70 hover:opacity-100 rounded-full
@@ -3498,11 +3291,7 @@ impl SettingsWindow {
             self.render_project_name(window, cx).into_any_element(),
             self.render_excluded_windows(cx).into_any_element(),
             self.render_updates(cx).into_any_element(),
-            if cfg!(feature = "ux-walk") {
-                self.render_sharing_shortcut(cx)
-            } else {
-                self.render_self_host(window, cx).into_any_element()
-            },
+            self.render_self_host_or_sharing(window, cx),
             self.render_privacy(cx).into_any_element(),
         ]);
         sections
@@ -3792,11 +3581,7 @@ impl SettingsWindow {
 
         self.section(
             tr::settings::quality::instant::title(),
-            Some(if cfg!(feature = "ux-walk") {
-                "Saved as a ready-to-play video on your Mac. Choose the capture resolution here, then share from Recordings when you are ready."
-            } else {
-                tr::settings::quality::instant::description()
-            }),
+            Some(fork::instant_quality_description()),
             None,
             vec![self.rows(rows).into_any_element()],
         )
@@ -4061,14 +3846,7 @@ impl SettingsWindow {
                         )
                         .into_any_element(),
                     ),
-                    if cfg!(feature = "ux-walk") {
-                        self.setting_row(
-                            "Original recordings",
-                            Some("Sharing keeps the original recording on your Mac. Delete it from Recordings when you choose."),
-                            div().text_size(px(12.)).child("Kept locally").into_any_element(),
-                        )
-                    } else {
-                    self.setting_row(
+                    self.upload_cleanup_row(
                         tr::settings::general::recording::delete_after_upload::label(),
                         Some(tr::settings::general::recording::delete_after_upload::description()),
                         self.toggle(
@@ -4084,8 +3862,7 @@ impl SettingsWindow {
                             },
                         )
                         .into_any_element(),
-                    )
-                    },
+                    ),
                     self.setting_row(
                         tr::settings::general::recording::crash_recovery::label(),
                         Some(tr::settings::general::recording::crash_recovery::description()),
@@ -5504,7 +5281,7 @@ mod tests {
 
     // -- The Recordings page ------------------------------------------------
 
-    fn recording(name: &str, mode: RecordingMode) -> RecordingItem {
+    pub(super) fn recording(name: &str, mode: RecordingMode) -> RecordingItem {
         RecordingItem {
             thumbnail_version: None,
             walk: None,
@@ -5561,42 +5338,6 @@ mod tests {
             ["STANDUP notes"]
         );
         assert!(matching(RecordingsTab::Studio, "repro").is_empty());
-    }
-
-    #[cfg(all(target_os = "macos", feature = "ux-walk"))]
-    #[test]
-    fn ux_walk_rows_have_a_peer_filter_and_search_their_topics() {
-        let mut walk = recording("Cap recording", RecordingMode::Studio);
-        walk.walk = Some(crate::ux_walk_library::WalkSummary {
-            file: "/walk/native-walk.json".into(),
-            directory: "/walk".into(),
-            source_project: walk.path.clone(),
-            topic: "Checkout findings".into(),
-            started_at_ms: 1,
-            status: crate::ux_walk_library::WalkStatus::Saved,
-        });
-        assert!(matches_recording_filters(
-            &walk,
-            RecordingsTab::UxWalk,
-            "checkout"
-        ));
-        assert!(matches_recording_filters(
-            &walk,
-            RecordingsTab::All,
-            "cap recording"
-        ));
-        assert!(!matches_recording_filters(&walk, RecordingsTab::Studio, ""));
-        assert!(!matches_recording_filters(
-            &walk,
-            RecordingsTab::Instant,
-            ""
-        ));
-        assert!(!matches_recording_filters(
-            &recording("Studio", RecordingMode::Studio),
-            RecordingsTab::UxWalk,
-            ""
-        ));
-        assert_eq!(RecordingsTab::UxWalk.icon(), Some("icons/ux-walk.svg"));
     }
 
     /// `visibleRecordings()` / `hasMoreRecordings()` / the Load more step.
@@ -5742,20 +5483,16 @@ mod tests {
     }
 
     /// The tab strip, and the ids `emptyMessage()` interpolates.
+    #[cfg(not(all(target_os = "macos", feature = "ux-walk")))]
     #[test]
-    fn recording_tabs_match_supported_modes_with_labels_and_icons() {
-        let actual: Vec<_> = RecordingsTab::ALL
-            .iter()
-            .map(|tab| (tab.id(), tab.label(), tab.icon()))
-            .collect();
-        let expected = vec![
-            ("all", "Show all", None),
-            ("instant", "Instant", Some("icons/instant.svg")),
-            ("studio", "Studio", Some("icons/film-cut.svg")),
-            #[cfg(all(target_os = "macos", feature = "ux-walk"))]
-            ("ux-walk", "UX Walk", Some("icons/ux-walk.svg")),
-        ];
-        assert_eq!(actual, expected);
+    fn the_three_tabs_are_all_instant_studio() {
+        let ids: Vec<&str> = RecordingsTab::ALL.iter().map(|tab| tab.id()).collect();
+        assert_eq!(ids, ["all", "instant", "studio"]);
+        let labels: Vec<&str> = RecordingsTab::ALL.iter().map(|tab| tab.label()).collect();
+        assert_eq!(labels, ["Show all", "Instant", "Studio"]);
+        assert_eq!(RecordingsTab::All.icon(), None, "Show all has no glyph");
+        assert_eq!(RecordingsTab::Studio.icon(), Some("icons/film-cut.svg"));
+        assert_eq!(RecordingsTab::Instant.icon(), Some("icons/instant.svg"));
     }
 
     #[test]
