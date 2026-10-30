@@ -353,6 +353,7 @@ input:focus{border-color:#4f46e5;box-shadow:0 0 0 3px rgba(79,70,229,.15)}input:
       if (!id) throw new Error('no id');
       note.id = id; note.badge.textContent = String(id); if (note.num) note.num.textContent = `#${id}`;
       // Moved, saved or dropped before the number came back.
+      if (note.draft && note.later !== 'drop') sendDraft(note);
       if (note.reshoot && note.later !== 'drop') window.__uxwNote({ ...note.reshoot, id });
       note.reshoot = null;
       if (note.later === 'save') sendSave(note); else if (note.later === 'drop') sendDrop(note);
@@ -375,6 +376,21 @@ input:focus{border-color:#4f46e5;box-shadow:0 0 0 3px rgba(79,70,229,.15)}input:
     note.text = current.input.value.trim(); note.saved = true;
     return { id: note.id, text: note.text };
   };
+  window.__uxwFinishNotes = (accepted) => {
+    if (!card || card.edit) return;
+    const saved = accepted.find((note) => note.id === card.note.id);
+    if (!saved) return;
+    const current = closeCard();
+    current.note.text = saved.text; current.note.saved = true;
+  };
+  const sendDraft = (note) => {
+    if (note.id && note.draft) Promise.resolve(window.__uxwNote?.({ op: 'draft', id: note.id, ...note.draft })).catch(() => {});
+  };
+  const draftCard = () => {
+    if (!card || card.edit) return;
+    card.note.draft = { text: card.input.value.trim().slice(0, 2000), t: Date.now() };
+    sendDraft(card.note);
+  };
   const onUi = (e) => {
     const t = e.composedPath()[0], act = t?.closest?.('[data-act]')?.dataset.act;
     const inCard = card && card.node.contains(t);
@@ -386,7 +402,7 @@ input:focus{border-color:#4f46e5;box-shadow:0 0 0 3px rgba(79,70,229,.15)}input:
       if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); saveCard(); }
       else if (e.key === 'Escape') { e.preventDefault(); dropCard(); }
       else arm();
-    } else if (e.type === 'input' && inCard) arm();
+    } else if (e.type === 'input' && inCard) { draftCard(); arm(); }
     else if (e.type === 'mousedown' && act) e.preventDefault(); // box, pin and link clicks keep the note's (or the app's) focus
     else if (e.type === 'pointerdown' && (act === 'move' || act === 'pin' || act?.startsWith('rs-'))) { e.preventDefault(); startBox(e, act); }
     else if (e.type === 'click') {
@@ -750,7 +766,14 @@ export async function openBrowser({ url, metadataOnly = false, networkContext, a
   let noteN = 0;
   const pending = new Map(); // id -> the note event, waiting for its text
   const rel = (f) => `${path.basename(notesDir())}/${path.basename(f)}`;
-  const saveNote = (id, text) => { const n = pending.get(id); if (n) { pending.delete(id); const { page, ...event } = n; write({ ...event, text: String(text ?? '').slice(0, 2000) }, page); } };
+  const saveNote = async (id, text, writeNote = write) => {
+    const note = pending.get(id);
+    if (!note) return false;
+    const { page, drafts: _drafts, ...event } = note;
+    if (await writeNote({ ...event, text: String(text ?? '').slice(0, 2000) }, page) === false) return false;
+    if (pending.get(id) === note) pending.delete(id);
+    return true;
+  };
   const shoot = async (p, id, o) => {
     if (canCapturePage && !(await canCapturePage(p))) throw new Error('This page is outside the recorded browser window');
     const nn = String(id).padStart(2, '0'), dir = notesDir();
@@ -776,7 +799,16 @@ export async function openBrowser({ url, metadataOnly = false, networkContext, a
       return id;
     }
     const id = Number(o.id);
-    if (o.op === 'reshoot' && pending.has(id)) {
+    if (pending.has(id) && pending.get(id).page !== p) throw new Error('This annotation belongs to another page');
+    if (o.op === 'draft' && pending.has(id)) {
+      const note = pending.get(id);
+      if (!Number.isSafeInteger(o.t) || o.t < note.t || o.t > Date.now()) throw new Error('Invalid annotation draft time');
+      const drafts = note.drafts ??= [];
+      if (!drafts.length || o.t >= drafts.at(-1).t) {
+        if (drafts.at(-1)?.t === o.t) drafts.pop();
+        drafts.push({ text: String(o.text ?? '').slice(0, 2000), t: o.t });
+      }
+    } else if (o.op === 'reshoot' && pending.has(id)) {
       const { b, ...files } = await shoot(p, id, o);
       Object.assign(pending.get(id), { el: o.el, box: b, inside: (o.inside || []).slice(0, 15), moved: true, ...files });
     } else if (o.op === 'reshoot' && id > 0 && id <= noteN) {
@@ -784,7 +816,7 @@ export async function openBrowser({ url, metadataOnly = false, networkContext, a
       const { b, ...files } = await shoot(p, id, o);
       write({ ev: 'note', id, edit: true, moved: true, mode: o.mode === 'box' ? 'box' : 'pin', el: o.el, box: b, ...(o.mode === 'box' ? { inside: (o.inside || []).slice(0, 15) } : {}), ...files, url: o.url }, p);
     } else if (o.op === 'save') {
-      if (pending.has(id)) saveNote(id, o.text);
+      if (pending.has(id)) await saveNote(id, o.text);
       else if (o.edit && id > 0 && id <= noteN) write({ ev: 'note', id, edit: true, text: String(o.text ?? '').slice(0, 2000), url: o.url }, p);
     } else if (o.op === 'drop' && pending.has(id)) {
       const n = pending.get(id);
@@ -807,7 +839,7 @@ export async function openBrowser({ url, metadataOnly = false, networkContext, a
   const flushNotes = async (p) => {
     if (!pending.size) return;
     const open = p && !p.isClosed() ? await p.evaluate(() => window.__uxwOpenNote?.()).catch(() => null) : null;
-    for (const id of [...pending.keys()]) if (open?.id !== id) saveNote(id, '');
+    for (const id of [...pending.keys()]) if (open?.id !== id) await saveNote(id, '');
   };
   let ctxSel = contextSelectors;
   if (typeof ctxSel === 'string') { try { ctxSel = JSON.parse(ctxSel); } catch { ctxSel = undefined; } }
@@ -871,14 +903,17 @@ export async function openBrowser({ url, metadataOnly = false, networkContext, a
   return {
     context,
     browser,
-    async flushPendingNotes({ fromMs = 0, throughMs = Infinity, allowPage = () => true } = {}) {
+    async flushPendingNotes({ fromMs = 0, throughMs = Infinity, allowPage = () => true, writeNote = write } = {}) {
       await noteChain;
       const eligible = () => [...pending.entries()].filter(([, note]) => note.t >= fromMs && note.t <= throughMs);
       for (const page of new Set(eligible().map(([, note]) => note.page))) {
         if (page.isClosed() || !(await allowPage(page))) continue;
         const entries = eligible().filter(([, note]) => note.page === page);
-        const open = await page.evaluate((ids) => window.__uxwTakeOpenNote?.(ids), entries.map(([id]) => id));
-        for (const [id] of entries) saveNote(id, open?.id === id ? open.text : '');
+        for (const [id, note] of entries) {
+          if (pending.get(id) !== note || !(await allowPage(page))) continue;
+          const accepted = { id, text: note.drafts?.findLast((draft) => draft.t <= throughMs)?.text ?? '' };
+          if (await saveNote(id, accepted.text, writeNote)) await page.evaluate((notes) => window.__uxwFinishNotes?.(notes), [accepted]);
+        }
       }
     },
     async checkpoint(file, crop) {
