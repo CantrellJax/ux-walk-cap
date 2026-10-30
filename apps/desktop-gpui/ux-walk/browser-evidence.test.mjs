@@ -614,3 +614,102 @@ test("trusted draft ingress survives only its immediate pause while asynchronous
 		} else assert.equal(raw.includes(text), false, scenario);
 	}
 });
+
+test("native note preflight keeps the active boundary open until ACK and revokes failed or stale control", async (t) => {
+	const { prepareNativePause } = await import("./native-browser.mjs");
+	assert.equal(
+		typeof prepareNativePause,
+		"function",
+		"native Pause/Stop needs the real producer preflight",
+	);
+	for (const outcome of ["ack", "failure", "stale"]) {
+		const f = fixture(t);
+		Object.assign(f.journal, { schemaVersion: 1, state: "recording" });
+		fs.writeFileSync(f.file, JSON.stringify(f.journal));
+		let now = 100000,
+			release,
+			reject;
+		const gate = new Promise((resolve, fail) => {
+			release = resolve;
+			reject = fail;
+		});
+		const evidence = new NativeBrowserEvidence(
+			"owned-browser",
+			path.join(path.dirname(f.file), "prepared"),
+			() => now,
+		);
+		t.after(() => clearInterval(evidence.flushTimer));
+		evidence.windowId = "17";
+		evidence.start(f.file, "17");
+		const context = {
+			pages: () => [page],
+			newCDPSession: async () => ({ send: async () => ({ windowId: 17 }) }),
+		};
+		const page = { context: () => context };
+		const events = new OwnedWindowEvents(evidence);
+		const pending = prepareNativePause(
+			{
+				prepareNotePause: async ({ allowPage }) => {
+					assert.equal(await allowPage(page), true);
+					await gate;
+				},
+			},
+			evidence,
+			events,
+		);
+		pending.catch(() => {});
+		await Promise.resolve();
+		await Promise.resolve();
+		assert.equal(evidence.active.metadata.state, "recording");
+		assert.equal(
+			evidence.active.metadata.anchors.at(-1).paused,
+			false,
+			"media/UI still Recording while prefix ACK is pending",
+		);
+		now = 100020;
+		if (outcome === "failure") reject(new Error("source ACK timed out"));
+		else {
+			if (outcome === "stale")
+				evidence.active.metadata.generation = "new-owner-generation";
+			release();
+		}
+		if (outcome === "ack") {
+			await pending;
+			assert.equal(
+				evidence.active.metadata.noteSourceFencedEpoch,
+				evidence.clockEpoch,
+			);
+			assert.equal(evidence.active.metadata.anchors.at(-1).paused, false);
+		} else {
+			await assert.rejects(pending, /ACK timed out|another recording|changed/);
+			if (outcome === "failure") {
+				assert.equal(evidence.active, null);
+				assert.equal(
+					JSON.parse(
+						fs.readFileSync(
+							path.join(path.dirname(f.file), "browser-evidence.json"),
+							"utf8",
+						),
+					).state,
+					"failed",
+				);
+			} else
+				assert.equal(
+					evidence.active.metadata.generation,
+					"new-owner-generation",
+				);
+		}
+		if (outcome !== "ack") {
+			await events.write(
+				{ ev: "note", id: 1, t: 100010, text: "LATE_OLD_PREFIX" },
+				page,
+			);
+			const raw = fs.readFileSync(
+				path.join(path.dirname(f.file), "browser-evidence.jsonl"),
+				"utf8",
+			);
+			if (outcome === "failure")
+				assert.equal(raw.includes("LATE_OLD_PREFIX"), false);
+		}
+	}
+});
