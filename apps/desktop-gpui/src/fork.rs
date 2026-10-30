@@ -3,6 +3,9 @@ pub mod entitlement;
 #[cfg(all(test, feature = "ux-walk"))]
 #[path = "fork_identity_tests.rs"]
 pub mod fork_identity_tests;
+#[cfg(all(test, feature = "ux-walk"))]
+#[path = "fork_link_tests.rs"]
+pub mod fork_link_tests;
 #[path = "fork_policy.rs"]
 pub mod fork_policy;
 #[path = "mode_choice.rs"]
