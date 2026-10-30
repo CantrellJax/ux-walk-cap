@@ -387,6 +387,7 @@ test("boundary note drains retain ownership and pause fences across asynchronous
 							false,
 							"unscoped paused note remains refused",
 						);
+						await events.write(raw, page);
 						return;
 					}
 					const pending = events.write(
