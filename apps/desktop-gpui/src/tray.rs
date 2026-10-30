@@ -651,8 +651,8 @@ pub fn build_menu(mode: Mode, previous: &[PreviousItem], version: &str) -> Vec<E
     entries.push(Entry::disabled(tr::tray::upload_logs()));
     entries.push(Entry::Separator);
 
-    let version = crate::menus::branded(&tr::tray::version(version));
-    let quit = crate::menus::branded(tr::tray::quit());
+    let version = tr::tray::version(version);
+    let quit = tr::tray::quit();
     if cfg!(target_os = "macos") {
         entries.push(Entry::item(quit, TrayItem::Quit));
         entries.push(Entry::SectionHeader { title: version });
@@ -671,8 +671,8 @@ pub fn build_onboarding_menu(version: &str) -> Vec<Entry> {
             TrayItem::RequestPermissions,
         ),
         Entry::Separator,
-        Entry::disabled(crate::menus::branded(&tr::tray::version(version))),
-        Entry::item(crate::menus::branded(tr::tray::quit()), TrayItem::Quit),
+        Entry::disabled(tr::tray::version(version)),
+        Entry::item(tr::tray::quit(), TrayItem::Quit),
     ]
 }
 
@@ -2224,7 +2224,12 @@ mod tests {
         let menu = build_onboarding_menu("0.1.0");
         assert_eq!(
             titles(&menu),
-            vec!["Request Permissions", "-", "Cap UX v0.1.0", "Quit Cap UX",]
+            vec![
+                "Request Permissions",
+                "-",
+                fork_brand::text_static("Cap v0.1.0"),
+                fork_brand::text_static("Quit Cap"),
+            ]
         );
     }
 
@@ -2257,9 +2262,15 @@ mod tests {
         // The version row is a section header below Quit on macOS and a
         // disabled row above it everywhere else.
         if cfg!(target_os = "macos") {
-            expected.extend(["Quit Cap UX", "Cap UX v0.1.0"]);
+            expected.extend([
+                fork_brand::text_static("Quit Cap"),
+                fork_brand::text_static("Cap v0.1.0"),
+            ]);
         } else {
-            expected.extend(["Cap UX v0.1.0", "Quit Cap UX"]);
+            expected.extend([
+                fork_brand::text_static("Cap v0.1.0"),
+                fork_brand::text_static("Quit Cap"),
+            ]);
         }
         assert_eq!(titles(&menu), expected);
     }
@@ -2395,7 +2406,7 @@ mod tests {
             if cfg!(target_os = "macos") {
                 vec!["Upload Logs"]
             } else {
-                vec!["Upload Logs", "Cap UX v0.1.0"]
+                vec!["Upload Logs", fork_brand::text_static("Cap v0.1.0")]
             }
         );
     }

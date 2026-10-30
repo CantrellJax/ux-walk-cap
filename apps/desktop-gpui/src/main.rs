@@ -45,6 +45,8 @@ mod entitlement;
 mod feeds;
 mod focus_border;
 mod foreign_window;
+#[cfg(all(test, feature = "ux-walk"))]
+mod fork_identity_tests;
 #[cfg(debug_assertions)]
 mod glass_probe;
 mod hotkeys;
@@ -442,13 +444,13 @@ fn main() {
                     titlebar: None,
                     #[cfg(target_os = "windows")]
                     titlebar: Some(gpui::TitlebarOptions {
-                        title: Some("Cap UX".into()),
+                        title: Some(fork_brand::APP_NAME.into()),
                         appears_transparent: true,
                         ..Default::default()
                     }),
                     #[cfg(target_os = "linux")]
                     titlebar: Some(gpui::TitlebarOptions {
-                        title: Some("Cap UX".into()),
+                        title: Some(fork_brand::APP_NAME.into()),
                         ..Default::default()
                     }),
                     #[cfg(target_os = "linux")]

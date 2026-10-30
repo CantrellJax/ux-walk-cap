@@ -29,6 +29,7 @@ ux-walk = []
 
 [dependencies]
 cap-cloud-sharing = { path = "../../crates/cloud-sharing" }
+fork-brand = { path = "../../crates/fork-brand" }
 cap-audio = { path = "../../crates/audio" }
 cap-cli-install = { path = "../../crates/cli-install" }
 cap-gpui-kernels = { path = "kernels" }
@@ -184,6 +185,8 @@ whisper-rs = "0.11.0"
 
 [build-dependencies]
 cap-i18n-build = { path = "i18n-build" }
+fork-brand = { path = "../../crates/fork-brand" }
+toml = "1"
 cc = "1.4"
 tauri-winres = "0.3.5"
 

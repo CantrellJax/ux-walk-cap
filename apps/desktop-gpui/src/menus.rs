@@ -42,58 +42,7 @@ use crate::{
 
 /// `productName` in `tauri.conf.json`, which is what macOS renames the first
 /// submenu to.
-pub const APP_NAME: &str = "Cap UX";
-
-/// Catalog strings name the product "Cap"; this swaps the standalone word for
-/// [`APP_NAME`] so the fork's name survives translation.
-pub fn branded(text: &str) -> String {
-    let mut out = String::with_capacity(text.len() + 8);
-    let mut rest = text;
-    while let Some(index) = rest.find("Cap") {
-        let (head, tail) = rest.split_at(index);
-        let after = &tail[3..];
-        let standalone = !head
-            .chars()
-            .next_back()
-            .is_some_and(|c| c.is_ascii_alphanumeric())
-            && !after
-                .chars()
-                .next()
-                .is_some_and(|c| c.is_ascii_alphanumeric())
-            && !after.starts_with(" UX");
-        out.push_str(head);
-        out.push_str(if standalone { APP_NAME } else { "Cap" });
-        rest = after;
-    }
-    out.push_str(rest);
-    out
-}
-
-/// The fork's own wording in Cap UX builds, the catalog's everywhere else.
-pub fn fork_text(fork: &'static str, upstream: fn() -> &'static str) -> &'static str {
-    if cfg!(feature = "ux-walk") {
-        fork
-    } else {
-        upstream()
-    }
-}
-
-/// [`branded`] for catalog text held as `&'static str`. Each distinct catalog
-/// string is rebranded once and kept for the life of the process.
-pub fn branded_static(text: &'static str) -> &'static str {
-    static CACHE: std::sync::LazyLock<
-        std::sync::Mutex<std::collections::HashMap<&'static str, &'static str>>,
-    > = std::sync::LazyLock::new(Default::default);
-    if !text.contains("Cap") {
-        return text;
-    }
-    let mut cache = CACHE
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    *cache
-        .entry(text)
-        .or_insert_with(|| &*Box::leak(branded(text).into_boxed_str()))
-}
+pub const APP_NAME: &str = fork_brand::APP_NAME;
 
 struct MenuRegistration(UpdateRow);
 
@@ -408,7 +357,7 @@ pub fn build_menus(update_status: &updates::UpdateStatus, settings_enabled: bool
             name: APP_NAME.into(),
             disabled: false,
             items: vec![
-                MenuItem::action(branded(tr::menu::app::about()), About),
+                MenuItem::action(tr::menu::app::about(), About),
                 MenuItem::action(update_row.title, CheckForUpdate).disabled(!update_row.enabled),
                 MenuItem::separator(),
                 MenuItem::action(tr::menu::app::settings(), OpenSettings)
@@ -416,10 +365,10 @@ pub fn build_menus(update_status: &updates::UpdateStatus, settings_enabled: bool
                 MenuItem::separator(),
                 MenuItem::os_submenu(tr::menu::app::services(), SystemMenuType::Services),
                 MenuItem::separator(),
-                MenuItem::action(branded(tr::menu::app::hide()), HideSelf),
+                MenuItem::action(tr::menu::app::hide(), HideSelf),
                 MenuItem::action(tr::menu::app::hide_others(), HideOthers),
                 MenuItem::separator(),
-                MenuItem::action(branded(tr::menu::app::quit()), Quit),
+                MenuItem::action(tr::menu::app::quit(), Quit),
             ],
         },
         Menu {
@@ -810,7 +759,7 @@ fn apply_quit_action(action: QuitAction, cx: &mut App) {
                     cx.global_mut::<QuitCoordinator>().gate.cancel_exit();
                     tracing::error!(%error, "quit canceled because editor changes could not be saved");
                     cx.spawn(async move |_| {
-                        platform::alert_dialog(&branded(tr::dialog::quit::still_open()), &error);
+                        platform::alert_dialog(tr::dialog::quit::still_open(), &error);
                     })
                     .detach();
                     return;
@@ -824,11 +773,11 @@ fn apply_quit_action(action: QuitAction, cx: &mut App) {
             cx.global_mut::<QuitCoordinator>().observer = None;
             let message = RecordingSession::global(cx).update(cx, |session, cx| {
                 let message = match session.error.as_deref() {
-                    Some(error) => branded(&tr::dialog::quit::canceled(
-                        crate::i18n::messages::localize(error),
-                    )),
-                    None if action == QuitAction::TimedOut => branded(tr::dialog::quit::pending()),
-                    None => branded(tr::dialog::quit::unconfirmed()),
+                    Some(error) => {
+                        tr::dialog::quit::canceled(crate::i18n::messages::localize(error))
+                    }
+                    None if action == QuitAction::TimedOut => tr::dialog::quit::pending().into(),
+                    None => tr::dialog::quit::unconfirmed().into(),
                 };
                 session.error = Some(message.clone());
                 cx.notify();
@@ -836,7 +785,7 @@ fn apply_quit_action(action: QuitAction, cx: &mut App) {
             });
             tracing::warn!(%message);
             cx.spawn(async move |_| {
-                platform::alert_dialog(&branded(tr::dialog::quit::still_open()), &message)
+                platform::alert_dialog(tr::dialog::quit::still_open(), &message)
             })
             .detach();
         }
@@ -1299,19 +1248,19 @@ mod tests {
             menus,
             vec![
                 (
-                    "Cap UX".to_string(),
+                    fork_brand::text("Cap"),
                     vec![
-                        "About Cap UX".to_string(),
+                        fork_brand::text("About Cap"),
                         "Check for Update".into(),
                         "-".into(),
                         tr::menu::app::settings().into(),
                         "-".into(),
                         "Services".into(),
                         "-".into(),
-                        "Hide Cap UX".into(),
+                        fork_brand::text("Hide Cap"),
                         "Hide Others".into(),
                         "-".into(),
-                        "Quit Cap UX".into(),
+                        fork_brand::text("Quit Cap"),
                     ]
                 ),
                 ("File".into(), expected_file_items,),

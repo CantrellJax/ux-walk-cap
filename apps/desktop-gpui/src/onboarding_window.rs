@@ -204,32 +204,12 @@ static MODES: &[ModeDetail] = &[
         mode: ModeChoice::Capture(Mode::Instant),
         title: tr::onboarding::modes::instant::title,
         tagline: tr::onboarding::modes::instant::tagline,
-        description: || {
-            crate::menus::fork_text(
-                "Record a ready-to-play video locally. Share it through your chosen server when you are ready.",
-                tr::onboarding::modes::instant::description,
-            )
-        },
+        description: tr::onboarding::modes::instant::description,
         icon: "icons/instant.svg",
         features: [
-            || {
-                crate::menus::fork_text(
-                    "Ready-to-play local video",
-                    tr::onboarding::modes::instant::feature_1,
-                )
-            },
-            || {
-                crate::menus::fork_text(
-                    "Choose when to share",
-                    tr::onboarding::modes::instant::feature_2,
-                )
-            },
-            || {
-                crate::menus::fork_text(
-                    "Your own sharing server",
-                    tr::onboarding::modes::instant::feature_3,
-                )
-            },
+            tr::onboarding::modes::instant::feature_1,
+            tr::onboarding::modes::instant::feature_2,
+            tr::onboarding::modes::instant::feature_3,
             tr::onboarding::modes::instant::feature_4,
         ],
     },
@@ -298,51 +278,33 @@ impl ModeSelection {
     }
 }
 
+const CARDS_W: gpui::Pixels = px(if cfg!(target_os = "macos") {
+    720.
+} else {
+    540.
+});
+
 const FAQ: [(fn() -> &'static str, fn() -> &'static str); 5] = [
     (
-        || {
-            crate::menus::fork_text(
-                "Is Cap UX free to use?",
-                tr::onboarding::faq::free::question,
-            )
-        },
-        || {
-            crate::menus::fork_text(
-                "Cap UX is open source under AGPLv3, including for personal and commercial work. Connected cloud services have their own terms and costs.",
-                tr::onboarding::faq::free::answer,
-            )
-        },
+        tr::onboarding::faq::free::question,
+        tr::onboarding::faq::free::answer,
     ),
     (
-        || {
-            crate::menus::fork_text(
-                "How do the recording modes differ?",
-                tr::onboarding::faq::instant_vs_studio::question,
-            )
-        },
-        || {
-            crate::menus::fork_text(
-                "Instant records a ready-to-play local video. Studio records locally for editing. Screenshot captures a still image. UX Walk opens a fresh browser window and keeps its recording, notes, chapters and transcripts together.",
-                tr::onboarding::faq::instant_vs_studio::answer,
-            )
-        },
+        tr::onboarding::faq::instant_vs_studio::question,
+        tr::onboarding::faq::instant_vs_studio::answer,
     ),
-    (tr::onboarding::faq::storage::question, || {
-        crate::menus::fork_text(
-            "All recordings stay on your computer. Nothing uploads automatically. Choose a server in Settings → Sharing, then share individual videos or screenshots.",
-            tr::onboarding::faq::storage::answer,
-        )
-    }),
+    (
+        tr::onboarding::faq::storage::question,
+        tr::onboarding::faq::storage::answer,
+    ),
     (
         tr::onboarding::faq::shortcuts::question,
         tr::onboarding::faq::shortcuts::answer,
     ),
-    (tr::onboarding::faq::sharing::question, || {
-        crate::menus::fork_text(
-            "Choose your server and link expiry in Settings → Sharing. Use Share on a recording or screenshot to create an expiring link. You can also export files and use any sharing service you prefer.",
-            tr::onboarding::faq::sharing::answer,
-        )
-    }),
+    (
+        tr::onboarding::faq::sharing::question,
+        tr::onboarding::faq::sharing::answer,
+    ),
 ];
 
 pub struct OnboardingWindow {
@@ -1268,7 +1230,7 @@ impl OnboardingWindow {
             .items_center()
             .gap(px(12.))
             .child(img("branding/cap-ux.png").size(px(36.)))
-            .child(copy("Cap UX", 28., ink).font_weight(FontWeight::SEMIBOLD));
+            .child(copy(fork_brand::APP_NAME, 28., ink).font_weight(FontWeight::SEMIBOLD));
 
         let shadow = |color: u32, y: f32, blur: f32, spread: f32, inset: bool| gpui::BoxShadow {
             color: rgba(color).into(),
@@ -1458,12 +1420,9 @@ impl OnboardingWindow {
             .gap(px(32.))
             .child(self.heading(
                 tr::onboarding::overview::title(),
-                crate::menus::fork_text(
-                    "Share a quick capture, edit a polished recording, or walk through your product with notes and chapters.",
-                    tr::onboarding::overview::subtitle,
-                ),
+                tr::onboarding::overview::subtitle(),
             ))
-            .child(div().flex().gap(px(16.)).w_full().max_w(px(if cfg!(target_os = "macos") { 720. } else { 540. })).children(
+            .child(div().flex().gap(px(16.)).w_full().max_w(CARDS_W).children(
                 MODES.iter().enumerate().map(|(index, mode)| {
                     let paper = stage::Paper::new(&theme);
                     let card = self
@@ -1620,7 +1579,7 @@ impl OnboardingWindow {
             .gap(px(32.))
             .child(self.heading(
                 tr::onboarding::toggle::title(),
-                crate::menus::branded_static(tr::onboarding::toggle::subtitle()),
+                tr::onboarding::toggle::subtitle(),
             ))
             .child(
                 div()
@@ -1707,8 +1666,8 @@ impl OnboardingWindow {
             .px(px(48.))
             .gap(px(24.))
             .child(self.heading(
-                crate::menus::branded_static(tr::onboarding::customize::title()),
-                crate::menus::branded_static(tr::onboarding::customize::subtitle()),
+                tr::onboarding::customize::title(),
+                tr::onboarding::customize::subtitle(),
             ))
             .child(
                 div()
@@ -1725,17 +1684,11 @@ impl OnboardingWindow {
                             ),
                             (
                                 tr::onboarding::customize::s3::title(),
-                                crate::menus::fork_text(
-                                    "Host your own sharing server with private storage, including Cloudflare R2",
-                                    tr::onboarding::customize::s3::description,
-                                ),
+                                tr::onboarding::customize::s3::description(),
                             ),
                             (
                                 tr::onboarding::customize::domain::title(),
-                                crate::menus::fork_text(
-                                    "Use your own server and domain for shareable links",
-                                    tr::onboarding::customize::domain::description,
-                                ),
+                                tr::onboarding::customize::domain::description(),
                             ),
                             (
                                 tr::onboarding::customize::preferences::title(),
@@ -1868,11 +1821,11 @@ impl OnboardingWindow {
         let last = self.permissions_only || self.step == Step::Faq;
         let relaunch = self.step == Step::Permissions && !disabled && self.needs_relaunch();
         let label = if relaunch {
-            crate::menus::branded_static(tr::onboarding::nav::relaunch())
+            tr::onboarding::nav::relaunch()
         } else if self.permissions_only {
-            crate::menus::branded_static(tr::onboarding::nav::continue_to_cap())
+            tr::onboarding::nav::continue_to_cap()
         } else if last {
-            crate::menus::branded_static(tr::onboarding::nav::start())
+            tr::onboarding::nav::start()
         } else {
             tr::onboarding::nav::next()
         };
@@ -2432,11 +2385,7 @@ impl OnboardingWindow {
                             .items_center()
                             .gap(px(8.))
                             .child(self.demo_window_dots())
-                            .child(copy(
-                                crate::menus::branded_static(tr::onboarding::demo::editor()),
-                                10.,
-                                theme.gray_11,
-                            )),
+                            .child(copy(tr::onboarding::demo::editor(), 10., theme.gray_11)),
                     )
                     .child(
                         copy(tr::onboarding::demo::export(), 9., gpui::white())

@@ -1007,9 +1007,7 @@ const STUDIO_OUTCOMES: [(store::PostStudioBehaviour, OutcomeOption); 3] = [
         store::PostStudioBehaviour::ShowOverlay,
         OutcomeOption {
             icon: "icons/app-window.svg",
-            label: || {
-                crate::menus::branded_static(tr::settings::shortcuts::outcome::studio_show_cap())
-            },
+            label: tr::settings::shortcuts::outcome::studio_show_cap,
             hint: tr::settings::shortcuts::outcome::studio_show_cap_hint,
         },
     ),
@@ -1248,24 +1246,12 @@ fn shortcut_effect(
             },
         },
         "openRecordingPicker" => ShortcutEffect {
-            phrase: || crate::menus::branded_static(tr::settings::shortcuts::effect::open_picker()),
-            sentence: || {
-                crate::menus::branded_static(tr::settings::shortcuts::sentence::open_picker())
-            },
+            phrase: tr::settings::shortcuts::effect::open_picker,
+            sentence: tr::settings::shortcuts::sentence::open_picker,
         },
         "cycleRecordingMode" => ShortcutEffect {
-            phrase: || {
-                crate::menus::fork_text(
-                    "switch between Studio, Instant, Screenshot and UX Walk mode",
-                    tr::settings::shortcuts::effect::cycle_mode,
-                )
-            },
-            sentence: || {
-                crate::menus::fork_text(
-                    "Switch between Studio, Instant, Screenshot and UX Walk mode.",
-                    tr::settings::shortcuts::sentence::cycle_mode,
-                )
-            },
+            phrase: tr::settings::shortcuts::effect::cycle_mode,
+            sentence: tr::settings::shortcuts::sentence::cycle_mode,
         },
         "stopRecording" => ShortcutEffect {
             phrase: tr::settings::shortcuts::effect::stop,
@@ -1631,7 +1617,7 @@ impl SettingsWindow {
             self.render_outcome_panel(
                 "outcome-screenshot",
                 tr::settings::shortcuts::after_screenshot::title(),
-                crate::menus::branded_static(tr::settings::shortcuts::after_screenshot::hint()),
+                tr::settings::shortcuts::after_screenshot::hint(),
                 &SCREENSHOT_OUTCOMES
                     .iter()
                     .map(|(value, option)| {
@@ -1728,10 +1714,8 @@ impl SettingsWindow {
             )
             .into_any_element(),
             self.section(
-                crate::menus::branded_static(tr::settings::shortcuts::recording_title()),
-                Some(crate::menus::branded_static(
-                    tr::settings::shortcuts::recording_description(),
-                )),
+                tr::settings::shortcuts::recording_title(),
+                Some(tr::settings::shortcuts::recording_description()),
                 None,
                 vec![card("shortcuts-recording", recording, cx)],
             )
@@ -2210,10 +2194,8 @@ impl SettingsWindow {
 
         vec![
             self.section(
-                crate::menus::branded_static(tr::settings::cli::title()),
-                Some(crate::menus::branded_static(
-                    tr::settings::cli::description(),
-                )),
+                tr::settings::cli::title(),
+                Some(tr::settings::cli::description()),
                 None,
                 vec![self.card(true).child(body).into_any_element()],
             )
@@ -2879,9 +2861,8 @@ impl SettingsWindow {
 
         // A stray click costs a couple of minutes of hijacked screen and loud
         // beeps, so it is confirmed the way the Tauri app confirms it.
-        let message = crate::menus::branded(&tr::settings::feedback::diagnostic::confirm_body(
-            diagnostics::DEFAULT_DURATION_SECS,
-        ));
+        let message =
+            tr::settings::feedback::diagnostic::confirm_body(diagnostics::DEFAULT_DURATION_SECS);
         cx.spawn_in(window, async move |this, cx| {
             if !crate::platform::confirm_dialog(
                 tr::settings::feedback::diagnostic::confirm_title(),
@@ -3191,9 +3172,7 @@ impl SettingsWindow {
                     .text_size(px(12.))
                     .line_height(px(18.))
                     .text_color(theme.settings_muted())
-                    .child(crate::menus::branded_static(
-                        tr::settings::feedback::diagnostic::warning_body(),
-                    )),
+                    .child(tr::settings::feedback::diagnostic::warning_body()),
             );
 
         let mode = self.pages.diagnostic_mode;
@@ -3261,9 +3240,7 @@ impl SettingsWindow {
                         div()
                             .text_size(px(11.))
                             .text_color(theme.settings_muted())
-                            .child(crate::menus::branded_static(
-                                tr::settings::feedback::diagnostic::no_cli(),
-                            )),
+                            .child(tr::settings::feedback::diagnostic::no_cli()),
                     );
                 }
             }
@@ -3311,10 +3288,7 @@ impl SettingsWindow {
                 }
                 if let Some(error) = sync_test_error {
                     let error = if error == NO_SELFTEST_BINARY {
-                        crate::menus::branded_static(
-                            tr::settings::feedback::diagnostic::no_cli_sync(),
-                        )
-                        .to_string()
+                        tr::settings::feedback::diagnostic::no_cli_sync().to_string()
                     } else {
                         error.clone()
                     };
@@ -3337,10 +3311,7 @@ impl SettingsWindow {
                     .label(if self.pages.diagnostic_upload == UploadStatus::Pending {
                         tr::settings::feedback::diagnostic::sending()
                     } else {
-                        crate::menus::fork_text(
-                            "Send to upstream",
-                            tr::settings::feedback::diagnostic::send,
-                        )
+                        tr::settings::feedback::diagnostic::send()
                     })
                     .disabled_settings(
                         &theme,
@@ -3471,17 +3442,15 @@ impl SettingsWindow {
     pub(crate) fn render_feedback(&self, cx: &mut Context<Self>) -> Vec<gpui::AnyElement> {
         let theme = self.theme;
         if cfg!(feature = "ux-walk") {
-            return vec![self.section("Cap UX feedback", Some("Report a bug, suggest an improvement or share your workflow with the Cap UX project."), None, vec![
-                ui::Button::settings(&theme, "cap-ux-feedback", ui::ButtonVariant::Dark, ui::ButtonSize::Sm).label("Open GitHub issues ↗").on_click(|_, _, cx| cx.open_url("https://github.com/CantrellJax/ux-walk-cap/issues")).into_any_element()
+            return vec![self.section(fork_brand::text_static("Cap feedback"), Some(fork_brand::text_static("Report a bug, suggest an improvement or share your workflow with the Cap project.")), None, vec![
+                ui::Button::settings(&theme, "cap-ux-feedback", ui::ButtonVariant::Dark, ui::ButtonSize::Sm).label("Open GitHub issues ↗").on_click(|_, _, cx| cx.open_url(fork_brand::ISSUES_URL)).into_any_element()
             ]).into_any_element()];
         }
         let pending = self.pages.feedback == FeedbackStatus::Pending;
         // `disabled={feedback().trim().length < 4}`.
         let submit_disabled = pending || self.pages.feedback_draft.trim().chars().count() < 4;
         self.pages.feedback_input.update(cx, |input, _| {
-            input.set_placeholder(crate::menus::branded_static(
-                tr::settings::feedback::placeholder(),
-            ))
+            input.set_placeholder(tr::settings::feedback::placeholder())
         });
 
         // The `<textarea>`: `p-2 w-full h-32 text-[13px] rounded-md border
@@ -3671,19 +3640,15 @@ impl SettingsWindow {
 
         vec![
             self.section(
-                crate::menus::branded_static(tr::settings::feedback::title()),
-                Some(crate::menus::branded_static(
-                    tr::settings::feedback::description(),
-                )),
+                tr::settings::feedback::title(),
+                Some(tr::settings::feedback::description()),
                 None,
                 vec![form.into_any_element()],
             )
             .into_any_element(),
             self.section(
-                crate::menus::branded_static(tr::settings::feedback::community_title()),
-                Some(crate::menus::branded_static(
-                    tr::settings::feedback::community_description(),
-                )),
+                tr::settings::feedback::community_title(),
+                Some(tr::settings::feedback::community_description()),
                 None,
                 vec![discord.into_any_element()],
             )
@@ -3696,10 +3661,8 @@ impl SettingsWindow {
             )
             .into_any_element(),
             self.section(
-                crate::menus::branded_static(tr::settings::feedback::debug_title()),
-                Some(crate::menus::branded_static(
-                    tr::settings::feedback::debug_description(),
-                )),
+                tr::settings::feedback::debug_title(),
+                Some(tr::settings::feedback::debug_description()),
                 None,
                 vec![upload_logs.into_any_element()],
             )
@@ -3791,11 +3754,11 @@ impl SettingsWindow {
     pub(crate) fn render_changelog(&self, _cx: &mut Context<Self>) -> Vec<gpui::AnyElement> {
         let theme = self.theme;
         if cfg!(feature = "ux-walk") {
-            return vec![self.section("Cap UX updates", Some("Native UX Walk recording, notes, chapters, transcripts and explicit agent handoffs."), None, vec![
+            return vec![self.section(fork_brand::text_static("Cap updates"), Some("Native UX Walk recording, notes, chapters, transcripts and explicit agent handoffs."), None, vec![
                 self.card(true).child(div().flex().flex_col().items_start().gap(px(12.))
-                    .child(div().text_size(px(13.)).line_height(px(20.)).child("This is a developer preview. Follow Cap UX releases and source changes on GitHub."))
-                    .child(ui::Button::settings(&theme, "cap-ux-releases", ui::ButtonVariant::Dark, ui::ButtonSize::Sm).label("Cap UX releases ↗").on_click(|_, _, cx| cx.open_url("https://github.com/CantrellJax/ux-walk-cap/releases")))
-                    .child(ui::Button::settings(&theme, "cap-ux-changes", ui::ButtonVariant::Gray, ui::ButtonSize::Sm).label("View source changes ↗").on_click(|_, _, cx| cx.open_url("https://github.com/CantrellJax/ux-walk-cap/commits/main/")))
+                    .child(div().text_size(px(13.)).line_height(px(20.)).child(fork_brand::text("This is a developer preview. Follow Cap releases and source changes on GitHub.")))
+                    .child(ui::Button::settings(&theme, "cap-ux-releases", ui::ButtonVariant::Dark, ui::ButtonSize::Sm).label(fork_brand::text("Cap releases ↗")).on_click(|_, _, cx| cx.open_url(fork_brand::RELEASES_URL)))
+                    .child(ui::Button::settings(&theme, "cap-ux-changes", ui::ButtonVariant::Gray, ui::ButtonSize::Sm).label("View source changes ↗").on_click(|_, _, cx| cx.open_url(fork_brand::CHANGES_URL)))
                 ).into_any_element()
             ]).into_any_element()];
         }
@@ -4937,12 +4900,7 @@ impl SettingsWindow {
             (
                 "Google Drive",
                 "icons/google-drive.svg",
-                crate::menus::fork_text(
-                    "Connect Google Drive for new shareable link uploads. Cap UX stores new videos in \
-                     a private cloud folder in your Drive and continues serving them through Cap UX \
-                     after normal access checks.",
-                    tr::settings::integrations::google_drive_description,
-                ),
+                tr::settings::integrations::google_drive_description(),
                 IntegrationsView::GoogleDrive,
             ),
             (
@@ -5031,10 +4989,8 @@ impl SettingsWindow {
 
         vec![
             self.section(
-                crate::menus::branded_static(tr::settings::integrations::title()),
-                Some(crate::menus::branded_static(
-                    tr::settings::integrations::description(),
-                )),
+                tr::settings::integrations::title(),
+                Some(tr::settings::integrations::description()),
                 None,
                 vec![cards.into_any_element()],
             )
@@ -5189,7 +5145,7 @@ impl SettingsWindow {
                     .text_size(px(12.))
                     .line_height(px(18.))
                     .text_color(theme.settings_muted())
-                    .child(crate::menus::branded(before_guide))
+                    .child(before_guide.to_string())
                     .child(
                         div()
                             .id("s3-guide-link")
@@ -5287,11 +5243,7 @@ impl SettingsWindow {
                 header,
                 self.section(
                     tr::settings::integrations::gdrive::connection_title(),
-                    Some(crate::menus::fork_text(
-                        "Google Drive stores new uploads in a private cloud folder in your Drive. \
-                         Existing upstream-hosted and S3 videos keep using their current storage.",
-                        tr::settings::integrations::gdrive::connection_description,
-                    )),
+                    Some(tr::settings::integrations::gdrive::connection_description()),
                     None,
                     vec![self.render_sign_in_required()],
                 )
@@ -5459,11 +5411,7 @@ impl SettingsWindow {
             header,
             self.section(
                 tr::settings::integrations::gdrive::connection_title(),
-                Some(crate::menus::fork_text(
-                    "Google Drive stores new uploads in a private cloud folder in your Drive. \
-                     Existing upstream-hosted and S3 videos keep using their current storage.",
-                    tr::settings::integrations::gdrive::connection_description,
-                )),
+                Some(tr::settings::integrations::gdrive::connection_description()),
                 None,
                 vec![self.card(true).child(card).into_any_element()],
             )
@@ -5997,7 +5945,7 @@ fn default_action(kind: ActionType) -> Action {
         },
         ActionType::RecognizeTextToClipboard => Action::RecognizeTextToClipboard,
         ActionType::Notify => Action::Notify {
-            title_template: "Cap UX".to_string(),
+            title_template: crate::menus::APP_NAME.to_string(),
             body_template: String::new(),
         },
         ActionType::OpenEditor => Action::OpenEditor,
@@ -6223,11 +6171,7 @@ const TEMPLATES: [Template; 8] = [
     Template {
         id: "ocr-screenshot",
         name: tr::settings::automations::template::ocr_screenshot::name,
-        description: || {
-            crate::menus::branded_static(
-                tr::settings::automations::template::ocr_screenshot::description(),
-            )
-        },
+        description: tr::settings::automations::template::ocr_screenshot::description,
         icon: "icons/scan-text.svg",
         build: || {
             template_rule(
@@ -6800,10 +6744,8 @@ impl SettingsWindow {
 
         vec![
             self.section(
-                crate::menus::branded_static(tr::settings::automations::title()),
-                Some(crate::menus::branded_static(
-                    tr::settings::automations::description(),
-                )),
+                tr::settings::automations::title(),
+                Some(tr::settings::automations::description()),
                 None,
                 rule_content,
             )
@@ -7404,9 +7346,7 @@ impl SettingsWindow {
                         .text_size(px(12.))
                         .line_height(px(18.))
                         .text_color(Hsla::from(theme.amber_11))
-                        .child(crate::menus::branded_static(
-                            tr::settings::automations::dangerous(),
-                        )),
+                        .child(tr::settings::automations::dangerous()),
                 )
             })
             .when(compatibility_checked, |this| {
@@ -7416,9 +7356,7 @@ impl SettingsWindow {
                         .text_size(px(12.))
                         .line_height(px(18.))
                         .text_color(Hsla::from(theme.amber_11))
-                        .child(crate::menus::branded_static(
-                            tr::settings::automations::compatibility_checked(),
-                        )),
+                        .child(tr::settings::automations::compatibility_checked()),
                 )
             })
             .child(footer)
@@ -8470,7 +8408,7 @@ mod tests {
                 "open UX Walk setup with the recorder’s capture and audio controls".into()
             }
             "openUxWalkNotes" => "open notes for your current or most recent UX Walk".into(),
-            "openRecordingPicker" => "open Cap UX so you can choose what to record".into(),
+            "openRecordingPicker" => fork_brand::text("open Cap so you can choose what to record"),
             "cycleRecordingMode" if cfg!(feature = "ux-walk") => {
                 "switch between Studio, Instant, Screenshot and UX Walk mode".into()
             }

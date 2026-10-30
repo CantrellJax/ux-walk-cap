@@ -2915,7 +2915,7 @@ impl MainWindow {
                 storage.available_bytes as f64 / 1_073_741_824.0
             ));
             let detail = if can_start {
-                crate::menus::branded(&tr::main::storage::can_start(&available))
+                tr::main::storage::can_start(&available)
             } else {
                 tr::main::storage::blocked(&available)
             };
@@ -4424,9 +4424,7 @@ impl MainWindow {
                         .flex_col()
                         .gap(px(8.))
                         .text_size(px(12.))
-                        .child(crate::menus::branded_static(
-                            tr::main::recording::paused_notice(),
-                        ))
+                        .child(tr::main::recording::paused_notice())
                         .child(
                             div()
                                 .id("resume-clean-recording")
@@ -6662,13 +6660,13 @@ impl MainWindow {
             DeviceMenu::Camera => "camera",
             DeviceMenu::Microphone => "microphone",
         };
-        let message = crate::menus::branded_static(match (menu, denied, requesting) {
+        let message = match (menu, denied, requesting) {
             (DeviceMenu::Camera, true, _) => tr::main::device::access::camera_denied(),
             (DeviceMenu::Microphone, true, _) => tr::main::device::access::microphone_denied(),
             (_, false, true) => tr::common::choose_allow_prompt(),
             (DeviceMenu::Camera, false, false) => tr::main::device::access::camera_needed(),
             (DeviceMenu::Microphone, false, false) => tr::main::device::access::microphone_needed(),
-        });
+        };
         let label = if denied {
             tr::main::device::access::open_system_settings()
         } else if requesting {

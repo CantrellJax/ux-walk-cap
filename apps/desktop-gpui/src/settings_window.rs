@@ -1967,7 +1967,7 @@ impl SettingsWindow {
                         .pb(px(16.))
                         .text_size(px(18.))
                         .font_weight(FontWeight::SEMIBOLD)
-                        .child("Cap UX"),
+                        .child(fork_brand::APP_NAME),
                 )
             })
             .when(!cfg!(feature = "ux-walk"), |this| {
@@ -2174,7 +2174,11 @@ impl SettingsWindow {
                     .px(px(4.))
                     .py(px(2.))
                     .rounded(px(4.))
-                    .child(format!("Cap UX v{}", env!("CARGO_PKG_VERSION"))),
+                    .child(format!(
+                        "{} v{}",
+                        fork_brand::APP_NAME,
+                        env!("CARGO_PKG_VERSION")
+                    )),
             )
             .child(
                 div()
@@ -2183,7 +2187,7 @@ impl SettingsWindow {
                     .hover(|style| style.text_color(theme.settings_text()))
                     .on_click(|_, _, cx| {
                         cx.open_url(if cfg!(feature = "ux-walk") {
-                            "https://github.com/CantrellJax/ux-walk-cap/releases"
+                            fork_brand::RELEASES_URL
                         } else {
                             "https://cap.so/download/versions"
                         })
@@ -3571,10 +3575,8 @@ impl SettingsWindow {
             }));
 
         self.section(
-            crate::menus::branded_static(tr::settings::general::appearance::title()),
-            Some(crate::menus::branded_static(
-                tr::settings::general::appearance::description(),
-            )),
+            tr::settings::general::appearance::title(),
+            Some(tr::settings::general::appearance::description()),
             None,
             vec![self.card(true).child(tiles).into_any_element()],
         )
@@ -3608,67 +3610,55 @@ impl SettingsWindow {
     /// The macOS-only App section: `hideDockIcon`, `enableNotifications`.
     fn render_app_section(&self, cx: &mut Context<Self>) -> impl IntoElement {
         self.section(
-            crate::menus::branded_static(tr::settings::general::app::title()),
-            Some(crate::menus::branded_static(
-                tr::settings::general::app::description(),
-            )),
+            tr::settings::general::app::title(),
+            Some(tr::settings::general::app::description()),
             None,
             vec![
                 self.rows(vec![
-                        self.setting_row(
-                            crate::menus::branded_static(
-                                tr::settings::general::app::dock_icon::label(),
-                            ),
-                            Some(crate::menus::branded_static(
-                                tr::settings::general::app::dock_icon::description(),
-                            )),
-                            // The row is the *inverse* of the stored key.
-                            self.toggle(
-                                "hide-dock-icon",
-                                tr::settings::general::app::dock_icon::label(),
-                                !self.settings.hide_dock_icon,
-                                cx,
-                                |this, cx| {
-                                    this.settings.hide_dock_icon = !this.settings.hide_dock_icon;
-                                    let value = this.settings.hide_dock_icon;
-                                    this.write_bool("hideDockIcon", value, cx);
-                                    // `GeneralSettingsStore::set` -> the store
-                                    // listener -> `schedule_macos_dock_visibility_sync`.
-                                    // Deferred past the debounced write, which is
-                                    // what the sync then reads back.
-                                    cx.defer(|cx: &mut gpui::App| {
-                                        crate::menus::schedule_dock_sync(cx)
-                                    });
-                                },
-                            )
-                            .into_any_element(),
-                        ),
-                        self.setting_row(
-                            crate::menus::branded_static(
-                                tr::settings::general::app::notifications::label(),
-                            ),
-                            Some(crate::menus::branded_static(
-                                tr::settings::general::app::notifications::description(),
-                            )),
-                            self.toggle(
-                                "enable-notifications",
-                                tr::settings::general::app::notifications::label(),
-                                self.settings.enable_notifications,
-                                cx,
-                                |this, cx| {
-                                    // The Tauri handler asks for the notification
-                                    // permission before enabling; nothing here
-                                    // posts notifications yet, so there is nothing
-                                    // to ask for.
-                                    this.settings.enable_notifications =
-                                        !this.settings.enable_notifications;
-                                    let value = this.settings.enable_notifications;
-                                    this.write_bool("enableNotifications", value, cx);
-                                },
-                            )
-                            .into_any_element(),
-                        ),
-                    ])
+                    self.setting_row(
+                        tr::settings::general::app::dock_icon::label(),
+                        Some(tr::settings::general::app::dock_icon::description()),
+                        // The row is the *inverse* of the stored key.
+                        self.toggle(
+                            "hide-dock-icon",
+                            tr::settings::general::app::dock_icon::label(),
+                            !self.settings.hide_dock_icon,
+                            cx,
+                            |this, cx| {
+                                this.settings.hide_dock_icon = !this.settings.hide_dock_icon;
+                                let value = this.settings.hide_dock_icon;
+                                this.write_bool("hideDockIcon", value, cx);
+                                // `GeneralSettingsStore::set` -> the store
+                                // listener -> `schedule_macos_dock_visibility_sync`.
+                                // Deferred past the debounced write, which is
+                                // what the sync then reads back.
+                                cx.defer(|cx: &mut gpui::App| crate::menus::schedule_dock_sync(cx));
+                            },
+                        )
+                        .into_any_element(),
+                    ),
+                    self.setting_row(
+                        tr::settings::general::app::notifications::label(),
+                        Some(tr::settings::general::app::notifications::description()),
+                        self.toggle(
+                            "enable-notifications",
+                            tr::settings::general::app::notifications::label(),
+                            self.settings.enable_notifications,
+                            cx,
+                            |this, cx| {
+                                // The Tauri handler asks for the notification
+                                // permission before enabling; nothing here
+                                // posts notifications yet, so there is nothing
+                                // to ask for.
+                                this.settings.enable_notifications =
+                                    !this.settings.enable_notifications;
+                                let value = this.settings.enable_notifications;
+                                this.write_bool("enableNotifications", value, cx);
+                            },
+                        )
+                        .into_any_element(),
+                    ),
+                ])
                 .into_any_element(),
             ],
         )
@@ -4079,8 +4069,8 @@ impl SettingsWindow {
                         )
                     } else {
                     self.setting_row(
-                        crate::menus::branded_static(tr::settings::general::recording::delete_after_upload::label()),
-                        Some(crate::menus::branded_static(tr::settings::general::recording::delete_after_upload::description())),
+                        tr::settings::general::recording::delete_after_upload::label(),
+                        Some(tr::settings::general::recording::delete_after_upload::description()),
                         self.toggle(
                             "delete-after-upload",
                             tr::settings::general::recording::delete_after_upload::label(),
@@ -4279,10 +4269,8 @@ impl SettingsWindow {
         ));
 
         self.section(
-            crate::menus::branded_static(tr::settings::general::storage::title()),
-            Some(crate::menus::branded_static(
-                tr::settings::general::storage::description(),
-            )),
+            tr::settings::general::storage::title(),
+            Some(tr::settings::general::storage::description()),
             None,
             vec![
                 self.card(true)
@@ -4680,7 +4668,7 @@ impl SettingsWindow {
                                 div()
                                     .text_size(px(12.))
                                     .font_weight(FontWeight::MEDIUM)
-                                    .child(crate::menus::branded_static(missing_title)),
+                                    .child(missing_title),
                             )
                             .child(
                                 div()
@@ -4751,7 +4739,7 @@ impl SettingsWindow {
                                     .line_height(px(16.))
                                     .text_color(theme.settings_muted())
                                     .child(
-                                        crate::menus::branded_static(tr::settings::general::updates::download_policy::description()),
+                                        tr::settings::general::updates::download_policy::description(),
                                     ),
                             ),
                     )
@@ -4759,15 +4747,15 @@ impl SettingsWindow {
                         "update-download-policy",
                         vec![
                             ui::SegmentOption::new(
-                                crate::menus::branded_static(tr::settings::general::updates::download_policy::auto()),
+                                tr::settings::general::updates::download_policy::auto(),
                                 current_policy == UpdateDownloadPolicy::Auto,
                             ),
                             ui::SegmentOption::new(
-                                crate::menus::branded_static(tr::settings::general::updates::download_policy::manual()),
+                                tr::settings::general::updates::download_policy::manual(),
                                 current_policy == UpdateDownloadPolicy::Manual,
                             ),
                             ui::SegmentOption::new(
-                                crate::menus::branded_static(tr::settings::general::updates::download_policy::never()),
+                                tr::settings::general::updates::download_policy::never(),
                                 current_policy == UpdateDownloadPolicy::Never,
                             ),
                         ],
@@ -4804,14 +4792,14 @@ impl SettingsWindow {
                             .child(
                                 div()
                                     .text_size(px(13.))
-                                    .child(crate::menus::branded_static(tr::settings::general::updates::channel::label())),
+                                    .child(tr::settings::general::updates::channel::label()),
                             )
                             .child(
                                 div()
                                     .text_size(px(12.))
                                     .line_height(px(16.))
                                     .text_color(theme.settings_muted())
-                                    .child(crate::menus::branded_static(tr::settings::general::updates::channel::description())),
+                                    .child(tr::settings::general::updates::channel::description()),
                             ),
                     )
                     .child(self.segmented::<UpdateChannel>(
@@ -4846,10 +4834,8 @@ impl SettingsWindow {
             );
 
         self.section(
-            crate::menus::branded_static(tr::settings::general::updates::title()),
-            Some(crate::menus::branded_static(
-                tr::settings::general::updates::description(),
-            )),
+            tr::settings::general::updates::title(),
+            Some(tr::settings::general::updates::description()),
             None,
             vec![self.card(false).child(body).into_any_element()],
         )
@@ -4869,9 +4855,11 @@ impl SettingsWindow {
                     .flex()
                     .flex_col()
                     .gap(px(6.))
-                    .child(div().text_size(px(13.)).child(crate::menus::branded_static(
-                        tr::settings::general::self_host::server_url(),
-                    )))
+                    .child(
+                        div()
+                            .text_size(px(13.))
+                            .child(tr::settings::general::self_host::server_url()),
+                    )
                     .child(self.text_field(Field::ServerUrl, cx)),
             )
             .child(
@@ -4913,10 +4901,7 @@ impl SettingsWindow {
 
         self.section(
             tr::settings::general::self_host::title(),
-            Some(crate::menus::fork_text(
-                "Only change this if you are running your own instance of the upstream web service.",
-                tr::settings::general::self_host::description,
-            )),
+            Some(tr::settings::general::self_host::description()),
             None,
             vec![self.card(true).child(body).into_any_element()],
         )
@@ -4963,12 +4948,8 @@ impl SettingsWindow {
             vec![
                 self.rows(vec![
                     self.setting_row(
-                        crate::menus::branded_static(
-                            tr::settings::general::privacy::telemetry::label(),
-                        ),
-                        Some(crate::menus::branded_static(
-                            tr::settings::general::privacy::telemetry::description(),
-                        )),
+                        tr::settings::general::privacy::telemetry::label(),
+                        Some(tr::settings::general::privacy::telemetry::description()),
                         self.toggle(
                             "telemetry",
                             tr::settings::general::privacy::telemetry::label(),
@@ -5500,21 +5481,21 @@ mod tests {
     #[test]
     fn default_exclusions_are_covered_by_title() {
         let default = WindowExclusion {
-            window_title: Some("Cap UX Camera".into()),
+            window_title: Some("Cap Camera".into()),
             ..Default::default()
         };
         assert!(covers_default_exclusion(&default, &default));
         assert!(covers_default_exclusion(
             &WindowExclusion {
-                owner_name: Some("Cap UX".into()),
-                window_title: Some("Cap UX Camera".into()),
+                owner_name: Some("Cap".into()),
+                window_title: Some("Cap Camera".into()),
                 ..Default::default()
             },
             &default
         ));
         assert!(!covers_default_exclusion(
             &WindowExclusion {
-                window_title: Some("Cap UX Settings".into()),
+                window_title: Some("Cap Settings".into()),
                 ..Default::default()
             },
             &default

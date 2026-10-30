@@ -1453,9 +1453,8 @@ pub(crate) fn ensure_finalization_storage(project_path: &std::path::Path) -> any
         .context("checking storage before saving the recording")?;
     if !storage.can_finalize() {
         return Err(anyhow!(
-            "Low storage. Your recording files are preserved at {}. Free up space, then recover the recording in {}.",
-            project_path.display(),
-            crate::menus::APP_NAME
+            "Low storage. Your recording files are preserved at {}. Free up space, then recover the recording in Cap.",
+            project_path.display()
         ));
     }
     Ok(())
@@ -2038,7 +2037,7 @@ fn persist_local_instant_meta(
     let pretty_name = project_path
         .file_stem()
         .and_then(|name| name.to_str())
-        .unwrap_or("Cap UX recording")
+        .unwrap_or(fork_brand::text_static("Cap recording"))
         .to_string();
     let meta = cap_project::RecordingMeta {
         platform: Some(cap_project::Platform::default()),

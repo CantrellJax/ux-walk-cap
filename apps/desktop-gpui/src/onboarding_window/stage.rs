@@ -147,47 +147,35 @@ struct Copy {
 fn copy_for(permission: OSPermission) -> Copy {
     match permission {
         OSPermission::ScreenRecording => Copy {
-            title: crate::menus::branded_static(tr::permission::onboarding::screen::title()),
-            body: crate::menus::branded_static(tr::permission::onboarding::screen::body()),
-            done_title: crate::menus::branded_static(
-                tr::permission::onboarding::screen::done_title(),
-            ),
-            done_body: crate::menus::branded_static(tr::permission::onboarding::screen::done_body()),
-            allow: crate::menus::branded_static(tr::permission::onboarding::screen::allow()),
+            title: tr::permission::onboarding::screen::title(),
+            body: tr::permission::onboarding::screen::body(),
+            done_title: tr::permission::onboarding::screen::done_title(),
+            done_body: tr::permission::onboarding::screen::done_body(),
+            allow: tr::permission::onboarding::screen::allow(),
             doodle: &art::SCREEN,
         },
         OSPermission::Accessibility => Copy {
-            title: crate::menus::branded_static(tr::permission::onboarding::accessibility::title()),
-            body: crate::menus::branded_static(tr::permission::onboarding::accessibility::body()),
-            done_title: crate::menus::branded_static(
-                tr::permission::onboarding::accessibility::done_title(),
-            ),
-            done_body: crate::menus::branded_static(
-                tr::permission::onboarding::accessibility::done_body(),
-            ),
-            allow: crate::menus::branded_static(tr::permission::onboarding::accessibility::allow()),
+            title: tr::permission::onboarding::accessibility::title(),
+            body: tr::permission::onboarding::accessibility::body(),
+            done_title: tr::permission::onboarding::accessibility::done_title(),
+            done_body: tr::permission::onboarding::accessibility::done_body(),
+            allow: tr::permission::onboarding::accessibility::allow(),
             doodle: &art::CURSOR,
         },
         OSPermission::Microphone => Copy {
-            title: crate::menus::branded_static(tr::permission::onboarding::microphone::title()),
-            body: crate::menus::branded_static(tr::permission::onboarding::microphone::body()),
-            done_title: crate::menus::branded_static(
-                tr::permission::onboarding::microphone::done_title(),
-            ),
-            done_body: crate::menus::branded_static(
-                tr::permission::onboarding::microphone::done_body(),
-            ),
-            allow: crate::menus::branded_static(tr::permission::onboarding::microphone::allow()),
+            title: tr::permission::onboarding::microphone::title(),
+            body: tr::permission::onboarding::microphone::body(),
+            done_title: tr::permission::onboarding::microphone::done_title(),
+            done_body: tr::permission::onboarding::microphone::done_body(),
+            allow: tr::permission::onboarding::microphone::allow(),
             doodle: &art::MICROPHONE,
         },
         OSPermission::Camera => Copy {
-            title: crate::menus::branded_static(tr::permission::onboarding::camera::title()),
-            body: crate::menus::branded_static(tr::permission::onboarding::camera::body()),
-            done_title: crate::menus::branded_static(
-                tr::permission::onboarding::camera::done_title(),
-            ),
-            done_body: crate::menus::branded_static(tr::permission::onboarding::camera::done_body()),
-            allow: crate::menus::branded_static(tr::permission::onboarding::camera::allow()),
+            title: tr::permission::onboarding::camera::title(),
+            body: tr::permission::onboarding::camera::body(),
+            done_title: tr::permission::onboarding::camera::done_title(),
+            done_body: tr::permission::onboarding::camera::done_body(),
+            allow: tr::permission::onboarding::camera::allow(),
             doodle: &art::CAMERA,
         },
     }
@@ -342,15 +330,13 @@ impl OnboardingWindow {
     fn render_checklist(&self, paper: &Paper, cx: &mut Context<Self>) -> Div {
         let (title, lede) = if self.permissions_only {
             (
-                crate::menus::branded_static(
-                    tr::permission::onboarding::checklist::regained_title(),
-                ),
-                crate::menus::branded_static(tr::permission::onboarding::checklist::regained_lede()),
+                tr::permission::onboarding::checklist::regained_title(),
+                tr::permission::onboarding::checklist::regained_lede(),
             )
         } else {
             (
-                crate::menus::branded_static(tr::permission::onboarding::checklist::title()),
-                crate::menus::branded_static(tr::permission::onboarding::checklist::lede()),
+                tr::permission::onboarding::checklist::title(),
+                tr::permission::onboarding::checklist::lede(),
             )
         };
         let stage = self.current_stage();
@@ -522,12 +508,12 @@ impl OnboardingWindow {
                 ))
                 .child(stage_body(
                     paper,
-                    crate::menus::branded_static(tr::permission::onboarding::relaunch::body()),
+                    tr::permission::onboarding::relaunch::body(),
                 ))
                 .child(div().mt(px(24.)).child(paper_button(
                     paper,
                     "perm-relaunch-done",
-                    crate::menus::branded_static(tr::onboarding::nav::relaunch()),
+                    tr::onboarding::nav::relaunch(),
                     true,
                     true,
                     cx.listener(|_, _, _, cx| permissions::relaunch(cx)),
@@ -548,9 +534,9 @@ impl OnboardingWindow {
                 .child(stage_body(
                     paper,
                     if self.permissions_only {
-                        crate::menus::branded_static(tr::permission::onboarding::all_set::regained())
+                        tr::permission::onboarding::all_set::regained()
                     } else {
-                        crate::menus::branded_static(tr::permission::onboarding::all_set::body())
+                        tr::permission::onboarding::all_set::body()
                     },
                 )),
             Stage::Permission(permission) => {
@@ -572,7 +558,7 @@ impl OnboardingWindow {
                             copy.done_title
                         } else if self.stage.waiting_on == Some(permission) && permission.required()
                         {
-                            crate::menus::branded_static(tr::permission::onboarding::switch_on_title())
+                            tr::permission::onboarding::switch_on_title()
                         } else {
                             copy.title
                         },
@@ -580,7 +566,7 @@ impl OnboardingWindow {
                 if granted {
                     let done_body =
                         if permission == OSPermission::ScreenRecording && self.needs_relaunch() {
-                            crate::menus::branded_static(tr::permission::onboarding::relaunch::later())
+                            tr::permission::onboarding::relaunch::later()
                         } else {
                             copy.done_body
                         };
@@ -613,16 +599,13 @@ impl OnboardingWindow {
         let guided = crate::permission_guide::eligible(permission);
         let waiting_required = waiting && permission.required();
         let body = if waiting_required && guided {
-            crate::menus::fork_text(
-                "Drag this Cap UX app into the list. If an older preview entry is already enabled, remove it and add this app again.",
-                tr::permission::onboarding::hint::drag_into_list,
-            )
+            tr::permission::onboarding::hint::drag_into_list()
         } else if waiting_required {
-            crate::menus::branded_static(tr::permission::onboarding::hint::find_in_list())
+            tr::permission::onboarding::hint::find_in_list()
         } else if status == OSPermissionStatus::Denied && !permission.required() {
-            crate::menus::branded_static(tr::permission::onboarding::hint::turned_off())
+            tr::permission::onboarding::hint::turned_off()
         } else if action == Some(RowAction::OpenSettings) && permission.required() {
-            crate::menus::branded_static(tr::permission::onboarding::hint::open_settings())
+            tr::permission::onboarding::hint::open_settings()
         } else {
             copy.body
         };
@@ -684,9 +667,7 @@ impl OnboardingWindow {
                             .text_size(px(12.))
                             .font_weight(FontWeight::NORMAL)
                             .text_color(paper.soft)
-                            .child(crate::menus::branded_static(
-                                tr::permission::onboarding::hint::no_prompt(),
-                            )),
+                            .child(tr::permission::onboarding::hint::no_prompt()),
                     )
                     .child(paper_button(
                         paper,
@@ -756,10 +737,7 @@ impl OnboardingWindow {
                             .line_height(px(17.))
                             .font_weight(FontWeight::NORMAL)
                             .text_color(paper.soft)
-                            .child(crate::menus::fork_text(
-"Already enabled but still denied? Remove the old Cap UX entry, add this app again, then relaunch.",
-tr::permission::onboarding::relaunch::hint,
-)),
+                            .child(tr::permission::onboarding::relaunch::hint()),
                     )
                     .child(paper_button(
                         paper,

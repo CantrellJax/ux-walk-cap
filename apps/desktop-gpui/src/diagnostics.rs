@@ -884,7 +884,9 @@ pub async fn upload_report(
     diagnostics: Option<String>,
 ) -> Result<(), String> {
     if cfg!(feature = "ux-walk") {
-        return Err("Export the diagnostic report locally and attach it to a Cap UX issue after reviewing it.".into());
+        return Err(fork_brand::text(
+            "Export the diagnostic report locally and attach it to a Cap issue after reviewing it.",
+        ));
     }
     let context = serde_json::json!({
         "schemaVersion": 1,

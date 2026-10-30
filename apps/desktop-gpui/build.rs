@@ -1,9 +1,11 @@
+#[path = "brand_build.rs"]
+mod brand_build;
 #[path = "../../scripts/diagnostic-build.rs"]
 mod diagnostic_build;
 
 fn main() {
     diagnostic_build::emit();
-    cap_i18n_build::build("locales");
+    brand_build::i18n("locales");
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
         println!("cargo:rerun-if-changed=native/exception_guard.m");
         cc::Build::new()

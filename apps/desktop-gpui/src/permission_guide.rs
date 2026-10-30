@@ -394,7 +394,7 @@ impl Render for PermissionGuide {
                                     .line_height(px(19.))
                                     .font_weight(FontWeight::MEDIUM)
                                     .text_color(paper.ink)
-                                    .child(crate::menus::branded(tr::permission::guide::title())),
+                                    .child(tr::permission::guide::title()),
                             )
                             .child(
                                 div()

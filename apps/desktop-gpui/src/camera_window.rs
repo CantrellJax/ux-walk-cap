@@ -1476,7 +1476,7 @@ impl Render for CameraPreviewView {
                                     .text_size(px(metrics.message_size))
                                     .line_height(px(metrics.line_height))
                                     .text_color(gpui::hsla(0., 0., 1., 0.75))
-                                    .child(crate::menus::branded(message)),
+                                    .child(message),
                             ),
                     ),
             );

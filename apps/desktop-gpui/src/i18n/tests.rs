@@ -8,6 +8,7 @@ fn english_is_the_default_locale() {
 }
 
 #[test]
+#[cfg_attr(feature = "ux-walk", ignore = "the fork brands these strings")]
 fn english_matches_the_literals_it_replaced() {
     let app_name = crate::menus::APP_NAME;
     let pairs: &[(&str, String)] = &[
@@ -567,6 +568,7 @@ fn appearance_labels_follow_language_changes_without_changing_saved_values() {
 }
 
 #[test]
+#[cfg_attr(feature = "ux-walk", ignore = "the fork brands these strings")]
 fn language_picker_english() {
     assert_eq!(tr::settings::general::language::title(), "Language");
     assert_eq!(
@@ -802,6 +804,7 @@ fn translations_fit_their_width_budgets() {
 }
 
 #[test]
+#[cfg_attr(feature = "ux-walk", ignore = "the fork brands these strings")]
 fn english_messages_format_like_the_literals_they_replaced() {
     let version = "0.6.1";
     assert_eq!(tr::tray::version(version), format!("Cap v{version}"));

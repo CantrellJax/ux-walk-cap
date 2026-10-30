@@ -159,9 +159,8 @@ pub struct ExportPrefs {
 /// The identifier every Cap release has used (`so.cap.desktop`), resolved
 /// the way each OS's app-data convention spells it, so recordings and
 /// settings from 0.6.0 and earlier are found where those builds left them.
-/// Cap UX builds keep their own identifier and library.
 pub const APP_IDENTIFIER: &str = if cfg!(feature = "ux-walk") {
-    "com.cantrell.cap-ux"
+    fork_brand::BUNDLE_ID
 } else {
     "so.cap.desktop"
 };
@@ -942,7 +941,7 @@ pub fn excluded_windows_to_json(windows: &[WindowExclusion]) -> Value {
 /// `https://cap.so` -- `default_server_url()` in `general_settings.rs`, which
 /// is also what `clientEnv.VITE_SERVER_URL` resolves to in a release build.
 pub const DEFAULT_SERVER_URL: &str = if cfg!(feature = "ux-walk") {
-    ""
+    fork_brand::DEFAULT_SERVER_URL
 } else {
     "https://cap.so"
 };

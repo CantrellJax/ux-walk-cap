@@ -2632,8 +2632,11 @@ pub async fn upload_rendered_screenshot(
 ) -> Result<ScreenshotShareOutcome, String> {
     if cfg!(feature = "ux-walk") {
         let client = cap_cloud_sharing::SharingClient::configured()?;
-        let path =
-            std::env::temp_dir().join(format!("cap-ux-share-{}", crate::store::new_uuid_v4()));
+        let path = std::env::temp_dir().join(format!(
+            "{}-share-{}",
+            fork_brand::SLUG,
+            crate::store::new_uuid_v4()
+        ));
         let mut options = std::fs::OpenOptions::new();
         options.write(true).create_new(true);
         #[cfg(unix)]
@@ -2648,7 +2651,13 @@ pub async fn upload_rendered_screenshot(
             .map_err(|_| "Could not prepare the screenshot for sharing.")?;
         let cancel = AtomicBool::new(false);
         let result = client
-            .upload_file(&path, "Cap UX screenshot", content_type, |_| {}, &cancel)
+            .upload_file(
+                &path,
+                fork_brand::text_static("Cap screenshot"),
+                content_type,
+                |_| {},
+                &cancel,
+            )
             .await;
         let _ = std::fs::remove_file(path);
         return result.map(|item| {

@@ -302,7 +302,7 @@ async fn media_permission_result(
         MediaAuthorization::NotDetermined
         | MediaAuthorization::Denied
         | MediaAuthorization::Restricted => {
-            Err(crate::menus::branded(&permission.unavailable_message()))
+            Err(fork_brand::text(&permission.unavailable_message()))
         }
     }
 }
