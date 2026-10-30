@@ -54,3 +54,10 @@ hint = "Already enabled but still denied? Remove the old Cap entry, add this app
 [main.sign_in]
 pending_message = "Finish signing in to %upstream% in your browser. Cap returns to the recorder when you're done."
 
+[settings.quality.instant]
+free_plan = "Instant recordings can use any resolution up to 4K."
+
+[settings.license]
+desktop_description = "Cap is open source under AGPLv3 for personal and commercial recording and editing."
+explore_pro = "Sharing · Share recordings through the server you choose in Settings → Sharing."
+sign_in_hint = "Sharing uses the server you choose in Settings → Sharing."

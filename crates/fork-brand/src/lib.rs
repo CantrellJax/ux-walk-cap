@@ -28,10 +28,6 @@ pub const KEEP_UPSTREAM_NAME: &[&str] = &[
     "editor.export.done.uploaded",
     "editor.panel.text_preset.sample.title",
     "settings.license.description",
-    "settings.license.desktop_description",
-    "settings.license.explore_pro",
-    "settings.license.sign_in_hint",
-    "settings.quality.instant.free_plan",
 ];
 
 /// Swaps each standalone [`UPSTREAM_NAME`] for [`APP_NAME`]. Words that only

@@ -1,4 +1,4 @@
-use crate::i18n::tr;
+use crate::i18n::{LOCALE_ENV, Locale, init, tr};
 use crate::installer::fetch_release;
 use crate::store::UpdateChannel;
 
@@ -110,7 +110,11 @@ const BRANDED_KEYS: &[&str] = &[
     "settings.integrations.gdrive.connection_description",
     "settings.integrations.google_drive_description",
     "settings.integrations.s3.guide_intro",
+    "settings.license.desktop_description",
+    "settings.license.explore_pro",
+    "settings.license.sign_in_hint",
     "settings.options.post_studio.show_cap",
+    "settings.quality.instant.free_plan",
     "settings.shortcuts.after_screenshot.hint",
     "settings.shortcuts.effect.open_picker",
     "settings.shortcuts.outcome.instant_show_cap",
@@ -173,6 +177,75 @@ fn catalog_strings_carry_the_fork_name() {
         tr::onboarding::faq::free::question(),
         fork_brand::text("Is Cap free to use?")
     );
+}
+
+#[test]
+fn no_locale_offers_cap_pro() {
+    let tables = include_str!(concat!(env!("OUT_DIR"), "/i18n.rs"));
+    for name in [fork_brand::UPSTREAM_NAME, fork_brand::APP_NAME] {
+        assert!(!tables.contains(&format!("{name} Pro")), "{name} Pro");
+    }
+}
+
+#[test]
+fn fork_wording_reads_the_same_in_every_locale() {
+    const CHILD: &str = "CAP_GPUI_TEST_FORK_WORDING_LOCALES";
+    if std::env::var_os(CHILD).is_none() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "fork_identity_tests::fork_wording_reads_the_same_in_every_locale",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .env_remove(LOCALE_ENV)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+
+    for locale in Locale::ALL {
+        if locale == Locale::Pseudo {
+            continue;
+        }
+        init(Some(locale.code()));
+        let code = locale.code();
+        assert_eq!(
+            tr::settings::feedback::diagnostic::send(),
+            "Send to upstream",
+            "{code}"
+        );
+        assert_eq!(
+            tr::onboarding::faq::free::question(),
+            fork_brand::text("Is Cap free to use?"),
+            "{code}"
+        );
+        assert_eq!(
+            tr::main::sign_in::pending_message(),
+            format!(
+                "Finish signing in to {} in your browser. {} returns to the recorder when you're done.",
+                fork_brand::UPSTREAM_NAME,
+                fork_brand::APP_NAME
+            ),
+            "{code}"
+        );
+        assert_eq!(
+            tr::settings::shortcuts::sentence::cycle_mode(),
+            "Switch between Studio, Instant, Screenshot and UX Walk mode.",
+            "{code}"
+        );
+        for branded in [tr::menu::app::about(), tr::tray::quit()] {
+            assert!(branded.contains(fork_brand::APP_NAME), "{code}: {branded}");
+        }
+    }
+    init(Some(Locale::En.code()));
+    assert_eq!(tr::menu::app::about(), fork_brand::text("About Cap"));
 }
 
 #[test]
