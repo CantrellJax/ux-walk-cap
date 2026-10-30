@@ -492,16 +492,47 @@ export class OwnedWindowEvents {
 		return (await this.initial) === (await this.windowId(page));
 	}
 
-	async canCapturePage(page) {
+	async canCapturePage(page, operation) {
 		const active = this.evidence.active;
 		const epoch = this.evidence.clockEpoch;
-		const live = () =>
+		const recordingId = active?.metadata.recordingId;
+		const generation = active?.metadata.generation;
+		const draft = operation?.op === "draft";
+		const receivedAt = operation?.receivedAt;
+		if (draft && (!Number.isSafeInteger(receivedAt) || receivedAt < 0))
+			return false;
+		const owner = () =>
 			this.evidence.mode === "recording" &&
 			this.evidence.active === active &&
+			active?.metadata.recordingId === recordingId &&
+			active?.metadata.generation === generation &&
+			["recording", "finishing"].includes(active?.metadata.state);
+		const live = () =>
+			owner() &&
 			this.evidence.clockEpoch === epoch &&
-			active?.metadata.state === "recording" &&
+			active.metadata.state === "recording" &&
 			!active.metadata.anchors.at(-1)?.paused;
-		return live() && (await this.accepts(page)) && live();
+		if (!live() || !(await this.accepts(page)) || !owner()) return false;
+		if (!draft) return live();
+		return () => {
+			if (live()) return true;
+			if (
+				!owner() ||
+				this.evidence.clockEpoch !== epoch + 1 ||
+				!active.metadata.anchors.at(-1)?.paused
+			)
+				return false;
+			try {
+				const boundary = this.evidence.noteDrain(
+					active.metadata.anchors.at(-1).wallMs,
+				);
+				return (
+					receivedAt >= boundary.fromMs && receivedAt <= boundary.throughMs
+				);
+			} catch {
+				return false;
+			}
+		};
 	}
 
 	write(event, page, noteDrain = null) {
@@ -611,7 +642,8 @@ export async function runNativeBrowser(captureId, workDir, external = false) {
 				write: (event, page) => events.write(event, page),
 				notesDir: () => evidence.notesDir(),
 				contextSelectors: cfg.contextSelectors,
-				canCapturePage: (page) => events.canCapturePage(page),
+				canCapturePage: (page, operation) =>
+					events.canCapturePage(page, operation),
 				genericTestids: cfg.genericTestids,
 				onCommand: () =>
 					"Use Cap UX recording controls for notes, chapters and pause.",

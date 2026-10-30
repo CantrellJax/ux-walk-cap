@@ -187,7 +187,8 @@ document.querySelector("button").onclick = () => {
 			ignoreWrites: "$^",
 			write: (event, page) => windowEvents.write(event, page),
 			notesDir: () => evidence.notesDir(),
-			canCapturePage: (page) => windowEvents.canCapturePage(page),
+			canCapturePage: (page, operation) =>
+				windowEvents.canCapturePage(page, operation),
 		});
 		phase("owned Chrome ready");
 		const source = path.join(root, "source.cap");
