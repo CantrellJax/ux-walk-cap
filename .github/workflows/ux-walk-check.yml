@@ -110,7 +110,7 @@ jobs:
         with:
           node-version: '22'
       - name: Check packaging profiles and staging
-        run: node --test scripts/fork-brand.test.mjs scripts/bundle-gpui.test.mjs scripts/build-desktop-binaries-cache.test.mjs scripts/build-macos-packages.test.mjs
+        run: node --test scripts/fork-brand.test.mjs scripts/fork-branding.test.mjs scripts/bundle-gpui.test.mjs scripts/build-desktop-binaries-cache.test.mjs scripts/build-macos-packages.test.mjs
       - name: Check the cross-app audio hardware smoke runner
         run: python3 -m py_compile scripts/test-independent-audio.py
       - uses: dtolnay/rust-toolchain@1.95.0
