@@ -53,6 +53,7 @@ test(
 	},
 	async (t) => {
 		const phase = (name) => console.error(`[owned Chrome smoke] ${name}`);
+		const diagnostics = [];
 		phase("import browser and timeline");
 		const { openBrowser } = await import(
 			process.env.CAP_UX_TEST_ENGINE_DIR
@@ -187,33 +188,24 @@ document.querySelector("button").onclick = () => {
 			ignoreWrites: "$^",
 			write: (event, page) => {
 				if (event.ev === "note")
-					phase(
-						`ordinary note write id=${event.id} chars=${event.text?.length ?? 0} paused=${evidence.active?.metadata.anchors.at(-1)?.paused}`,
-					);
+					diagnostics.push({
+						phase: "ordinary note",
+						id: event.id,
+						chars: event.text?.length ?? 0,
+						paused: evidence.active?.metadata.anchors.at(-1)?.paused,
+					});
 				return windowEvents.write(event, page);
 			},
 			notesDir: () => evidence.notesDir(),
 			canCapturePage: (page, operation) => {
-				if (operation?.op !== "draft")
-					return windowEvents.canCapturePage(page, operation);
-				phase(
-					`draft ingress host=${operation.receivedAt} epoch=${evidence.clockEpoch} paused=${evidence.active?.metadata.anchors.at(-1)?.paused}`,
-				);
-				return windowEvents
-					.canCapturePage(page, operation)
-					.then((permission) => {
-						phase(
-							`draft lookup result=${typeof permission === "function" ? "private grant" : permission} epoch=${evidence.clockEpoch}`,
-						);
-						if (typeof permission !== "function") return permission;
-						return () => {
-							const accepted = permission();
-							phase(
-								`draft grant accepted=${accepted} epoch=${evidence.clockEpoch} boundary=${evidence.active?.metadata.anchors.at(-1)?.wallMs}`,
-							);
-							return accepted;
-						};
+				if (operation?.op === "draft")
+					diagnostics.push({
+						phase: "draft ingress",
+						host: operation.receivedAt,
+						epoch: evidence.clockEpoch,
+						paused: evidence.active?.metadata.anchors.at(-1)?.paused,
 					});
+				return windowEvents.canCapturePage(page, operation);
 			},
 		});
 		phase("owned Chrome ready");
@@ -381,28 +373,32 @@ document.querySelector("button").onclick = () => {
 		);
 		await same.locator("uxw-overlay input").fill("Unsaved note before Stop");
 		const stoppedAt = Date.now();
-		phase(`Stop boundary host=${stoppedAt} epoch=${evidence.clockEpoch}`);
+		diagnostics.push({
+			phase: "Stop boundary",
+			host: stoppedAt,
+			epoch: evidence.clockEpoch,
+		});
 		journal.durationMs = stoppedAt - startedAtMs - (resumedAt - pausedAt);
 		evidence.anchor(file, stoppedAt, journal.durationMs, true);
 		await flushNativeNotes(browser, evidence, windowEvents, stoppedAt);
 		await windowEvents.flush();
-		phase(
-			`raw notes after Stop ${JSON.stringify(
-				fs
-					.readFileSync(path.join(directory, "browser-evidence.jsonl"), "utf8")
-					.trim()
-					.split("\n")
-					.filter(Boolean)
-					.map(JSON.parse)
-					.filter((event) => event.ev === "note")
-					.map((event) => ({
-						id: event.id,
-						chars: event.text?.length ?? 0,
-						observedAt: event.observedAt,
-						receivedAt: event.receivedAt,
-					})),
-			)}`,
-		);
+		diagnostics.push({
+			phase: "raw notes",
+			notes: fs
+				.readFileSync(path.join(directory, "browser-evidence.jsonl"), "utf8")
+				.trim()
+				.split("\n")
+				.filter(Boolean)
+				.map(JSON.parse)
+				.filter((event) => event.ev === "note")
+				.map((event) => ({
+					id: event.id,
+					chars: event.text?.length ?? 0,
+					observedAt: event.observedAt,
+					receivedAt: event.receivedAt,
+				})),
+		});
+		phase(`post-Stop diagnostics ${JSON.stringify(diagnostics)}`);
 		evidence.finish(file);
 		const stoppedNote = await same.evaluate(() =>
 			window.__uxwNote({ op: "new", box: { x: 0, y: 0, w: 20, h: 20 } }).then(
