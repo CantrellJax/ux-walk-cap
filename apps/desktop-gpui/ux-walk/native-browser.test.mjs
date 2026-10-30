@@ -50,6 +50,8 @@ test(
 		timeout: 30000,
 	},
 	async (t) => {
+		const phase = (name) => console.error(`[owned Chrome smoke] ${name}`);
+		phase("import browser and timeline");
 		const { openBrowser } = await import(
 			process.env.CAP_UX_TEST_ENGINE_DIR
 				? pathToFileURL(
@@ -63,7 +65,7 @@ test(
 		const root = fs.mkdtempSync(
 			path.join(os.tmpdir(), "cap-ux-browser-smoke-"),
 		);
-		t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+		let browser;
 		const server = http.createServer((request, response) => {
 			if (request.url.startsWith("/disconnect")) {
 				request.socket.destroy();
@@ -98,15 +100,84 @@ document.querySelector("button").onclick = () => {
  throw new Error("Synthetic uncaught failure");
 };</script>`);
 		});
+		const bounded = async (name, action, timeoutMs) => {
+			let timer;
+			try {
+				return await Promise.race([
+					Promise.resolve().then(action),
+					new Promise((_, reject) => {
+						timer = setTimeout(
+							() =>
+								reject(new Error(`${name} timed out after ${timeoutMs} ms`)),
+							timeoutMs,
+						);
+					}),
+				]);
+			} finally {
+				clearTimeout(timer);
+			}
+		};
+		t.after(
+			async () => {
+				const errors = [];
+				if (browser) {
+					phase("cleanup: close owned Chrome");
+					let ownedPid;
+					try {
+						ownedPid = browser.chromePid();
+						await bounded("browser.close", () => browser.close(), 5000);
+					} catch (error) {
+						console.error(error);
+						errors.push(error);
+						try {
+							if (ownedPid && browser.chromePid() === ownedPid) {
+								phase(`cleanup: terminate owned Chrome child ${ownedPid}`);
+								process.kill(ownedPid, "SIGKILL");
+							}
+						} catch (error) {
+							console.error(error);
+							errors.push(error);
+						}
+					}
+				}
+				phase("cleanup: close synthetic HTTP connections");
+				try {
+					await bounded(
+						"server.close",
+						() =>
+							new Promise((resolve, reject) => {
+								server.close((error) =>
+									error && error.code !== "ERR_SERVER_NOT_RUNNING"
+										? reject(error)
+										: resolve(),
+								);
+								server.closeAllConnections();
+							}),
+						2000,
+					);
+				} catch (error) {
+					console.error(error);
+					errors.push(error);
+				} finally {
+					phase("cleanup: remove synthetic files");
+					fs.rmSync(root, { recursive: true, force: true });
+				}
+				phase("cleanup complete");
+				if (errors.length)
+					throw new AggregateError(errors, "Owned Chrome smoke cleanup failed");
+			},
+			{ timeout: 10000 },
+		);
+		phase("listen on synthetic HTTP server");
 		await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-		t.after(() => new Promise((resolve) => server.close(resolve)));
 		const url = `http://127.0.0.1:${server.address().port}`;
 		const evidence = new NativeBrowserEvidence(
 			"synthetic-browser",
 			path.join(root, "prepared"),
 		);
 		const windowEvents = new OwnedWindowEvents(evidence);
-		const browser = await openBrowser({
+		phase("launch owned Chrome");
+		browser = await openBrowser({
 			url,
 			authFile: path.join(root, "auth.json"),
 			windowSize: "960,720",
@@ -116,7 +187,7 @@ document.querySelector("button").onclick = () => {
 			notesDir: () => evidence.notesDir(),
 			canCapturePage: (page) => windowEvents.canCapturePage(page),
 		});
-		t.after(() => browser.close());
+		phase("owned Chrome ready");
 		const source = path.join(root, "source.cap");
 		const directory = path.join(root, "walk");
 		fs.mkdirSync(source);
@@ -145,6 +216,7 @@ document.querySelector("button").onclick = () => {
 		fs.writeFileSync(file, JSON.stringify(journal));
 		evidence.windowId = "17";
 		evidence.start(file, "17");
+		phase("record synthetic click and diagnostics");
 		const page = browser.context.pages()[0];
 		await page.getByRole("button", { name: "Save window" }).click();
 		const deadline = Date.now() + 8000;
@@ -166,6 +238,7 @@ document.querySelector("button").onclick = () => {
 			)
 				break;
 		} while (Date.now() < deadline);
+		phase(`assert captured diagnostics (${captured.length} events)`);
 		assert.ok(
 			captured.some(
 				(event) => event.ev === "click" && event.el.testid === "save-window",
@@ -192,6 +265,7 @@ document.querySelector("button").onclick = () => {
 		assert.ok(
 			captured.some((event) => event.ev === "network" && event.failure),
 		);
+		phase("verify same-window tab and excluded popup");
 		const sameTab = browser.context.waitForEvent("page");
 		await page.evaluate((url) => {
 			window.open(url, "_blank");
@@ -223,6 +297,7 @@ document.querySelector("button").onclick = () => {
 		);
 		assert.match(refusal, /outside the recorded browser window/);
 		await windowEvents.flush();
+		phase("save annotation and verify pause boundaries");
 		const noteId = await same.evaluate(async () => {
 			const id = await window.__uxwNote({
 				op: "new",
@@ -267,6 +342,7 @@ document.querySelector("button").onclick = () => {
 		evidence.anchor(file, resumedAt, pausedAt - startedAtMs, false);
 		await page.evaluate(() => console.warn("Resumed synthetic warning"));
 		await new Promise((resolve) => setTimeout(resolve, 40));
+		phase("flush unsaved annotation at Stop");
 		await same.bringToFront();
 		await same
 			.getByRole("button", { name: "Save window" })
@@ -296,6 +372,7 @@ document.querySelector("button").onclick = () => {
 		});
 		fs.writeFileSync(file, JSON.stringify(journal));
 		assert.ok(projectBrowserEvidence(file, journal).events.length > 5);
+		phase("finish native handoff and render synthetic report");
 		await finishNativeWalk(
 			file,
 			{ transcriber: "none", brief: false },
@@ -343,6 +420,7 @@ document.querySelector("button").onclick = () => {
 				writeIndex: () => {},
 			},
 		);
+		phase("assert report evidence and privacy boundaries");
 		for (const artifact of [
 			"actions.jsonl",
 			"01-walkthrough/timeline.md",
@@ -367,5 +445,6 @@ document.querySelector("button").onclick = () => {
 		);
 		assert.match(nativeWalkPrompt(file), /no server-side query trace/);
 		assert.match(nativeWalkPrompt(file), /browser-preroll/);
+		phase("all smoke assertions passed");
 	},
 );

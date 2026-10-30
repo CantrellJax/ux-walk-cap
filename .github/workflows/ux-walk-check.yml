@@ -103,8 +103,21 @@ jobs:
           name: library-rustfmt-corrections
           path: ${{ runner.temp }}/library-rustfmt.patch
       - run: git diff --exit-code
+  browser-smoke:
+    if: github.repository == 'CantrellJax/ux-walk-cap'
+    runs-on: macos-15
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --ignore-scripts --prefix vendor/ux-walk
+      - name: Exercise owned Chrome evidence and native handoff
+        timeout-minutes: 2
+        run: CAP_UX_BROWSER_SMOKE=1 node --test --test-force-exit apps/desktop-gpui/ux-walk/native-browser.test.mjs
   native:
-    needs: library-contract
+    needs: [library-contract, browser-smoke]
     if: github.repository == 'CantrellJax/ux-walk-cap'
     runs-on: macos-15
     timeout-minutes: 90
@@ -268,7 +281,6 @@ jobs:
         if: (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.preview))
         run: |
           npm ci --ignore-scripts --prefix vendor/ux-walk
-          CAP_UX_BROWSER_SMOKE=1 node --test apps/desktop-gpui/ux-walk/native-browser.test.mjs
           node --test vendor/ux-walk/test/unit/embedded-config.test.mjs vendor/ux-walk/test/unit/start-link.test.mjs vendor/ux-walk/test/unit/cap-editor-handoff.test.mjs
           node scripts/bundle-ux-walk.mjs 'apps/desktop-gpui/target/debug/bundle/macos/Cap UX Preview.app'
       - name: Verify and retain the preview
