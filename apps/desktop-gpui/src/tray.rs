@@ -683,7 +683,6 @@ fn current_menu_entries(cx: &App, mode: Mode, previous: &[PreviousItem]) -> Vec<
     }
     let mode = ux_walk::menu_mode(mode, cx);
     let mut entries = build_menu(mode, previous, crate::menus::app_version());
-    ux_walk::decorate_mode_submenu(&mut entries, mode, cx);
     decorate_accelerators(&mut entries, cx);
     entries
 }
