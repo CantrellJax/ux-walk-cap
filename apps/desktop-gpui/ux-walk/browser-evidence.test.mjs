@@ -338,6 +338,7 @@ test("boundary note drains retain ownership and pause fences across asynchronous
 		"after-boundary",
 		"previous-epoch",
 		"resume",
+		"new-owner",
 		"generation",
 		"abort",
 		"duplicate-pause",
@@ -370,7 +371,6 @@ test("boundary note drains retain ownership and pause fences across asynchronous
 		const throughMs = scenario === "previous-epoch" ? 104000 : 101000;
 		now = throughMs;
 		evidence.anchor(f.file, throughMs, 2000, true);
-		evidence.active.metadata.state = "finishing";
 		now += 10;
 		await flushNativeNotes(
 			{
@@ -413,12 +413,32 @@ test("boundary note drains retain ownership and pause fences across asynchronous
 					);
 					if (scenario === "resume")
 						evidence.anchor(f.file, throughMs + 20, 2000, false);
+					if (scenario === "new-owner") {
+						evidence.finish(f.file);
+						const directory = path.join(path.dirname(f.file), "new-owner");
+						fs.mkdirSync(directory);
+						const file = path.join(directory, "native-walk.json");
+						fs.writeFileSync(
+							file,
+							JSON.stringify({
+								...f.journal,
+								startedAtMs: throughMs + 20,
+								request: { directory },
+							}),
+						);
+						evidence.start(file, "17");
+					}
 					if (scenario === "generation")
 						evidence.active.metadata.generation = "another-generation";
 					if (scenario === "abort") evidence.finish(f.file, "failed");
 					if (scenario === "duplicate-pause")
 						evidence.anchor(f.file, throughMs + 20, 2000, true);
-					await pending;
+					const saved = await pending;
+					assert.equal(
+						saved,
+						scenario === "duplicate-pause",
+						`scoped writer outcome: ${scenario}`,
+					);
 					await events.write(
 						{ ev: "click", t: 100500, el: { text: "PAUSED_CLICK" } },
 						page,
@@ -439,6 +459,17 @@ test("boundary note drains retain ownership and pause fences across asynchronous
 			.filter(Boolean)
 			.map(JSON.parse);
 		assert.equal(raw.length, scenario === "duplicate-pause" ? 1 : 0, scenario);
+		if (scenario === "new-owner") {
+			for (const name of ["browser-evidence.jsonl", "browser-preroll.jsonl"])
+				assert.equal(
+					fs.readFileSync(
+						path.join(path.dirname(f.file), "new-owner", name),
+						"utf8",
+					),
+					"",
+					`stale drain must not touch new owner ${name}`,
+				);
+		}
 		assert.equal(JSON.stringify(raw).includes("PAUSED_CLICK"), false, scenario);
 	}
 });
