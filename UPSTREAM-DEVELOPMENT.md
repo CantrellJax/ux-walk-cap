@@ -1,3 +1,15 @@
+## Merging upstream Cap into this fork
+
+The fork's logos, dock icon and macOS app icon live at upstream's own asset paths. Nested `.gitattributes` files in `apps/desktop-gpui/assets/` and `apps/desktop-gpui/icons/` mark those paths `merge=ours`, and `apps/desktop-gpui/assets/branding/` keeps a master copy of each. The `ours` driver is not built into Git, so define it once per clone (worktrees share it) before merging, and turn on rerere for repeated conflicts:
+
+```bash
+git config merge.ours.driver true
+git config rerere.enabled true
+git config rerere.autoupdate true
+```
+
+After each merge, run `node --test scripts/fork-branding.test.mjs`. It fails when an upstream path no longer matches its master or upstream stopped drawing a protected path; re-copy the master or move it to the new path and update the guard.
+
 ## Upstream Cap development and self-hosting
 
 The remaining documentation describes the underlying Cap platform. Its cloud features require the appropriate service or a self-hosted deployment.
