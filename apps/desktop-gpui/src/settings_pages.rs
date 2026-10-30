@@ -4022,41 +4022,23 @@ impl SettingsWindow {
 
     pub(crate) fn render_license(&self, cx: &mut Context<Self>) -> Vec<gpui::AnyElement> {
         let theme = self.theme;
-        if cfg!(feature = "ux-walk") {
-            return vec![
-                self.section("Cap UX", Some("Open source screen recording and product walkthroughs."), None, vec![
-                    self.card(true).child(div().flex().flex_col().gap(px(12.))
-                        .child(div().text_size(px(18.)).font_weight(FontWeight::SEMIBOLD).child("AGPL-3.0"))
-                        .child(div().text_size(px(13.)).line_height(px(20.)).child("Use, modify and share Cap UX, including for commercial work, under its open source license. No desktop license key is required for this fork."))
-                        .child(ui::Button::settings(&theme, "cap-ux-source", ui::ButtonVariant::Dark, ui::ButtonSize::Sm).label("Source & license ↗").on_click(|_, _, cx| cx.open_url("https://github.com/CantrellJax/ux-walk-cap")))
-                    ).into_any_element()
-                ]).into_any_element(),
-                self.section("Cloud services", Some("An upstream cloud account or subscription is separate from the Cap UX desktop app. Connected services keep their own terms and limits."), None, vec![]).into_any_element(),
-            ];
-        }
         let auth = store::auth_snapshot();
         let pro = auth.is_upgraded();
         let license = store::commercial_license();
         let (name, description) = if pro {
-            (
-                "the upstream Pro plan",
-                tr::settings::license::pro_description(),
-            )
+            ("Cap Pro", tr::settings::license::pro_description())
         } else if license.is_some() {
             (
                 tr::settings::license::desktop_name(),
-                crate::menus::fork_text(
-                    "Your desktop license covers commercial recording and editing. the upstream Pro plan adds cloud sharing and collaboration features.",
-                    tr::settings::license::desktop_description,
-                ),
+                tr::settings::license::desktop_description(),
             )
         } else {
-            ("Upstream Free", tr::settings::license::free_description())
+            ("Cap Free", tr::settings::license::free_description())
         };
         let mut content = vec![
             self.section(
                 tr::settings::license::title(),
-                Some(crate::menus::branded_static(tr::settings::license::description())),
+                Some(tr::settings::license::description()),
                 None,
                 vec![],
             )
@@ -4122,10 +4104,7 @@ impl SettingsWindow {
                                             .text_size(px(12.))
                                             .line_height(px(18.))
                                             .text_color(theme.settings_muted())
-                                            .child(crate::menus::fork_text(
-                                                "Already have the upstream Pro plan? Sign in with your account from the sidebar.",
-                                                tr::settings::license::sign_in_hint,
-                                            )),
+                                            .child(tr::settings::license::sign_in_hint()),
                                     )
                                 }),
                         )
@@ -4155,10 +4134,7 @@ impl SettingsWindow {
                                     div()
                                         .text_size(px(12.))
                                         .line_height(px(18.))
-                                        .child(crate::menus::fork_text(
-                                            "the upstream Pro plan · A desktop license, plus cloud sharing, AI features and collaboration.",
-                                            tr::settings::license::explore_pro,
-                                        )),
+                                        .child(tr::settings::license::explore_pro()),
                                 )
                                 .child(
                                     ui::Button::settings(
