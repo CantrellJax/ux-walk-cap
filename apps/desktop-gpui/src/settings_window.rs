@@ -3053,7 +3053,7 @@ impl SettingsWindow {
                 this.on_click(cx.listener(move |_this, _, _window, cx| {
                     let path = path.clone();
                     if opens_local {
-                        library::play_instant_recording(&path, cx);
+                        library::ux_walk::play_instant_recording(&path, cx);
                         return;
                     }
                     tracing::info!(path = %path.display(), "opening a recording in the editor");
@@ -3286,7 +3286,7 @@ impl SettingsWindow {
                     "Play video",
                     in_progress || failed,
                     cx,
-                    move |_, _, cx| library::play_instant_recording(&play_path, cx),
+                    move |_, _, cx| library::ux_walk::play_instant_recording(&play_path, cx),
                 ));
             }
             let share_path = path.clone();

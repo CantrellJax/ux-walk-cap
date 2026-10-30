@@ -30,6 +30,8 @@ use cap_project::{
 use cap_recording::{recovery::RecoveryManager, upload_resume::UploadLock};
 use gpui::{App, RenderImage};
 
+pub(crate) mod ux_walk;
+
 /// `RECENT_MEDIA_LIMIT` in `new-main/index.tsx:129`.
 pub const RECENT_MEDIA_LIMIT: usize = 9;
 
@@ -267,9 +269,7 @@ pub struct IncompleteRecordingItem {
 
 impl RecordingItem {
     pub fn is_active(&self) -> bool {
-        self.walk
-            .as_ref()
-            .is_some_and(crate::ux_walk_library::WalkSummary::is_active)
+        ux_walk::walk_active(self)
             || self.status == RecordingStatus::InProgress
             || self
                 .upload
@@ -386,18 +386,7 @@ pub fn list_recordings_in(dirs: &[PathBuf]) -> Vec<RecordingItem> {
 }
 
 fn recording_items_in(dirs: &[PathBuf]) -> impl Iterator<Item = RecordingItem> {
-    let walks = crate::ux_walk_library::index();
-    scanned_recordings_in(dirs).map(move |recording| {
-        let walk = recording
-            .path
-            .canonicalize()
-            .ok()
-            .and_then(|path| walks.get(&path))
-            .cloned();
-        let mut item = recording.into_item();
-        item.walk = walk;
-        item
-    })
+    ux_walk::attach_walks(scanned_recordings_in(dirs).map(ScannedRecording::into_item))
 }
 
 /// A recording directory after its metadata has been parsed, before the
@@ -670,15 +659,6 @@ pub fn delete_recording_directory(path: &Path) -> Result<(), String> {
 /// An instant recording opens its `content` directory --
 /// `commands.openFilePath` is `open <dir>` on macOS -- and anything else, or a
 /// bundle with no `content` directory, is revealed in the file manager.
-pub fn play_instant_recording(path: &Path, cx: &App) {
-    let output = path.join("content/output.mp4");
-    if output.is_file() {
-        open_with_system(&output, cx);
-    } else {
-        open_recording_folder(path, RecordingMode::Instant, cx);
-    }
-}
-
 pub fn open_recording_folder(path: &Path, mode: RecordingMode, cx: &App) {
     let content = path.join("content");
     if mode == RecordingMode::Instant && content.is_dir() {
