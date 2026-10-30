@@ -12,7 +12,8 @@ use serde_json::{Value, json};
 
 use crate::store::{self, DEFAULT_SERVER_URL};
 
-pub const PRICING_URL: &str = "https://cap.so/pricing?ref=desktop";
+pub const PRICING_URL: &str =
+    crate::fork_policy::link("https://cap.so/pricing?ref=desktop", fork_brand::REPO_URL);
 
 const CALLBACK_HTML: &str = r#"<!DOCTYPE html>
 <html lang="en">

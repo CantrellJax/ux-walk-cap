@@ -765,7 +765,13 @@ mod mac {
                 tr::menu::about::licensed().into(),
                 Some("https://github.com/CapSoftware/Cap/blob/main/LICENSE"),
             ),
-            (tr::menu::about::website().into(), Some("https://cap.so")),
+            (
+                tr::menu::about::website().into(),
+                Some(crate::fork_policy::link(
+                    "https://cap.so",
+                    fork_brand::REPO_URL,
+                )),
+            ),
         ]
     }
 

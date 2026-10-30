@@ -78,7 +78,7 @@ impl SettingsWindow {
                         ui::ButtonSize::Sm,
                     )
                     .label("Open GitHub issues ↗")
-                    .on_click(|_, _, cx| cx.open_url(fork_brand::ISSUES_URL))
+                    .on_click(|_, _, cx| cx.open_url(fork_brand::FEEDBACK_URL))
                     .into_any_element(),
                 ],
             )

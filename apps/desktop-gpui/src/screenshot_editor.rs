@@ -2391,7 +2391,7 @@ impl ScreenshotEditorWindow {
         let bundle = self.bundle.clone();
         cx.spawn_in(window, async move |_this, cx| {
             if !crate::platform::confirm_dialog(
-                "Cap",
+                crate::menus::APP_NAME,
                 tr::main::delete_screenshot_confirm(),
                 tr::common::yes(),
                 tr::common::no(),
