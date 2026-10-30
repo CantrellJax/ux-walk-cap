@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import vm from "node:vm";
 import {
 	projectBrowserEvidence,
 	sanitizeBrowserEvent,
@@ -472,5 +473,144 @@ test("boundary note drains retain ownership and pause fences across asynchronous
 				);
 		}
 		assert.equal(JSON.stringify(raw).includes("PAUSED_CLICK"), false, scenario);
+	}
+});
+
+test("trusted draft ingress survives only its immediate pause while asynchronous window ownership settles", async (t) => {
+	for (const scenario of [
+		"pause",
+		"same-ms",
+		"paused-entry",
+		"resume",
+		"generation",
+		"abort",
+	]) {
+		const f = fixture(t);
+		Object.assign(f.journal, { schemaVersion: 1, state: "recording" });
+		fs.writeFileSync(f.file, JSON.stringify(f.journal));
+		let now = 100000,
+			hold = false,
+			enteredResolve,
+			release;
+		const entered = new Promise((resolve) => {
+				enteredResolve = resolve;
+			}),
+			barrier = new Promise((resolve) => {
+				release = resolve;
+			});
+		const evidence = new NativeBrowserEvidence(
+			"owned-browser",
+			path.join(path.dirname(f.file), "prepared"),
+			() => now,
+		);
+		t.after(() => {
+			release();
+			clearInterval(evidence.flushTimer);
+		});
+		evidence.windowId = "17";
+		evidence.start(f.file, "17");
+		const events = new OwnedWindowEvents(evidence),
+			bindings = new Map();
+		const page = {
+			isClosed: () => false,
+			context: () => context,
+			on() {},
+			goto: async () => {},
+			screenshot: async ({ path: file }) =>
+				fs.writeFileSync(file, "synthetic screenshot"),
+			evaluate: async () => null,
+		};
+		const context = {
+			pages: () => [page],
+			newCDPSession: async () => ({
+				send: async () => {
+					if (hold) {
+						enteredResolve();
+						await barrier;
+					}
+					return { windowId: 17 };
+				},
+			}),
+			exposeBinding: async (name, fn) => bindings.set(name, fn),
+			addInitScript: async () => {},
+			on() {},
+			newPage: async () => page,
+		};
+		const source = fs.readFileSync(
+			process.env.CAP_UX_TEST_ENGINE_DIR
+				? path.join(process.env.CAP_UX_TEST_ENGINE_DIR, "src/browser.mjs")
+				: new URL("../../../vendor/ux-walk/src/browser.mjs", import.meta.url),
+			"utf8",
+		);
+		const open = vm.runInNewContext(
+			`(${source.slice(source.indexOf("export async function openBrowser")).replace(/^export /, "")})`,
+			{
+				chromium: { launch: async () => ({ newContext: async () => context }) },
+				fs,
+				path,
+				Date: { now: () => now },
+				pageHooks() {},
+				genericList: () => [],
+				watchNetwork() {},
+			},
+		);
+		const browser = await open({
+			url: "https://example.com",
+			authFile: path.join(path.dirname(f.file), "auth"),
+			windowSize: "800,600",
+			ignoreWrites: "$^",
+			write: (event, origin) => events.write(event, origin),
+			notesDir: () => evidence.notesDir(),
+			canCapturePage: (origin, operation) =>
+				events.canCapturePage(origin, operation),
+		});
+		const op = (data) => bindings.get("__uxwNote")({ page }, data);
+		const id = await op({ op: "new", box: { x: 0, y: 0, w: 10, h: 10 } });
+		now = 100010;
+		const text = `DRAFT_${scenario}`;
+		if (scenario === "paused-entry") {
+			evidence.anchor(f.file, now, 10, true);
+			await assert.rejects(
+				op({ op: "draft", id, text, t: 100000, receivedAt: 1, grant: true }),
+				/outside the recorded browser window/,
+			);
+		} else {
+			hold = true;
+			const draft = op({
+				op: "draft",
+				id,
+				text,
+				t: now,
+				receivedAt: 1,
+				grant: true,
+			});
+			draft.catch(() => {});
+			await entered;
+			now = scenario === "same-ms" ? 100010 : 100020;
+			evidence.anchor(f.file, now, 20, true);
+			if (scenario === "resume") evidence.anchor(f.file, 100030, 20, false);
+			if (scenario === "generation")
+				evidence.active.metadata.generation = "later-generation";
+			if (scenario === "abort") evidence.finish(f.file, "failed");
+			hold = false;
+			release();
+			if (["pause", "same-ms"].includes(scenario)) await draft;
+			else await assert.rejects(draft, /outside the recorded browser window/);
+		}
+		if (["pause", "same-ms", "paused-entry"].includes(scenario)) {
+			evidence.active.metadata.state = "finishing";
+			await flushNativeNotes(browser, evidence, events, now);
+		}
+		const raw = fs.readFileSync(
+			path.join(path.dirname(f.file), "browser-evidence.jsonl"),
+			"utf8",
+		);
+		if (["pause", "same-ms"].includes(scenario)) {
+			const rows = raw.trim().split("\n").map(JSON.parse);
+			assert.equal(rows.length, 1, scenario);
+			assert.equal(rows[0].text, text, scenario);
+			assert.equal(rows[0].observedAt, 100000, scenario);
+			assert.equal(rows[0].nativeOffsetMs, 0, scenario);
+		} else assert.equal(raw.includes(text), false, scenario);
 	}
 });
