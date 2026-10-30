@@ -40,6 +40,8 @@ use crate::{
     updates,
 };
 
+mod fork;
+
 /// `productName` in `tauri.conf.json`, which is what macOS renames the first
 /// submenu to.
 pub const APP_NAME: &str = fork_brand::APP_NAME;
@@ -212,6 +214,7 @@ pub fn init(cx: &mut App) {
     cx.on_action(|_: &HelpCenter, cx: &mut App| cx.open_url("https://help.cap.so/"));
     cx.on_action(|_: &HelpStatus, cx: &mut App| cx.open_url("https://cap.openstatus.dev/"));
     cx.on_action(|_: &HelpDiscord, cx: &mut App| cx.open_url("https://cap.link/discord"));
+    fork::register_help_links(cx);
     cx.on_action(|_: &HelpFeedback, cx: &mut App| {
         app_windows::open_settings(crate::settings_window::Page::Feedback, cx)
     });
@@ -316,7 +319,7 @@ pub(crate) fn reapply_update_row(cx: &mut App) {
 fn install_menus(cx: &mut App) {
     let update_status = updates::status(cx);
     let settings_enabled = !crate::app_windows::onboarding_is_open(cx);
-    cx.set_menus(build_menus(&update_status, settings_enabled));
+    cx.set_menus(fork::menus(build_menus(&update_status, settings_enabled)));
     #[cfg(target_os = "macos")]
     {
         platform::patch_standard_application_menu();
