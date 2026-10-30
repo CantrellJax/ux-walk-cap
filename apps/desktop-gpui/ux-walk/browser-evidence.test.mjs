@@ -333,6 +333,7 @@ test("Stop drains an owned pre-boundary draft into raw evidence and its original
 test("boundary note drains retain ownership and pause fences across asynchronous window checks", async (t) => {
 	for (const scenario of [
 		"ordinary",
+		"full-queue",
 		"foreign",
 		"after-boundary",
 		"previous-epoch",
@@ -381,6 +382,22 @@ test("boundary note drains retain ownership and pause fences across asynchronous
 						t: scenario === "after-boundary" ? throughMs + 1 : 100500,
 						text: "Retain accepted draft",
 					};
+					if (scenario === "full-queue") {
+						const previous = events.pending;
+						events.pending = new Set(
+							Array.from({ length: 512 }, () => Promise.resolve()),
+						);
+						try {
+							assert.equal(
+								await writeNote(raw, page),
+								false,
+								"a saturated writer must explicitly refuse the pending draft",
+							);
+						} finally {
+							events.pending = previous;
+						}
+						return;
+					}
 					if (scenario === "ordinary") {
 						assert.equal(
 							evidence.write(raw),
