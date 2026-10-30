@@ -34,6 +34,8 @@ use crate::{
 };
 use gpui::{Entity, Task};
 
+mod ux_walk;
+
 /// How long the mode panel's doodles take to draw in. After this they render
 /// still, so an open panel stops asking for frames.
 const MODE_INFO_DRAW_DURATION: std::time::Duration = std::time::Duration::from_millis(1900);
@@ -172,22 +174,6 @@ impl Mode {
         }
     }
 
-    pub(crate) fn panel_description(self) -> &'static str {
-        match self {
-            Self::Instant => {
-                "Record a ready-to-play video locally. Share it through your chosen server when you are ready."
-            }
-            Self::Studio => {
-                "Record locally in the highest quality for editing later. Perfect for \
-                 creating polished content with effects and transitions."
-            }
-            Self::Screenshot => {
-                "Capture and annotate screenshots instantly. Great for quick captures, bug \
-                 reports, and visual communication."
-            }
-        }
-    }
-
     /// [`Self::panel_title`] in the UI language. `panel_title` stays English:
     /// it names element ids and log fields.
     pub(crate) fn display_name(self) -> &'static str {
@@ -212,13 +198,6 @@ impl Mode {
             Self::Studio => tr::main::mode::header::studio(),
             Self::Screenshot => tr::main::mode::header::screenshot(),
         }
-    }
-}
-
-fn mode_choice_name(choice: ModeChoice) -> &'static str {
-    match choice {
-        ModeChoice::Capture(mode) => mode.display_name(),
-        ModeChoice::UxWalk => "UX Walk",
     }
 }
 
@@ -456,16 +435,7 @@ impl gpui::RenderOnce for ModeHoverCard {
     fn render(self, _window: &mut Window, _cx: &mut gpui::App) -> impl IntoElement {
         let theme = self.theme;
         let mode = self.mode;
-        let description = match mode {
-            ModeChoice::Capture(Mode::Studio) => tr::main::mode::hover::studio_description(),
-            ModeChoice::Capture(Mode::Screenshot) => {
-                tr::main::mode::hover::screenshot_description()
-            }
-            ModeChoice::Capture(Mode::Instant) if !cfg!(feature = "ux-walk") => {
-                tr::main::mode::hover::instant_description()
-            }
-            _ => mode.hover_description(),
-        };
+        let description = mode.localized_hover_description();
         div()
             .flex()
             .flex_col()
@@ -479,10 +449,7 @@ impl gpui::RenderOnce for ModeHoverCard {
             .bg(theme.gray_12)
             .text_color(theme.gray_1)
             .shadow_lg()
-            .child(div().text_size(px(12.)).child(match mode {
-                ModeChoice::Capture(mode) => mode.hover_title(),
-                ModeChoice::UxWalk => "UX Walk mode",
-            }))
+            .child(div().text_size(px(12.)).child(mode.hover_title()))
             .child(
                 div()
                     .text_size(px(10.))
@@ -515,11 +482,7 @@ impl gpui::RenderOnce for ModeHoverCard {
                                     style.text_color(theme.gray_1)
                                 }),
                         )
-                        .child(if mode == ModeChoice::UxWalk {
-                            "UX Walk settings"
-                        } else {
-                            tr::main::mode::hover::quality_settings()
-                        })
+                        .child(mode.settings_label())
                         .on_click(move |_, _, cx| {
                             cx.stop_propagation();
                             cx.defer(move |cx| mode.open_settings(cx));
@@ -979,14 +942,7 @@ struct MicrophoneWarning {
 pub struct MainWindow {
     theme: Theme,
     mode: Mode,
-    ux_walk_selected: bool,
-    walk_browser_opening: bool,
-    walk_browser_generation: u64,
-    walk_browser_notice: Option<String>,
-    walk_topic: Entity<ui::TextInputState>,
-    walk_speakers: Entity<ui::TextInputState>,
-    _walk_topic_events: gpui::Subscription,
-    _walk_speaker_events: gpui::Subscription,
+    walk: ux_walk::RecorderWalk,
     mode_hover: ModeHoverState,
     mode_hover_task: Option<Task<()>>,
     mode_hover_bounds: [Rc<Cell<Option<gpui::Bounds<gpui::Pixels>>>>; ModeChoice::ALL.len()],
@@ -1222,65 +1178,6 @@ impl MainWindow {
         // blur listener inside `TextInputState` needs a `&mut Window` anyway.
         let search_input = cx.new(|cx| ui::TextInputState::single_line(window, cx));
         let search_events = cx.subscribe(&search_input, Self::on_search_event);
-        let walk_topic = cx.new(|cx| {
-            let mut input = ui::TextInputState::single_line(window, cx);
-            input.set_placeholder("What are you walking through?");
-            input.set_text(
-                crate::store::store_section(crate::store::RECORDING_SETTINGS)
-                    .get("uxWalkTopic")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or("")
-                    .to_string(),
-                cx,
-            );
-            input
-        });
-        let walk_topic_events = cx.subscribe(&walk_topic, |_: &mut Self, input, event, cx| {
-            if matches!(
-                event,
-                ui::TextInputEvent::Confirmed | ui::TextInputEvent::Blurred
-            ) {
-                crate::store::set_store_setting(
-                    crate::store::RECORDING_SETTINGS,
-                    "uxWalkTopic",
-                    serde_json::Value::String(input.read(cx).text().to_string()),
-                );
-            }
-            cx.notify();
-        });
-
-        let walk_speakers = cx.new(|cx| {
-            let mut input = ui::TextInputState::single_line(window, cx);
-            input.set_placeholder("Speaker names, separated by commas");
-            if let Ok(settings) = crate::ux_walk::load() {
-                let speakers = crate::ux_walk::text(&settings, "speakers");
-                input.set_text(
-                    if speakers.is_empty() {
-                        crate::ux_walk::text(&settings, "me")
-                    } else {
-                        speakers
-                    }
-                    .to_string(),
-                    cx,
-                );
-            }
-            input
-        });
-
-        let walk_speaker_events = cx.subscribe(&walk_speakers, |_: &mut Self, input, event, cx| {
-            if matches!(
-                event,
-                ui::TextInputEvent::Confirmed | ui::TextInputEvent::Blurred
-            ) {
-                if let Err(error) = crate::ux_walk::save(
-                    "speakers",
-                    serde_json::Value::String(input.read(cx).text().to_string()),
-                ) {
-                    tracing::warn!(%error, "saving speaker names");
-                }
-            }
-            cx.notify();
-        });
 
         let media = MediaAccess::global(cx);
         let mut media_allowed = (
@@ -1347,14 +1244,7 @@ impl MainWindow {
             // window has to start where the store left it rather than at a
             // hardcoded Instant.
             mode: Mode::from_store(),
-            ux_walk_selected: crate::store::ux_walk_selected(),
-            walk_browser_opening: false,
-            walk_browser_generation: 0,
-            walk_browser_notice: None,
-            walk_topic,
-            walk_speakers,
-            _walk_topic_events: walk_topic_events,
-            _walk_speaker_events: walk_speaker_events,
+            walk: ux_walk::RecorderWalk::new(window, cx),
             mode_hover: ModeHoverState::default(),
             mode_hover_task: None,
             mode_hover_bounds: std::array::from_fn(|_| Rc::new(Cell::new(None))),
@@ -2134,86 +2024,6 @@ impl MainWindow {
         self.mode
     }
 
-    pub(crate) fn mode_choice(&self, cx: &gpui::App) -> ModeChoice {
-        if self.ux_walk_selected && self.session.read(cx).editor_recording_target().is_none() {
-            ModeChoice::UxWalk
-        } else {
-            ModeChoice::Capture(self.effective_mode(cx))
-        }
-    }
-
-    pub(crate) fn set_ux_walk(&mut self, cx: &mut Context<Self>) {
-        if self.session.read(cx).phase != Phase::Idle
-            || self.is_preparing_recording()
-            || self.session.read(cx).editor_recording_target().is_some()
-        {
-            return;
-        }
-        self.set_mode(Mode::Studio, cx);
-        self.ux_walk_selected = true;
-        crate::store::set_ux_walk_selected(true);
-        self.walk_browser_generation = self.walk_browser_generation.wrapping_add(1);
-        let generation = self.walk_browser_generation;
-        self.walk_browser_opening = true;
-        self.walk_browser_notice = Some("Opening a new Chrome window…".into());
-        self.target = Some(TargetType::Window);
-        self.selected_window = None;
-        cx.defer(crate::app_windows::dismiss_target_overlays);
-        cx.defer(|cx| crate::tray::mode_changed(Mode::Studio, cx));
-        cx.notify();
-        cx.spawn(async move |this, cx| {
-            let result = cx
-                .background_executor()
-                .spawn(async move { crate::ux_walk_browser::open() })
-                .await;
-            this.update(cx, |this, cx| {
-                if this.walk_browser_generation != generation || !this.ux_walk_selected {
-                    return;
-                }
-                if this.session.read(cx).phase != Phase::Idle {
-                    this.walk_browser_opening = false;
-                    this.walk_browser_notice = None;
-                    cx.notify();
-                    return;
-                }
-                let main = cx.global::<app_windows::AppWindows>().main;
-                cx.defer(move |cx| {
-                    let current = main
-                        .update(cx, |view, _, cx| {
-                            view.walk_browser_generation == generation
-                                && view.ux_walk_selected
-                                && view.session.read(cx).phase == Phase::Idle
-                        })
-                        .unwrap_or(false);
-                    if !current {
-                        return;
-                    }
-                    // Restoring the recorder clears its old target; apply the new window afterwards.
-                    app_windows::show_main_window(cx);
-                    main.update(cx, |view, _, cx| {
-                        view.walk_browser_opening = false;
-                        match result {
-                            Ok(window) => {
-                                view.devices.windows.retain(|known| known.id != window.id);
-                                view.devices.windows.push(window.clone());
-                                view.selected_window = Some(window);
-                                view.target = Some(TargetType::Window);
-                                view.panel = None;
-                                view.walk_browser_notice = None;
-                            }
-                            Err(error) => view.walk_browser_notice = Some(error),
-                        }
-                        cx.notify();
-                    })
-                    .ok();
-                });
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
-    }
-
     pub(crate) fn effective_mode(&self, cx: &gpui::App) -> Mode {
         effective_recording_mode(
             self.mode(),
@@ -2228,15 +2038,13 @@ impl MainWindow {
     pub fn set_mode(&mut self, mode: Mode, cx: &mut Context<Self>) {
         self.clear_mode_hover();
         cx.notify();
-        if self.is_preparing_recording()
+        if (self.mode == mode && !self.walk.selected)
+            || self.is_preparing_recording()
             || self.session.read(cx).editor_recording_target().is_some()
         {
             return;
         }
-        self.ux_walk_selected = false;
-        self.walk_browser_generation = self.walk_browser_generation.wrapping_add(1);
-        self.walk_browser_notice = None;
-        crate::store::set_ux_walk_selected(false);
+        self.walk_deselect();
         self.mode = mode;
         // Open overlays label their start button with the mode.
         let select = crate::target_overlay::TargetSelect::global(cx);
@@ -2541,8 +2349,9 @@ impl MainWindow {
         .detach();
     }
 
-    /// Start with the target shown in the recorder, including the preselected
-    /// UX Walk browser and the auto-record harness.
+    /// Start with the target the UI state describes. The overlays own the real
+    /// start affordance now; this is the harness path
+    /// (`CAP_GPUI_AUTO_RECORD` without `CAP_GPUI_AUTO_OVERLAY`).
     pub fn start_recording(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(target) = self.armed_target() else {
             return;
@@ -2571,9 +2380,7 @@ impl MainWindow {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.session.read(cx).phase != Phase::Idle
-            || self.checking_storage
-            || self.walk_browser_opening
+        if self.session.read(cx).phase != Phase::Idle || self.checking_storage || self.walk.opening
         {
             return;
         }
@@ -2627,33 +2434,8 @@ impl MainWindow {
                 feeds.requested_device_settings(),
             )
         };
-        let ux_walk = if self.mode_choice(cx) == ModeChoice::UxWalk && !editor_flow {
-            match crate::ux_walk::request(self.walk_topic.read(cx).text()) {
-                Ok(mut request) => {
-                    let settings = crate::ux_walk::load().unwrap_or_default();
-                    if crate::ux_walk::enabled(&settings, "askSpeakers") {
-                        request.speakers = self
-                            .walk_speakers
-                            .read(cx)
-                            .text()
-                            .split(',')
-                            .map(str::trim)
-                            .filter(|name| !name.is_empty())
-                            .map(str::to_string)
-                            .collect();
-                    }
-                    Some(request)
-                }
-                Err(error) => {
-                    self.session.update(cx, |session, cx| {
-                        session.error = Some(error);
-                        cx.notify();
-                    });
-                    return;
-                }
-            }
-        } else {
-            None
+        let Ok(ux_walk) = self.ux_walk_start_request(editor_flow, cx) else {
+            return;
         };
         let config = recording::StartConfig {
             ux_walk,
@@ -2751,7 +2533,7 @@ impl MainWindow {
 
     pub(crate) fn is_preparing_recording(&self) -> bool {
         self.checking_storage
-            || self.walk_browser_opening
+            || self.walk.opening
             || self.deep_link_start.is_some()
             || self.device_format_pending.is_some()
     }
@@ -4245,119 +4027,23 @@ impl MainWindow {
         // the full body, exactly as `!activeMenu() && ...` does in index.tsx.
         match self.panel {
             Some(panel) => root.child(self.render_panel(panel, cx)),
-            None => root
-                .child(self.render_logo_row(cx))
-                .child(
-                    div()
-                        .id("home-scroll")
-                        .flex()
-                        .flex_col()
-                        .flex_1()
-                        .min_h_0()
-                        .w_full()
-                        .pb(px(4.))
-                        .gap(px(8.))
-                        .overflow_y_scroll()
-                        .when(self.mode_choice(cx) == ModeChoice::UxWalk, |this| {
-                            this.child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(4.))
-                                    .child(
-                                        div()
-                                            .text_size(px(11.))
-                                            .text_color(self.theme.gray_10)
-                                            .child("Walk topic"),
-                                    )
-                                    .child(ui::TextInput::settings(
-                                        &self.theme,
-                                        "ux-walk-topic",
-                                        &self.walk_topic,
-                                    ))
-                                    .when(
-                                        crate::ux_walk::load().is_ok_and(|settings| {
-                                            crate::ux_walk::enabled(&settings, "askSpeakers")
-                                        }),
-                                        |this| {
-                                            this.child(
-                                                div()
-                                                    .text_size(px(11.))
-                                                    .text_color(self.theme.gray_10)
-                                                    .child("Who is speaking?"),
-                                            )
-                                            .child(
-                                                ui::TextInput::settings(
-                                                    &self.theme,
-                                                    "ux-walk-speakers",
-                                                    &self.walk_speakers,
-                                                ),
-                                            )
-                                        },
-                                    )
-                                    .child(
-                                        ui::Button::body(
-                                            &self.theme,
-                                            "ux-walk-open-start",
-                                            ui::ButtonVariant::Gray,
-                                            ui::ButtonSize::Sm,
-                                        )
-                                        .label("New walk window ↗")
-                                        .on_click(
-                                            cx.listener(|this, _, _, cx| this.set_ux_walk(cx)),
-                                        ),
-                                    ),
-                            )
-                        })
-                        .when(
-                            self.mode_choice(cx) == ModeChoice::UxWalk
-                                && self.session.read(cx).walk.journal.is_some(),
-                            |this| {
-                                this.child(
-                                    ui::Button::body(
-                                        &self.theme,
-                                        "ux-walk-recent",
-                                        ui::ButtonVariant::Gray,
-                                        ui::ButtonSize::Sm,
-                                    )
-                                    .label("Open recent walk")
-                                    .on_click(|_, _, cx| cx.defer(crate::ux_walk_window::open)),
-                                )
-                            },
-                        )
-                        .when_some(self.walk_browser_notice.clone(), |this, notice| {
-                            this.child(
-                                div()
-                                    .text_size(px(11.))
-                                    .text_color(self.theme.gray_10)
-                                    .child(notice),
-                            )
-                        })
-                        .child(self.render_targets(cx))
-                        .child(self.render_base_controls(cx)),
-                )
-                .when(self.mode_choice(cx) == ModeChoice::UxWalk, |this| {
-                    this.child(
-                        ui::Button::plain(
-                            &self.theme,
-                            "ux-walk-start-recording",
-                            ui::ButtonVariant::Blue,
-                            ui::ButtonSize::Lg,
-                        )
-                        .icon("icons/ux-walk.svg")
-                        .label(if self.walk_browser_opening {
-                            "Opening walk window…"
-                        } else {
-                            "Start Recording"
-                        })
-                        .full_width()
-                        .disabled(self.is_preparing_recording() || self.armed_target().is_none())
-                        .on_click(
-                            cx.listener(|this, _, window, cx| this.start_recording(window, cx)),
-                        ),
-                    )
-                }),
+            None => root.child(self.render_logo_row(cx)).child(
+                div()
+                    .id("home-scroll")
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_h_0()
+                    .w_full()
+                    .pb(px(4.))
+                    .gap(px(8.))
+                    .overflow_y_scroll()
+                    .children(self.ux_walk_setup(cx))
+                    .child(self.render_targets(cx))
+                    .child(self.render_base_controls(cx)),
+            ),
         }
+        .children(self.ux_walk_start_button(cx))
     }
 
     /// The recording takeover, from index.tsx 3510-3529: an absolute overlay
@@ -6452,22 +6138,6 @@ impl MainWindow {
             .on_click(on_click)
     }
 
-    fn choose_mode_choice(&mut self, choice: ModeChoice, cx: &mut Context<Self>) {
-        if self.is_preparing_recording()
-            || self.session.read(cx).editor_recording_target().is_some()
-        {
-            return;
-        }
-        if let Some(mode) = choice.capture_mode() {
-            self.set_mode(mode, cx);
-            cx.defer(app_windows::refresh_target_overlays);
-        } else {
-            self.clear_mode_hover();
-            cx.notify();
-            self.set_ux_walk(cx);
-        }
-    }
-
     fn render_mode_info(&self, cx: &mut Context<Self>) -> gpui::Div {
         let theme = self.theme;
         let paper = crate::onboarding_window::Paper::new(&theme);
@@ -6501,7 +6171,7 @@ impl MainWindow {
                             ui::keyboard_nav::stop(this.track_focus(&self.mode_info_focus[index]))
                         })
                         .role(gpui::Role::Button)
-                        .aria_label(mode_choice_name(mode))
+                        .aria_label(mode.display_name())
                         .aria_selected(selected)
                         .when(locked && !selected, |this| this.opacity(0.5))
                         .flex()
@@ -6533,7 +6203,7 @@ impl MainWindow {
                                 .text_size(px(12.5))
                                 .font_weight(FontWeight::MEDIUM)
                                 .text_color(paper.ink)
-                                .child(mode_choice_name(mode)),
+                                .child(mode.display_name()),
                         )
                         .on_hover(cx.listener(move |this, hovered: &bool, _window, cx| {
                             let preview = if *hovered {
@@ -6828,9 +6498,9 @@ impl MainWindow {
                     .gap(px(4.))
                     .when(!recording_clip, |this| {
                         this.child(self.render_logo())
-                            .when(!cfg!(feature = "ux-walk"), |this| {
-                                this.child(self.render_plan_badge())
-                            })
+                            .children(crate::fork_policy::upstream_only(|| {
+                                self.render_plan_badge()
+                            }))
                     })
                     .when(recording_clip, |this| {
                         this.child(
@@ -6860,10 +6530,7 @@ impl MainWindow {
                             .text_size(px(9.))
                             .line_height(px(11.))
                             .text_color(self.theme.gray_11)
-                            .child(match self.mode_choice(cx) {
-                                ModeChoice::Capture(mode) => mode.header_title(),
-                                ModeChoice::UxWalk => "UX Walk Mode",
-                            }),
+                            .child(self.mode_choice(cx).header_title()),
                     ),
             )
     }
@@ -7000,6 +6667,9 @@ impl MainWindow {
         )
     }
 
+    /// `Mode.tsx`: `p-1.5 gap-2 rounded-full border border-gray-5 bg-gray-3`,
+    /// 28px round buttons (`size-7`). Selected gets `bg-gray-7` plus a 2px
+    /// `blue-500` ring offset 1px against `gray-1`.
     fn render_mode_pill(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = self.theme;
         let selected_mode = self.mode_choice(cx);
@@ -7013,7 +6683,7 @@ impl MainWindow {
                 .tab_index(0)
                 .when(self.keyboard_nav, ui::keyboard_nav::ring)
                 .role(gpui::Role::Button)
-                .aria_label(mode_choice_name(mode))
+                .aria_label(mode.display_name())
                 .aria_selected(selected)
                 .relative()
                 .on_hover(cx.listener(move |this, hovered, _, cx| {
@@ -7318,7 +6988,6 @@ impl MainWindow {
 
     /// `BaseControls`: camera, microphone, system audio.
     fn render_base_controls(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = self.theme;
         div()
             .flex()
             .flex_col()
@@ -7430,13 +7099,7 @@ impl MainWindow {
                     )
                     // System audio has no device to choose, so the row is a
                     // plain toggle rather than a picker.
-                    .tooltip(move |_, cx| {
-                        ui::Tooltip::new(
-                            &theme,
-                            "Record calls and sound from all apps, even when capturing one window. Microphone is separate.",
-                        )
-                        .view(cx)
-                    })
+                    .tooltip(ux_walk::system_audio_tooltip(self.theme))
                     .on_click(cx.listener(|this, _, _window, cx| {
                         if this.device_changes_allowed(cx) {
                             this.set_system_audio(!this.system_audio, cx);
