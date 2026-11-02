@@ -19,7 +19,7 @@ pub fn prepare(cx: &mut App) -> Result<isize, String> {
     Ok(number)
 }
 pub fn open(cx: &mut App) {
-    let current_walk_present = RecordingSession::global(cx).read(cx).walk.is_some();
+    let current_walk_present = RecordingSession::global(cx).read(cx).walk.journal.is_some();
     let settings = crate::store::store_section(crate::store::RECORDING_SETTINGS);
     if let crate::ux_walk_library::NotesSource::Saved(file) = crate::ux_walk_library::notes_source(
         current_walk_present,
@@ -101,7 +101,7 @@ fn ensure(show: bool, cx: &mut App) -> Result<isize, String> {
                     WindowOptions {
                         window_bounds: Some(WindowBounds::Windowed(bounds)),
                         titlebar: Some(gpui::TitlebarOptions {
-                            title: Some("Cap UX · Walk notes".into()),
+                            title: Some(fork_brand::text_static("Cap · Walk notes").into()),
                             ..Default::default()
                         }),
                         focus: show,
@@ -223,7 +223,7 @@ impl WalkWindow {
             if matches!(event, ui::TextInputEvent::Changed) {
                 let text = this.input.read(cx).text().to_string();
                 this.session
-                    .update(cx, |session, _| session.walk_note_draft = text);
+                    .update(cx, |session, _| session.walk.note_draft = text);
             }
             if matches!(event, ui::TextInputEvent::Confirmed) {
                 this.add("note", cx);
@@ -256,10 +256,11 @@ impl WalkWindow {
         let session = self.session.read(cx);
         let file = session
             .walk
+            .journal
             .as_ref()
             .filter(|walk| walk.state == "complete")
             .map(|walk| walk.file());
-        if session.walk_processing || file.is_none() {
+        if session.walk.processing || file.is_none() {
             self.current_notes_revision = self.current_notes_revision.wrapping_add(1);
             self.current_notes = None;
             self.current_notes_loading = None;
@@ -290,11 +291,12 @@ impl WalkWindow {
                 .await;
             this.update_in(cx, |this, window, cx| {
                 if this.current_notes_revision != revision
-                    || this.session.read(cx).walk_processing
+                    || this.session.read(cx).walk.processing
                     || this
                         .session
                         .read(cx)
                         .walk
+                        .journal
                         .as_ref()
                         .is_none_or(|walk| walk.file() != requested)
                 {
@@ -422,7 +424,7 @@ impl WalkWindow {
             let Some(parent) = paths.into_iter().next() else { let _ = this.update_in(cx, |this, _, cx| { this.recovery_loading = false; cx.notify(); }); return; };
             let result = cx.background_executor().spawn(async move {
                 let destination = parent.join(format!("Recovered-walk-{}", crate::store::new_uuid_v4()));
-                let request_file = std::env::temp_dir().join(format!("cap-ux-restore-{}.json", crate::store::new_uuid_v4()));
+                let request_file = std::env::temp_dir().join(format!("ux-walk-restore-{}.json", crate::store::new_uuid_v4()));
                 let value = serde_json::json!({ "recordingId": id, "origin": origin, "destination": destination });
                 std::fs::write(&request_file, serde_json::to_vec(&value).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
                 let result = crate::ux_walk::run_engine("recovery-restore", &request_file);
@@ -503,6 +505,7 @@ impl WalkWindow {
                     .session
                     .read(cx)
                     .walk
+                    .journal
                     .as_ref()
                     .is_some_and(|walk| walk.file() == selected)
                 {
@@ -559,6 +562,7 @@ impl WalkWindow {
                         .session
                         .read(cx)
                         .walk
+                        .journal
                         .as_ref()
                         .is_none_or(|walk| walk.file() != selected)
                 {
@@ -590,7 +594,7 @@ impl Render for WalkWindow {
         let walk = if saved_view {
             self.saved.clone()
         } else {
-            session.walk.clone()
+            session.walk.journal.clone()
         };
         let notes = if saved_view {
             self.saved_notes.as_ref()
@@ -619,7 +623,7 @@ impl Render for WalkWindow {
                 .as_ref()
                 .is_some_and(|walk| walk.status == crate::ux_walk_library::WalkStatus::Processing)
         } else {
-            session.walk_processing || session.phase == Phase::Stopping
+            session.walk.processing || session.phase == Phase::Stopping
         };
         let notice = self.notice.clone().unwrap_or_else(|| {
             if saved_view {
@@ -627,11 +631,11 @@ impl Render for WalkWindow {
                     .as_ref()
                     .map(|summary| summary.status.notice())
                     .unwrap_or_else(|| "Loading saved notes…".into())
-            } else if session.walk_notice.is_empty() {
+            } else if session.walk.notice.is_empty() {
                 "Start a UX Walk from the recorder. Use its existing capture and audio controls."
                     .into()
             } else {
-                session.walk_notice.clone()
+                session.walk.notice.clone()
             }
         });
         div()
@@ -666,7 +670,7 @@ impl Render for WalkWindow {
                         .text_size(px(12.))
                         .line_height(px(18.))
                         .text_color(theme.gray_10)
-                        .child(session.walk_checkpoint_notice.clone()),
+                        .child(session.walk.checkpoint_notice.clone()),
                 )
             })
             .when(!capture_active, |this| {
@@ -782,6 +786,7 @@ impl Render for WalkWindow {
                 let full_retry = file.clone();
                 let checkpoint_file = file.clone();
                 let has_checkpoints = folder.join("checkpoints/identity.json").is_file();
+                let recovery = crate::ux_walk_checkpoints::recovery_notice(&folder);
                 let retry_disabled = capture_active
                     || (!saved_view && processing)
                     || self.reprocessing.contains(&file);
@@ -795,6 +800,14 @@ impl Render for WalkWindow {
                         .text_color(theme.gray_10)
                         .child(evidence),
                 )
+                .when_some(recovery, |this, recovery| {
+                    this.child(
+                        div()
+                            .text_size(px(11.))
+                            .text_color(theme.amber_11)
+                            .child(recovery),
+                    )
+                })
                 .child(
                     div()
                         .flex()
@@ -808,7 +821,7 @@ impl Render for WalkWindow {
                                 ui::ButtonSize::Sm,
                             )
                             .label("Show files")
-                            .on_click(move |_, _, _| crate::library::reveal_in_folder(&folder)),
+                            .on_click(move |_, _, cx| crate::library::reveal_path(&folder, cx)),
                         )
                         .child(
                             ui::Button::plain(

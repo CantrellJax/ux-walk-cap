@@ -3,7 +3,7 @@
 //! Priority: explicit `CAP_API_KEY`/`CAP_SERVER_URL` env vars (for CI/headless), then the login the
 //! desktop app already stored. The CLI is the same product as Cap Desktop, so if the user is signed
 //! in there, `cap upload` just works — no key to copy, no env var to set. The desktop persists its
-//! auth as plain JSON via tauri-plugin-store, so we read it directly without any Tauri dependency.
+//! auth as a plain JSON store file, so we read it directly.
 
 use std::collections::BTreeMap;
 
@@ -15,12 +15,12 @@ use crate::atomic;
 use crate::{OutputFormat, write_json};
 
 pub const DEFAULT_SERVER: &str = if cfg!(feature = "ux-walk") {
-    ""
+    fork_brand::DEFAULT_SERVER_URL
 } else {
     "https://cap.so"
 };
 const AGENT_KEYRING_SERVICE: &str = if cfg!(feature = "ux-walk") {
-    "com.cantrell.cap-ux.cli"
+    fork_brand::CLI_KEYRING_SERVICE
 } else {
     "so.cap.cli"
 };
@@ -28,7 +28,7 @@ const AGENT_KEYRING_USER: &str = "agent-api";
 const AGENT_GRANTS_KEYRING_USER: &str = "agent-access-grants";
 // Prod first, then the dev bundle, so a released install wins on a machine that has both.
 const DESKTOP_BUNDLE_IDS: [&str; 2] = if cfg!(feature = "ux-walk") {
-    ["com.cantrell.cap-ux", "com.cantrell.cap-ux.dev"]
+    [fork_brand::BUNDLE_ID, fork_brand::DEV_BUNDLE_ID]
 } else {
     ["so.cap.desktop", "so.cap.desktop.dev"]
 };

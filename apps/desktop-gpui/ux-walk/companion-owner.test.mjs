@@ -71,7 +71,7 @@ test("external evidence owner durably accepts bound Meet captions, projects paus
 				eventId: "caption-1",
 				observedAt: 2000,
 				kind: "caption",
-				name: "Clay",
+				name: "Avery",
 				text: "Before pause",
 				captionId: "turn-1",
 				revision: 1,
@@ -147,7 +147,7 @@ test("external evidence owner durably accepts bound Meet captions, projects paus
 	assert.deepEqual(
 		captions.map((event) => [event.name, event.t]),
 		[
-			["Clay", 2000],
+			["Avery", 2000],
 			["Jackson", 3000],
 		],
 	);

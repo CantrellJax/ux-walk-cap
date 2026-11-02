@@ -138,7 +138,7 @@ async function buildFixture(context) {
 	return {
 		root,
 		target,
-		destination: path.join(root, "apps/desktop/src-tauri/binaries"),
+		destination: path.join(root, "apps/desktop-gpui/binaries"),
 	};
 }
 

@@ -28,7 +28,15 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git remote add cap-upstream https://github.com/CapSoftware/Cap.git
           git fetch cap-upstream main
+          git config merge.ours.driver true
+          git config rerere.enabled true
+          git config rerere.autoupdate true
           git merge --no-edit cap-upstream/main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check the merge kept the fork branding
+        run: node --test scripts/fork-branding.test.mjs
       - uses: peter-evans/create-pull-request@v7
         id: proposal
         with:

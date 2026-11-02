@@ -15,7 +15,7 @@ import {
 } from "./native-browser.mjs";
 
 function fixture(t) {
-	const directory = fs.mkdtempSync(path.join(os.tmpdir(), "cap-ux-browser-"));
+	const directory = fs.mkdtempSync(path.join(os.tmpdir(), "ux-walk-browser-"));
 	t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
 	const file = path.join(directory, "native-walk.json");
 	const journal = {

@@ -1,13 +1,31 @@
 #[cfg(target_os = "macos")]
 mod owned {
+    use cap_recording::diagnostics::redact_home_paths;
     use serde_json::{Value, json};
     use std::{
-        io::{BufRead, BufReader, Write},
+        io::{BufRead, BufReader, ErrorKind, Read, Write},
         path::{Path, PathBuf},
-        process::{Child, ChildStdin, Command, Stdio},
+        process::{Child, ChildStdin, Command, ExitStatus, Stdio},
         sync::{Mutex, OnceLock, mpsc},
         time::{Duration, Instant},
     };
+
+    const COLLECTOR_CLOSED: &str = "The walk browser collector closed.";
+    const STDERR_TAIL_BYTES: usize = 16 * 1024;
+    const REDACTED_LINE: &str = "[line redacted]";
+    const SECRET_MARKERS: &[&str] = &[
+        "authorization",
+        "cookie",
+        "bearer",
+        "password",
+        "passwd",
+        "token",
+        "secret",
+        "api_key",
+        "api-key",
+        "apikey",
+        "otp",
+    ];
 
     struct Browser {
         capture_id: String,
@@ -78,8 +96,110 @@ mod owned {
         Ok(executable
             .parent()
             .and_then(Path::parent)
-            .ok_or("Cap UX app bundle is unavailable.")?
+            .ok_or("The app bundle is unavailable.")?
             .join("Resources/ux-walk"))
+    }
+
+    fn read_tail(mut stderr: impl Read) -> String {
+        let mut tail = Vec::new();
+        let mut chunk = [0; 4096];
+        let mut truncated = false;
+        loop {
+            match stderr.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(count) => {
+                    tail.extend_from_slice(&chunk[..count]);
+                    if tail.len() > STDERR_TAIL_BYTES {
+                        tail.drain(..tail.len() - STDERR_TAIL_BYTES);
+                        truncated = true;
+                    }
+                }
+                Err(error) if error.kind() == ErrorKind::Interrupted => {}
+                Err(error) => {
+                    tracing::warn!(%error, "could not read walk browser collector stderr");
+                    break;
+                }
+            }
+        }
+        let text = String::from_utf8_lossy(&tail);
+        // A cut can split "Bearer abc" and leave a bare token that no rule below recognizes.
+        let text = if truncated {
+            text.split_once('\n').map_or("", |(_, rest)| rest)
+        } else {
+            text.as_ref()
+        };
+        text.trim().to_string()
+    }
+
+    // Stderr bypasses the collector's redactBrowserText, so an uncaught error or
+    // a library warning can carry anything. Lines fail closed on these markers.
+    fn redact_stderr(text: &str) -> String {
+        text.lines()
+            .map(|line| {
+                let lower = line.to_lowercase();
+                if SECRET_MARKERS.iter().any(|marker| lower.contains(marker)) {
+                    return REDACTED_LINE.to_string();
+                }
+                let words: Vec<&str> = line
+                    .split(' ')
+                    .map(|word| {
+                        if word.contains("://") && !word.contains("file://") {
+                            "[url]"
+                        } else if word.contains('@') && word.contains('.') {
+                            "[email]"
+                        } else {
+                            word
+                        }
+                    })
+                    .collect();
+                redact_home_paths(&words.join(" "))
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn startup_failure(stderr: &str, status: Option<ExitStatus>) -> String {
+        if stderr
+            .lines()
+            .any(|line| line.trim_start().starts_with("dyld"))
+        {
+            return "The bundled Node runtime could not load. Rebuild or reinstall the app.".into();
+        }
+        let redacted = redact_stderr(stderr);
+        let lines: Vec<&str> = redacted
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && *line != REDACTED_LINE)
+            .collect();
+        let summary = lines
+            .iter()
+            .find(|line| {
+                line.split_whitespace()
+                    .next()
+                    .is_some_and(|word| word.trim_end_matches(':').ends_with("Error"))
+            })
+            .or(lines.last());
+        match (summary, status) {
+            (Some(summary), _) => format!(
+                "The walk browser collector stopped before it was ready: {}",
+                summary.chars().take(300).collect::<String>()
+            ),
+            (None, Some(status)) => {
+                format!("The walk browser collector stopped before it was ready ({status}).")
+            }
+            (None, None) => "The walk browser collector stopped before it was ready.".into(),
+        }
+    }
+
+    fn exit_status(browser: &mut Browser) -> Option<ExitStatus> {
+        let child = browser.child.as_mut()?;
+        for _ in 0..50 {
+            if let Some(status) = child.try_wait().ok().flatten() {
+                return Some(status);
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        None
     }
 
     fn spawn(external: bool) -> Result<Browser, String> {
@@ -92,7 +212,8 @@ mod owned {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&work_dir, std::fs::Permissions::from_mode(0o700))
             .map_err(|error| error.to_string())?;
-        let mut child = Command::new(engine.join("bin/node"))
+        let mut command = Command::new(engine.join("bin/node"));
+        command
             .arg(engine.join("native-browser.mjs"))
             .arg(&capture_id)
             .arg(work_dir)
@@ -102,12 +223,25 @@ mod owned {
                 crate::ux_walk::config_path()
                     .parent()
                     .ok_or("Invalid walk settings folder.")?,
-            )
+            );
+        start_collector(command, capture_id, external)
+    }
+
+    fn start_collector(
+        mut command: Command,
+        capture_id: String,
+        external: bool,
+    ) -> Result<Browser, String> {
+        let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .spawn()
-            .map_err(|error| format!("Could not start the walk browser: {error}"))?;
+            .map_err(|error| {
+                format!(
+                    "Could not start the bundled Node runtime: {error}. Rebuild or reinstall the app."
+                )
+            })?;
         let input = child
             .stdin
             .take()
@@ -116,6 +250,22 @@ mod owned {
             .stdout
             .take()
             .ok_or("Browser control output unavailable.")?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or("Browser diagnostic output unavailable.")?;
+        let (send_stderr, stderr_tail) = mpsc::channel();
+        // Runs until the child exits, however long that is, so a full pipe can never block it.
+        std::thread::spawn(move || {
+            let tail = read_tail(stderr);
+            if !tail.is_empty() {
+                tracing::warn!(
+                    stderr = %redact_stderr(&tail),
+                    "walk browser collector wrote to stderr"
+                );
+            }
+            let _ = send_stderr.send(tail);
+        });
         let (send, replies) = mpsc::channel();
         std::thread::spawn(move || {
             for line in BufReader::new(output).lines() {
@@ -130,9 +280,9 @@ mod owned {
                     return;
                 }
             }
-            let _ = send.send(Err("The walk browser collector closed.".into()));
+            let _ = send.send(Err(COLLECTOR_CLOSED.into()));
         });
-        let browser = Browser {
+        let mut browser = Browser {
             capture_id,
             external,
             window_id: None,
@@ -141,10 +291,17 @@ mod owned {
             input: Some(input),
             replies,
         };
-        let ready = browser
-            .replies
-            .recv_timeout(Duration::from_secs(25))
-            .map_err(|_| "The walk browser could not start in time.")??;
+        let ready = match browser.replies.recv_timeout(Duration::from_secs(25)) {
+            Ok(Ok(ready)) => ready,
+            Ok(Err(error)) if error == COLLECTOR_CLOSED => {
+                let stderr = stderr_tail
+                    .recv_timeout(Duration::from_secs(2))
+                    .unwrap_or_default();
+                return Err(startup_failure(&stderr, exit_status(&mut browser)));
+            }
+            Ok(Err(error)) => return Err(error),
+            Err(_) => return Err("The walk browser could not start in time.".into()),
+        };
         if ready["ready"] != true || ready["captureId"].as_str() != Some(&browser.capture_id) {
             return Err(ready["error"]
                 .as_str()
@@ -168,7 +325,7 @@ mod owned {
             .map(|window| window.id().to_string())
             .collect();
         let mut browser = spawn(false)?;
-        let marker = format!("Cap UX walk {}", browser.capture_id);
+        let marker = format!("UX Walk {}", browser.capture_id);
         let started = Instant::now();
         while started.elapsed() < Duration::from_secs(15) {
             let matches: Vec<_> = crate::devices::list_window_targets()
@@ -421,6 +578,89 @@ mod owned {
     mod tests {
         use super::*;
 
+        fn shell(script: &str) -> Result<Browser, String> {
+            let mut command = Command::new("/bin/sh");
+            command.args(["-c", script]);
+            start_collector(command, "stderr-test".into(), false)
+        }
+
+        #[test]
+        fn noisy_stderr_cannot_block_the_ready_handshake() {
+            let browser = shell(
+                r#"head -c 300000 /dev/zero | tr '\0' x >&2
+                printf '{"ready":true,"captureId":"stderr-test"}\n'"#,
+            );
+            assert!(browser.is_ok());
+        }
+
+        #[test]
+        fn a_load_failure_blames_the_runtime_and_not_chrome() {
+            let error = shell(
+                "echo 'dyld[7]: Library not loaded: @rpath/libnode.127.dylib' >&2; kill -ABRT $$",
+            )
+            .err()
+            .unwrap();
+            assert!(error.contains("bundled Node runtime"), "{error}");
+            assert!(!error.contains("Chrome"), "{error}");
+        }
+
+        #[test]
+        fn an_uncaught_error_is_summarized_without_its_secrets() {
+            let error = shell(
+                r#"cat >&2 <<'EOF'
+Authorization: abc123-header
+    throw new Error("nope")
+
+TypeError: request to https://me:hunter2@example.com/a failed for someone@example.com
+    at run (file:///app/native-browser.mjs:1:1)
+EOF
+                exit 1"#,
+            )
+            .err()
+            .unwrap();
+            assert!(error.contains("TypeError: request to [url]"), "{error}");
+            for secret in ["abc123", "hunter2", "someone@"] {
+                assert!(!error.contains(secret), "{error}");
+            }
+        }
+
+        #[test]
+        fn a_silent_exit_reports_its_status() {
+            let error = shell("exit 3").err().unwrap();
+            assert!(error.contains("exit status: 3"), "{error}");
+        }
+
+        #[test]
+        fn the_collectors_own_redacted_error_is_kept() {
+            let error = shell(
+                r#"echo 'stray warning' >&2
+                printf '{"ready":false,"error":"Chromium is not installed"}\n'
+                exit 1"#,
+            )
+            .err()
+            .unwrap();
+            assert_eq!(error, "Chromium is not installed");
+        }
+
+        #[test]
+        fn redaction_drops_lines_with_credentials_and_keeps_stack_frames() {
+            let redacted = redact_stderr(
+                "x-api-key: abc\nsession cookie=abc\nconnect postgres://me:abc@db/app failed\n    at file:///app/src/browser.mjs:1:1",
+            );
+            assert!(!redacted.contains("abc"), "{redacted}");
+            assert!(redacted.ends_with("at file:///app/src/browser.mjs:1:1"));
+        }
+
+        #[test]
+        fn the_tail_is_bounded_and_never_starts_inside_a_line() {
+            let mut stream = format!("Bearer {}\n", "s".repeat(STDERR_TAIL_BYTES)).into_bytes();
+            stream.extend_from_slice(b"Error: the last words\n");
+            let tail = read_tail(std::io::Cursor::new(stream));
+            assert_eq!(tail, "Error: the last words");
+            let endless = vec![b's'; STDERR_TAIL_BYTES * 3];
+            assert_eq!(read_tail(std::io::Cursor::new(endless)), "");
+        }
+
         #[test]
         fn exited_collector_marks_partial_without_touching_media_or_notes() {
             let unique = std::time::SystemTime::now()
@@ -428,7 +668,7 @@ mod owned {
                 .unwrap()
                 .as_nanos();
             let directory = std::env::temp_dir().join(format!(
-                "cap-ux-browser-health-{}-{unique}",
+                "ux-walk-browser-health-{}-{unique}",
                 std::process::id()
             ));
             let mut journal = crate::ux_walk_journal::Journal::begin(

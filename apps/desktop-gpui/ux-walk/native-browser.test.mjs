@@ -19,7 +19,7 @@ import {
 import { finishNativeWalk, nativeWalkPrompt } from "./native-walk.mjs";
 
 test("browser entrypoint validates owners through a directory alias while non-file argv imports stay inert", (t) => {
-	const root = fs.mkdtempSync(path.join(os.tmpdir(), "cap-ux-browser-entry-"));
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "ux-walk-browser-entry-"));
 	t.after(() => fs.rmSync(root, { recursive: true, force: true }));
 	const alias = path.join(root, "adapter alias");
 	fs.symlinkSync(fileURLToPath(new URL(".", import.meta.url)), alias, "dir");
@@ -68,7 +68,7 @@ test(
 			"../../../vendor/ux-walk/src/timeline.mjs"
 		);
 		const root = fs.mkdtempSync(
-			path.join(os.tmpdir(), "cap-ux-browser-smoke-"),
+			path.join(os.tmpdir(), "ux-walk-browser-smoke-"),
 		);
 		let browser;
 		const server = http.createServer((request, response) => {
@@ -95,7 +95,7 @@ test(
 				return;
 			}
 			response.writeHead(200, { "content-type": "text/html" });
-			response.end(`<!doctype html><title>Synthetic Cap UX</title><button data-testid="save-window">Save window</button><script>
+			response.end(`<!doctype html><title>Synthetic walk page</title><button data-testid="save-window">Save window</button><script>
 console.error("First-load synthetic error");
 document.querySelector("button").onclick = () => {
  console.error("Synthetic console failure");
@@ -501,7 +501,7 @@ test(
 	"owned helper finishing schedules its draft drain and Stop awaits one durable note",
 	{ timeout: 10000 },
 	async (t) => {
-		const root = fs.mkdtempSync(path.join(os.tmpdir(), "cap-ux-finish-draft-"));
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "walk-finish-draft-"));
 		const captureId = randomUUID(),
 			work = path.join(root, "walk-browser", captureId),
 			directory = path.join(root, "walk"),

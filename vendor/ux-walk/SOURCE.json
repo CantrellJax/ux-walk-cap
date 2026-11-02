@@ -1,7 +1,7 @@
 {
   "name": "UX Walk",
   "repository": "https://github.com/CantrellJax/ux-walk",
-  "revision": "9c6e3245c51abd300e33265a4787a1061817abba",
+  "revision": "c0893a022f80dffadeaf7bb746127d025e65cca0",
   "license": "AGPL-3.0-only",
   "files": {
     ".gitignore": "77cc9c247322e06e2a62b7fb48877c0427f5e414d0addbd8d898efda5b7b6ad5",
@@ -38,7 +38,7 @@
     "src/browser.mjs": "31bff1fb0d762ae2c5c76bd889ab8d143d2e40b9662e2d55d96b61ba8a672d91",
     "src/cap-session.mjs": "af79faf17e909f06ca6d2b33988707dde423366a1332850ff91f232a98e2f900",
     "src/cap-updates.mjs": "aa5e180c865cc120228577ee292c98fe84b16c60022918f0a4a3422de17e1f7c",
-    "src/cap.mjs": "fb5af9a5d5486049bf4dba7fc83c09e5c887d3ddfc26ff47595f15b841ecad7c",
+    "src/cap.mjs": "8ed116ff71e9608ced2106e74c3a0a4554dab988a3e45ec149f9b61f5528d56a",
     "src/capture.mjs": "8012e6dd41ae990f5b08a5c7f9bcc3ce77da7bf5e2fe701fbf8e86dccaca438c",
     "src/companion-install.mjs": "a6ce47d9e3112e49aa9a9768729b8fc850f48d5b6b284e28f557505b0ec3ea2b",
     "src/companion.mjs": "3acc4929955cc9d9120b5fa425062a52c4615fb9ffc024f3da32821d1ad939e2",
@@ -60,7 +60,7 @@
     "src/sections.mjs": "64f06ae50b8998e73360a24cdcadd088d1c1b49d6ccc99c980d465a1cd726579",
     "src/speakers.mjs": "34d0963b3f2aa02988f89ffef6a45f89ecbde228b86164bc9b3c414fc002c5a0",
     "src/timeline.mjs": "eab9b23656a070e7a7c39b0e0143dc802bde506c5b3a74748c5400db3ee8041d",
-    "src/transcribe.mjs": "5e02b6262f4a39dc9716710ffc04234a9154897515d3c59696ec4835e4a69e50",
+    "src/transcribe.mjs": "c20fa33ef03f49b33d89943c65ff56d6cf010184845495afc9b52614badbdee3",
     "src/voices.mjs": "ee3d2c8b6ceea29b2371840282524ef4b8bbad51de8ca2fff5ecc5b8d4008b9e",
     "swift/uxw-capture.swift": "2cbc37f81b74ca3b29d6b026af9e622e93189499de90a8f2305177d3329efac6",
     "swift/uxw-menubar.swift": "2a6b534e265dc4109b7bbae4afa0153f326cbc32b46ceed7a78060d1b946e3c4",
@@ -76,7 +76,7 @@
     "test/unit/embedded-config.test.mjs": "5ce28adcf30756fa44f79f63d415cfaa6c00f236c9cbddd320565ed50b07b38e",
     "test/unit/meet-attribution.test.mjs": "08a531cce8ddd04b7c1e2e2356fad9f1c8870c225b7499e0751bd3ba37ea145b",
     "test/unit/start-link.test.mjs": "577db42d3388e4d01586c41ae8e1202acd3bb2cc315589fc8fb8bcb1693988d1",
-    "test/unit/transcript-only.test.mjs": "c2964bf93920be3ffb72368cf50ffe621285c97811c51c4f2650f37205338998",
+    "test/unit/transcript-only.test.mjs": "2d7a0e2e6ddc7b128b0989c5c90ae630cdbb083bfae7d94515cd913b8f8b8520",
     "test/unit/transcript-words.test.mjs": "6fbd16831f3ea6100540cbe3eea70072d2284eab9d483892f77a706e2c9febde"
   }
 }

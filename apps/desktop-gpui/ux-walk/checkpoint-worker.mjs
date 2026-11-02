@@ -24,6 +24,7 @@ const engine = fs.existsSync(local)
 	: new URL("../../../vendor/ux-walk/src/", import.meta.url);
 const execute = promisify(execFile);
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const DRAIN_MS = 150000;
 
 function canonicalSourceIdentity(file, sourceProject, previous) {
 	const identity = {
@@ -124,6 +125,20 @@ export class CheckpointWorker {
 			);
 		return heartbeat;
 	}
+	// Recorders that clear their session clock before the terminal heartbeat left walks with a
+	// file below the saved clock, and Resume reads that same file. A live regression stays an error.
+	settledClock(heartbeat) {
+		if (this.journal.state === "recording" && heartbeat.captureEnded !== true)
+			return heartbeat;
+		return {
+			...heartbeat,
+			activeElapsedMs: Math.max(
+				heartbeat.activeElapsedMs,
+				this.journal.durationMs ?? 0,
+				this.store.state.localClockThroughMs,
+			),
+		};
+	}
 	status(heartbeat = this.lastHeartBeat) {
 		const sources = Object.fromEntries(
 			Object.entries(this.sources).map(([source, state]) => {
@@ -206,13 +221,20 @@ export class CheckpointWorker {
 							heartbeat?.expectedAudio?.systemAudio === false
 						? "unavailable: no audio was selected"
 						: supported && !Object.keys(this.sourceErrors).length
-							? jobs.some((job) => ["failed", "ambiguous"].includes(job.state))
-								? "needs attention"
-								: jobs.some((job) => job.state !== "complete")
-									? "working"
-									: !jobs.length || pendingAudio
-										? "waiting for a five-minute chunk or stop tail"
-										: "caught up to saved source audio"
+							? jobs.some(
+									(job) =>
+										job.state === "failed" && job.notSent === "missing-key",
+								)
+								? "needs a provider key: add it in Settings, then choose Resume evidence sync"
+								: jobs.some((job) =>
+											["failed", "ambiguous"].includes(job.state),
+										)
+									? "needs attention"
+									: jobs.some((job) => job.state !== "complete")
+										? "working"
+										: !jobs.length || pendingAudio
+											? "waiting for a five-minute chunk or stop tail"
+											: "caught up to saved source audio"
 							: "after recording stops",
 			error: this.error,
 			updatedAt: Date.now(),
@@ -313,10 +335,10 @@ export class CheckpointWorker {
 		}
 	}
 	async checkpoint({ force = false } = {}) {
-		const heartbeat = this.heartbeat();
-		this.lastHeartBeat = heartbeat;
+		const observed = this.heartbeat();
+		this.lastHeartBeat = observed;
 		if (!force && Date.now() - this.lastCheckpointAt < 10000) {
-			this.status(heartbeat);
+			this.status(observed);
 			return;
 		}
 		const objects = [];
@@ -327,6 +349,8 @@ export class CheckpointWorker {
 			this.journal.sourceProject,
 			this.sourceIdentity,
 		);
+		const heartbeat = this.settledClock(observed);
+		this.lastHeartBeat = heartbeat;
 		objects.push(
 			this.store.put(
 				"journal",
@@ -800,6 +824,7 @@ export class CheckpointWorker {
 export async function runCheckpointWorker(file, cfg, dependencies = {}) {
 	const directory = path.dirname(fs.realpathSync(file));
 	const lease = await acquireWalkLock(directory, "checkpoint");
+	const drainMs = dependencies.drainMs ?? DRAIN_MS;
 	let worker;
 	try {
 		const initial = readJson(path.join(directory, "checkpoint-heartbeat.json"));
@@ -832,7 +857,11 @@ export async function runCheckpointWorker(file, cfg, dependencies = {}) {
 					if (heartbeat.captureEnded !== false || !parentAlive) {
 						terminalStarted = terminalAt == null;
 						terminalAt ??= Date.now();
-						worker.uploadDeadlineAt = terminalAt + 150000;
+						// An explicit Resume must not abort a saved job at the deadline: that would
+						// turn a job it just unblocked into an ambiguous, possibly billed one.
+						if (dependencies.resume && worker.jobs.running)
+							terminalAt = Date.now();
+						worker.uploadDeadlineAt = terminalAt + drainMs;
 					}
 				}
 				if (!terminalSealed)
@@ -847,7 +876,7 @@ export async function runCheckpointWorker(file, cfg, dependencies = {}) {
 					worker.jobs.all().some((job) => job.state === "prepared");
 				if (
 					!worker.jobs.running &&
-					(terminalAt == null || Date.now() - terminalAt < 150000)
+					(terminalAt == null || Date.now() - terminalAt < drainMs)
 				)
 					void worker.jobs.runNext().catch((error) => {
 						worker.error = error.message;
@@ -858,7 +887,7 @@ export async function runCheckpointWorker(file, cfg, dependencies = {}) {
 				}
 				if (
 					!worker.uploading &&
-					(terminalAt == null || Date.now() - terminalAt < 150000)
+					(terminalAt == null || Date.now() - terminalAt < drainMs)
 				)
 					void worker.uploadNext().catch((error) => {
 						worker.error = String(error.message).slice(0, 500);
@@ -869,7 +898,7 @@ export async function runCheckpointWorker(file, cfg, dependencies = {}) {
 				if (
 					terminalAt != null &&
 					((terminalSealed && !pendingRemote) ||
-						Date.now() - terminalAt > 150000)
+						Date.now() - terminalAt > drainMs)
 				) {
 					worker.jobs.cancel();
 					if (worker.jobs.running) await worker.jobs.running;
@@ -921,8 +950,14 @@ export async function runCheckpointWorker(file, cfg, dependencies = {}) {
 				}
 			} catch (error) {
 				worker.error = String(error.message).slice(0, 500);
+				const drainFailed =
+					terminalAt != null && Date.now() - terminalAt > drainMs;
+				if (drainFailed) {
+					worker.phase = "resume-needed";
+					worker.error = `${worker.error} Saved source data is kept. Choose Resume evidence sync in saved notes to finish the remaining work.`;
+				}
 				worker.status(heartbeat);
-				if (terminalAt != null && Date.now() - terminalAt > 150000) break;
+				if (drainFailed) break;
 				if (!heartbeat && Date.now() - (initial.wallMs ?? 0) > 150000) break;
 			}
 			await pause(1000);
@@ -968,8 +1003,11 @@ if (
 	path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
 	const { loadConfig } = await import(new URL("config.mjs", engine));
+	const retryJobId =
+		process.argv[3] === "--retry-job" ? process.argv[4] : undefined;
 	runCheckpointWorker(process.argv[2], loadConfig(), {
-		retryJobId: process.argv[3] === "--retry-job" ? process.argv[4] : undefined,
+		retryJobId,
+		resume: retryJobId !== undefined,
 	}).catch((error) => {
 		console.error(error.message);
 		process.exitCode = 1;

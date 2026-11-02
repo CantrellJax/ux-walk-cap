@@ -280,7 +280,7 @@ impl SettingsWindow {
                         cx,
                     ),
                     self.ux_walk_field(6, cx),
-                    self.setting_row("Browser evidence", Some("The Cap UX browser includes clicks, errors and failed requests. The companion adds selected-tab text/clicks and a separately selected Meet tab’s unconfirmed speaker captions to the same recording and private recovery log. Native computer audio includes other apps/tabs; use headphones. Meeting video is off."), self.button("ux-walk-companion", (ui::ButtonVariant::Gray, None), "Set up browser companion", self.ux_walk.companion_busy || !cfg!(target_os = "macos"), cx, |this, window, cx| this.ux_walk_setup_companion(window, cx)).into_any_element()),
+                    self.setting_row("Browser evidence", Some(fork_brand::text_static("The browser opened by Cap includes clicks, errors and failed requests. The companion adds selected-tab text/clicks and a separately selected Meet tab’s unconfirmed speaker captions to the same recording and private recovery log. Native computer audio includes other apps/tabs; use headphones. Meeting video is off.")), self.button("ux-walk-companion", (ui::ButtonVariant::Gray, None), "Set up browser companion", self.ux_walk.companion_busy || !cfg!(target_os = "macos"), cx, |this, window, cx| this.ux_walk_setup_companion(window, cx)).into_any_element()),
                 ])
                 .into_any_element(),
                 self.ux_walk_notice(),
@@ -342,7 +342,7 @@ impl SettingsWindow {
         }
         self.section(
             "UX Walk transcription",
-            Some("Cloud providers receive recording audio when transcription runs. Cap UX editor captions keep their existing local models."),
+            Some(fork_brand::text_static("Cloud providers receive recording audio when transcription runs. Cap editor captions keep their existing local models.")),
             None,
             vec![self.rows(rows).into_any_element(), self.ux_walk_notice()],
         ).into_any_element()

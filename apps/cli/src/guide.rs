@@ -428,7 +428,9 @@ fn build() -> Guide {
         ],
     };
     if cfg!(feature = "ux-walk") {
-        guide.description = "Cap UX: local capture, editing, UX walkthroughs, and optional sharing through your own server.";
+        guide.description = fork_brand::text_static(
+            "Cap: local capture, editing, UX walkthroughs, and optional sharing through your own server.",
+        );
         guide.commands.retain(|item| {
             ![
                 "auth",
@@ -450,7 +452,8 @@ fn build() -> Guide {
             .iter_mut()
             .find(|command| command.command == "agents install")
         {
-            command.summary = "Install a Cap UX local CLI skill for one selected agent.";
+            command.summary =
+                fork_brand::text_static("Install a Cap local CLI skill for one selected agent.");
             command.notes =
                 Some("Use --component skill; the upstream cloud MCP adapter is not included.");
         }
@@ -468,6 +471,13 @@ fn build() -> Guide {
         guide
             .notes
             .retain(|text| !text.contains("paid processing") && !text.contains("MCP"));
+        for note in &mut guide.notes {
+            *note = fork_brand::cli_text_static(*note);
+        }
+        for command in &mut guide.commands {
+            command.summary = fork_brand::cli_text_static(command.summary);
+            command.notes = command.notes.map(fork_brand::cli_text_static);
+        }
     }
     guide
 }
