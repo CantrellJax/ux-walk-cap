@@ -29,6 +29,7 @@ mod owned {
 
     struct Browser {
         capture_id: String,
+        external: bool,
         window_id: Option<String>,
         journal: Option<PathBuf>,
         child: Option<Child>,
@@ -201,7 +202,7 @@ mod owned {
         None
     }
 
-    fn spawn() -> Result<Browser, String> {
+    fn spawn(external: bool) -> Result<Browser, String> {
         let engine = engine()?;
         let capture_id = crate::store::new_uuid_v4();
         let work_dir = crate::store::app_data_dir()
@@ -216,16 +217,21 @@ mod owned {
             .arg(engine.join("native-browser.mjs"))
             .arg(&capture_id)
             .arg(work_dir)
+            .args(external.then_some("--external"))
             .env(
                 "CAP_UX_WALK_CONFIG_DIR",
                 crate::ux_walk::config_path()
                     .parent()
                     .ok_or("Invalid walk settings folder.")?,
             );
-        start_collector(command, capture_id)
+        start_collector(command, capture_id, external)
     }
 
-    fn start_collector(mut command: Command, capture_id: String) -> Result<Browser, String> {
+    fn start_collector(
+        mut command: Command,
+        capture_id: String,
+        external: bool,
+    ) -> Result<Browser, String> {
         let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -278,6 +284,7 @@ mod owned {
         });
         let mut browser = Browser {
             capture_id,
+            external,
             window_id: None,
             journal: None,
             child: Some(child),
@@ -317,7 +324,7 @@ mod owned {
             .into_iter()
             .map(|window| window.id().to_string())
             .collect();
-        let mut browser = spawn()?;
+        let mut browser = spawn(false)?;
         let marker = format!("UX Walk {}", browser.capture_id);
         let started = Instant::now();
         while started.elapsed() < Duration::from_secs(15) {
@@ -398,16 +405,23 @@ mod owned {
         let mut browsers = browsers()
             .lock()
             .map_err(|_| "Browser ownership is unavailable.")?;
-        let Some(browser) = browsers
-            .iter_mut()
-            .find(|browser| browser.window_id == window_id && window_id.is_some())
-        else {
-            unavailable(
-                journal,
-                "The selected source is not the browser window opened for this walk",
-            );
-            return Ok(());
+        let index = match browsers
+            .iter()
+            .position(|browser| browser.window_id == window_id && window_id.is_some())
+        {
+            Some(index) => index,
+            None => {
+                let mut collector = spawn(true)?;
+                collector.command(
+                    json!({ "op": "bind-external", "windowId": window_id }),
+                    Duration::from_secs(3),
+                )?;
+                collector.window_id = window_id.clone();
+                browsers.push(collector);
+                browsers.len() - 1
+            }
         };
+        let browser = &mut browsers[index];
         match browser.command(
             json!({ "op": "start", "file": journal.file(), "windowId": window_id }),
             Duration::from_secs(3),
@@ -422,6 +436,45 @@ mod owned {
                 Err(error)
             }
         }
+    }
+
+    pub fn preflight(journal: &crate::ux_walk_journal::Journal) -> Result<(), String> {
+        let mut browsers = match browsers().lock() {
+            Ok(browsers) => browsers,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        let Some(browser) = browsers
+            .iter_mut()
+            .find(|browser| browser.journal.as_ref() == Some(&journal.file()))
+        else {
+            return Ok(());
+        };
+        if browser.external {
+            return Ok(());
+        }
+        if let Err(error) = browser.command(
+            json!({ "op": "prepare-pause", "file": journal.file() }),
+            Duration::from_secs(2),
+        ) {
+            drop(browser.input.take());
+            unavailable(journal, &error);
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    pub fn revoke(journal: &crate::ux_walk_journal::Journal, reason: &str) {
+        let mut browsers = match browsers().lock() {
+            Ok(browsers) => browsers,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if let Some(browser) = browsers
+            .iter_mut()
+            .find(|browser| browser.journal.as_ref() == Some(&journal.file()))
+        {
+            drop(browser.input.take());
+        }
+        unavailable(journal, reason);
     }
 
     pub fn clock(journal: &crate::ux_walk_journal::Journal, offset_ms: u64, paused: bool) {
@@ -463,6 +516,30 @@ mod owned {
             unavailable(journal, &error);
         }
         browser.journal = None;
+        if browser.external {
+            let _ = browser.command(json!({ "op": "close" }), Duration::from_secs(3));
+            browsers.retain(|browser| !browser.external || browser.journal.is_some());
+        }
+    }
+
+    pub fn stopping(journal: &crate::ux_walk_journal::Journal, offset_ms: u64) {
+        let Ok(mut browsers) = browsers().lock() else {
+            return;
+        };
+        let Some(browser) = browsers
+            .iter_mut()
+            .find(|browser| browser.journal.as_ref() == Some(&journal.file()))
+        else {
+            return;
+        };
+        let wall_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        if let Err(error) = browser.command(json!({ "op": "finishing", "file": journal.file(), "wallMs": wall_ms, "offsetMs": offset_ms }), Duration::from_secs(2)) {
+            drop(browser.input.take());
+            unavailable(journal, &error);
+        }
     }
 
     pub fn interrupt(journal: &crate::ux_walk_journal::Journal, reason: &str) {
@@ -504,7 +581,7 @@ mod owned {
         fn shell(script: &str) -> Result<Browser, String> {
             let mut command = Command::new("/bin/sh");
             command.args(["-c", script]);
-            start_collector(command, "stderr-test".into())
+            start_collector(command, "stderr-test".into(), false)
         }
 
         #[test]
@@ -620,6 +697,7 @@ EOF
             let (_send, replies) = mpsc::channel();
             browsers().lock().unwrap().push(Browser {
                 capture_id: "test".into(),
+                external: false,
                 window_id: Some("17".into()),
                 journal: Some(journal.file()),
                 child: Some(child),
@@ -649,7 +727,7 @@ EOF
 }
 
 #[cfg(target_os = "macos")]
-pub use owned::{begin, clock, finish, health, interrupt, open};
+pub use owned::{begin, clock, finish, health, interrupt, open, preflight, revoke, stopping};
 
 #[cfg(not(target_os = "macos"))]
 pub fn open() -> Result<crate::devices::WindowOption, String> {
@@ -671,9 +749,33 @@ pub fn clock(_journal: &crate::ux_walk_journal::Journal, _offset_ms: u64, _pause
 pub fn finish(_journal: &crate::ux_walk_journal::Journal, _aborted: bool) {}
 
 #[cfg(not(target_os = "macos"))]
+pub fn stopping(_journal: &crate::ux_walk_journal::Journal, _offset_ms: u64) {}
+
+#[cfg(not(target_os = "macos"))]
 pub fn interrupt(_journal: &crate::ux_walk_journal::Journal, _reason: &str) {}
 
 #[cfg(not(target_os = "macos"))]
 pub fn health(_journal: &crate::ux_walk_journal::Journal) -> Option<String> {
     None
 }
+
+pub async fn prepare_note_pause(journal: crate::ux_walk_journal::Journal) -> Result<(), String> {
+    let failed_journal = journal.clone();
+    match tokio::task::spawn_blocking(move || preflight(&journal)).await {
+        Ok(result) => result,
+        Err(error) => {
+            let reason = format!("Browser note preflight failed: {error}");
+            let failure = reason.clone();
+            let _ = tokio::task::spawn_blocking(move || revoke(&failed_journal, &failure)).await;
+            Err(reason)
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn preflight(_journal: &crate::ux_walk_journal::Journal) -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn revoke(_journal: &crate::ux_walk_journal::Journal, _reason: &str) {}

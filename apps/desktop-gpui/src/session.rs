@@ -590,7 +590,10 @@ impl RecordingSession {
     }
 
     pub fn pause_unavailable(&self) -> bool {
-        self.pause_pending() || self.pause_uncertain() || self.pipeline_failed
+        self.pause_pending()
+            || self.pause_uncertain()
+            || self.pipeline_failed
+            || self.walk.holds_controls()
     }
 
     /// The live (or last) recording's mode -- the bar exposes mic mute for
@@ -1118,6 +1121,10 @@ impl RecordingSession {
     }
 
     pub fn stop(&mut self, cx: &mut Context<Self>) {
+        self.stop_after_source_fence(cx, false);
+    }
+
+    fn stop_after_source_fence(&mut self, cx: &mut Context<Self>, source_fenced: bool) {
         #[cfg(target_os = "linux")]
         if matches!(self.phase, Phase::Starting | Phase::Stopping)
             && let Some(attempt) = self.instant_attempt.clone()
@@ -1168,6 +1175,9 @@ impl RecordingSession {
             return;
         }
         if !matches!(self.phase, Phase::Recording { .. }) {
+            return;
+        }
+        if self.walk_fence_stop(source_fenced, cx) {
             return;
         }
         self.storage_monitor = None;
@@ -1274,7 +1284,7 @@ impl RecordingSession {
             self.stop_requested = false;
         }
         self.stopped_elapsed = Some(self.elapsed());
-        self.walk_clock(true);
+        let stop_future = self.walk_stop_first(stop_future);
         self.pause_control.cancel_for_stop();
         self.phase = Phase::Stopping;
         self.preparing_studio_editor =
@@ -1433,7 +1443,7 @@ impl RecordingSession {
         let Some(active) = self.active.as_ref() else {
             return;
         };
-        if self.pipeline_failed {
+        if self.pipeline_failed || self.walk.holds_controls() {
             return;
         }
         let Some((ticket, registration)) =
@@ -1446,6 +1456,7 @@ impl RecordingSession {
         } else {
             active.pause_handle()
         };
+        let control = self.walk_fence_pause(paused, control);
         let query_paused = active.is_paused_handle();
         cx.notify();
         let task = gpui_tokio::Tokio::spawn(

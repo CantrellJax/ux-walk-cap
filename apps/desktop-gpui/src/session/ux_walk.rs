@@ -1,10 +1,14 @@
-use std::time::Duration;
+use std::{future::Future, pin::Pin, time::Duration};
 
 use gpui::{Context, Task};
 
 use super::{Phase, RecordingSession};
-use crate::recording::StartConfig;
+use crate::recording::{CaptureStopFuture, StartConfig};
 use crate::ux_walk_journal::Journal;
+
+mod note_control;
+
+type ControlFuture = Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send>>;
 
 pub struct WalkState {
     pub journal: Option<Journal>,
@@ -13,6 +17,7 @@ pub struct WalkState {
     pub checkpoint_notice: String,
     pub note_draft: String,
     checkpoint_monitor: Option<Task<()>>,
+    stop_fence: note_control::StopNoteFence,
 }
 
 impl WalkState {
@@ -30,11 +35,16 @@ impl WalkState {
             checkpoint_notice: String::new(),
             note_draft: String::new(),
             checkpoint_monitor: None,
+            stop_fence: note_control::StopNoteFence::default(),
         }
     }
 
     pub(super) fn active(&self) -> bool {
         self.journal.is_some()
+    }
+
+    pub(super) fn holds_controls(&self) -> bool {
+        self.stop_fence.pending()
     }
 }
 
@@ -97,6 +107,13 @@ impl RecordingSession {
                 _ => None,
             });
         if let Err(error) = crate::ux_walk_browser::begin(&journal, window_id) {
+            if error.starts_with("Companion ownership conflict:") {
+                self.error = Some(error);
+                self.pipeline_failed = true;
+                self.walk.journal = Some(journal);
+                self.stop(cx);
+                return false;
+            }
             self.walk.notice =
                 format!("Recording and notes are saving. Browser evidence is unavailable: {error}");
             self.error = Some("Browser evidence is unavailable. Video and notes are still recording. Open walk notes for details.".into());
@@ -225,6 +242,87 @@ impl RecordingSession {
         true
     }
 
+    pub(super) fn walk_fence_stop(&mut self, source_fenced: bool, cx: &mut Context<Self>) -> bool {
+        let journal = match self.walk.journal.clone() {
+            Some(journal)
+                if !source_fenced && !self.pipeline_failed && !self.stopped_for_low_storage =>
+            {
+                journal
+            }
+            _ => {
+                self.walk.stop_fence.invalidate();
+                return false;
+            }
+        };
+        let generation = self.recording_generation;
+        if !self.walk.stop_fence.begin(generation) {
+            return true;
+        }
+        self.pause_control.cancel_for_stop();
+        let task =
+            gpui_tokio::Tokio::spawn(cx, crate::ux_walk_browser::prepare_note_pause(journal));
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            this.update(cx, |this, cx| {
+                if this.recording_generation != generation
+                    || !this
+                        .walk
+                        .stop_fence
+                        .complete(generation, matches!(this.phase, Phase::Recording { .. }))
+                {
+                    return;
+                }
+                let error = match result {
+                    Ok(Ok(())) => None,
+                    Ok(Err(error)) => Some(error),
+                    Err(error) => Some(format!("Browser note preflight task failed: {error}")),
+                };
+                if let Some(error) = error {
+                    this.walk.notice =
+                        format!("Browser notes are incomplete: {error}. Recording is stopping.");
+                }
+                this.stop_after_source_fence(cx, true);
+            })
+            .ok();
+        })
+        .detach();
+        true
+    }
+
+    pub(super) fn walk_fence_pause(&self, paused: bool, control: ControlFuture) -> ControlFuture {
+        let journal = if paused {
+            None
+        } else {
+            self.walk.journal.clone()
+        };
+        Box::pin(note_control::after_note_fence(
+            async move {
+                match journal {
+                    Some(journal) => crate::ux_walk_browser::prepare_note_pause(journal)
+                        .await
+                        .map_err(anyhow::Error::msg),
+                    None => Ok(()),
+                }
+            },
+            control,
+        ))
+    }
+
+    pub(super) fn walk_stop_first(&self, stop: CaptureStopFuture) -> CaptureStopFuture {
+        let Some(journal) = self.walk.journal.clone() else {
+            return stop;
+        };
+        let offset_ms = self.elapsed().as_millis() as u64;
+        Box::pin(async move {
+            let _ = tokio::task::spawn_blocking(move || {
+                crate::ux_walk_browser::stopping(&journal, offset_ms)
+            })
+            .await;
+            stop.await
+        })
+    }
+
     pub(super) fn walk_clock(&self, paused: bool) {
         if let Some(walk) = self.walk.journal.as_ref() {
             crate::ux_walk_browser::clock(walk, self.elapsed().as_millis() as u64, paused);
@@ -241,6 +339,7 @@ impl RecordingSession {
     }
 
     pub(super) fn walk_abort(&mut self) {
+        self.walk.stop_fence.invalidate();
         if let Some(walk) = self.walk.journal.as_mut()
             && walk.state == "recording"
         {

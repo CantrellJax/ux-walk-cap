@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
+import * as fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 import {
 	brand,
+	brandEngineText,
 	expand,
 	infoPlistEdits,
 	minimumMacos,
@@ -85,4 +89,35 @@ test("an isolated preview with no document types still brands", () => {
 	const edits = infoPlistEdits({ CFBundleDocumentTypes: [] });
 	assert.ok(!edits.some((edit) => edit[1].startsWith("CFBundleDocumentTypes")));
 	assert.ok(!edits.some((edit) => edit[0] === "-remove"));
+});
+
+test("bundled engine text and companion pages carry the current name", async (t) => {
+	const directory = await fs.mkdtemp(path.join(os.tmpdir(), "brand-engine-"));
+	t.after(() => fs.rm(directory, { recursive: true, force: true }));
+	const [former] = brand.former_names;
+	const files = {
+		"src/a.mjs": `"${former} recording"`,
+		"extension/popup.html": `<title>${former} companion</title>`,
+		"extension/popup.js": `"Recording in ${former}"`,
+		"extension/manifest.json": `{"name": "${former} companion"}`,
+		"extension/foot.svg": `<title>${former}</title>`,
+	};
+	for (const [file, contents] of Object.entries(files)) {
+		await fs.mkdir(path.dirname(path.join(directory, file)), {
+			recursive: true,
+		});
+		await fs.writeFile(path.join(directory, file), contents);
+	}
+	await brandEngineText(path.join(directory, "src"));
+	await brandEngineText(path.join(directory, "extension"));
+	for (const [file, contents] of Object.entries(files)) {
+		const branded = await fs.readFile(path.join(directory, file), "utf8");
+		assert.equal(
+			branded,
+			file.endsWith(".svg")
+				? contents
+				: contents.replaceAll(former, brand.display_name),
+			file,
+		);
+	}
 });

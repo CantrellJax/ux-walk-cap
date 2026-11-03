@@ -190,6 +190,7 @@ export async function bundleUxWalk(app) {
 		"prompts",
 		"assets",
 		"skills",
+		"extension",
 		"glossary.example.txt",
 		"package.json",
 		"package-lock.json",
@@ -201,6 +202,7 @@ export async function bundleUxWalk(app) {
 		});
 	}
 	await brandEngineText(path.join(engine, "src"));
+	await brandEngineText(path.join(engine, "extension"));
 	await fs.cp(
 		path.join(source, "node_modules", "playwright-core"),
 		path.join(engine, "node_modules", "playwright-core"),

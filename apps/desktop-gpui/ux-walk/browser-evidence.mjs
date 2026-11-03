@@ -18,6 +18,9 @@ const allowed = new Set([
 	"env",
 	"note",
 	"mark",
+	"meet-caption",
+	"meet-participants",
+	"meet-health",
 ]);
 
 export function safeBrowserUrl(value) {
@@ -132,6 +135,62 @@ export function sanitizeBrowserEvent(raw, receivedAt = Date.now()) {
 	if (typeof raw.intentionalLongPoll === "boolean")
 		result.intentionalLongPoll = raw.intentionalLongPoll;
 	if (typeof raw.open === "boolean") result.open = raw.open;
+	if (
+		raw.source === "chrome-extension" &&
+		raw.companion &&
+		["walkthrough", "meet"].includes(raw.companion.role)
+	) {
+		result.source = "chrome-extension";
+		if (Number.isSafeInteger(raw.observedAt) && raw.observedAt >= 0)
+			result.observedAt = raw.observedAt;
+		result.timingUncertain = raw.timingUncertain === true;
+		result.companion = {};
+		for (const key of [
+			"role",
+			"bindingId",
+			"clientId",
+			"documentId",
+			"recordingId",
+			"generation",
+			"meeting",
+		])
+			if (typeof raw.companion[key] === "string")
+				result.companion[key] = raw.companion[key].slice(0, 200);
+		if (Number.isSafeInteger(raw.companion.tabId))
+			result.companion.tabId = raw.companion.tabId;
+		if (typeof raw.eventId === "string")
+			result.eventId = raw.eventId.slice(0, 160);
+		if (raw.ev === "meet-caption") {
+			result.name = String(raw.name ?? "").slice(0, 128);
+			result.text = String(raw.text ?? "").slice(0, 8000);
+			result.captionId = String(raw.captionId ?? "").slice(0, 160);
+			result.revision = raw.revision;
+			result.localSpeaker = raw.localSpeaker === true;
+			result.identity = "Meet caption display name; unconfirmed";
+		}
+		if (raw.ev === "meet-participants" && Array.isArray(raw.names))
+			result.names = raw.names
+				.slice(0, 64)
+				.map((name) => String(name).slice(0, 128));
+		if (
+			raw.ev === "meet-health" &&
+			["on", "off", "unknown"].includes(raw.captions)
+		) {
+			result.captions = raw.captions;
+			result.visible = raw.visible === true;
+		}
+		result.truncated = raw.truncated === true;
+		if (
+			raw.viewport &&
+			[raw.viewport.width, raw.viewport.height].every(
+				(value) => Number.isFinite(value) && value > 0 && value <= 50000,
+			)
+		)
+			result.viewport = {
+				width: raw.viewport.width,
+				height: raw.viewport.height,
+			};
+	} else if (raw.ev.startsWith("meet-")) return null;
 	if (Array.isArray(raw.lines))
 		result.lines = raw.lines
 			.slice(0, 8)
@@ -166,6 +225,7 @@ export function sanitizeBrowserEvent(raw, receivedAt = Date.now()) {
 
 const unavailable = (reason = "not captured") => ({
 	events: [],
+	meetEvents: [],
 	coverage: { dom: reason, network: reason, console: reason },
 });
 
@@ -175,6 +235,33 @@ function sameFile(first, second) {
 	} catch {
 		return false;
 	}
+}
+
+export function browserEvidenceMatches(
+	metadata,
+	journal,
+	file,
+	compare = sameFile,
+) {
+	return !!(
+		metadata?.schemaVersion === 1 &&
+		metadata.captureId &&
+		metadata.windowId &&
+		metadata.state !== "unavailable" &&
+		compare(String(metadata.journal || ""), file) &&
+		compare(String(metadata.sourceProject || ""), journal.sourceProject) &&
+		metadata.startedAtMs === journal.startedAtMs &&
+		Array.isArray(metadata.anchors)
+	);
+}
+
+function companionEventMatches(event, owner) {
+	return (
+		typeof owner?.recordingId === "string" &&
+		typeof owner.generation === "string" &&
+		event.companion?.recordingId === owner.recordingId &&
+		event.companion?.generation === owner.generation
+	);
 }
 
 export function projectBrowserEvidence(file, journal) {
@@ -191,32 +278,22 @@ export function projectBrowserEvidence(file, journal) {
 		return unavailable(
 			`not captured: ${metadata.reason || "browser collector unavailable"}`,
 		);
-	if (
-		metadata.schemaVersion !== 1 ||
-		!metadata.captureId ||
-		!metadata.windowId ||
-		!sameFile(String(metadata.journal || ""), file) ||
-		!sameFile(String(metadata.sourceProject || ""), journal.sourceProject) ||
-		metadata.startedAtMs !== journal.startedAtMs ||
-		!Array.isArray(metadata.anchors)
-	)
+	if (!browserEvidenceMatches(metadata, journal, file))
 		return unavailable(
 			"unavailable: browser evidence recording identity mismatch",
 		);
 	const anchors = metadata.anchors;
-	let previousWall = -1;
 	let previousOffset = -1;
 	for (const anchor of anchors) {
 		if (
 			!Number.isSafeInteger(anchor.wallMs) ||
 			!Number.isSafeInteger(anchor.offsetMs) ||
-			anchor.wallMs < previousWall ||
+			anchor.wallMs < 0 ||
 			anchor.offsetMs < previousOffset ||
 			anchor.offsetMs > journal.durationMs ||
 			typeof anchor.paused !== "boolean"
 		)
 			return unavailable("unavailable: browser evidence clock is invalid");
-		previousWall = anchor.wallMs;
 		previousOffset = anchor.offsetMs;
 	}
 	if (
@@ -232,6 +309,7 @@ export function projectBrowserEvidence(file, journal) {
 		return offset >= 0 && offset <= journal.durationMs ? offset : null;
 	};
 	const events = [];
+	const meetEvents = [];
 	let malformed = 0;
 	try {
 		for (const line of fs
@@ -240,14 +318,32 @@ export function projectBrowserEvidence(file, journal) {
 			if (!line.trim()) continue;
 			try {
 				const raw = JSON.parse(line);
+				if (
+					raw.source === "chrome-extension" &&
+					!companionEventMatches(raw, metadata)
+				)
+					throw new Error("Browser event recording identity mismatch");
 				if (!Number.isSafeInteger(raw.observedAt))
 					throw new Error("Invalid observedAt");
-				const offset = offsetAt(raw.observedAt);
+				if (raw.ev === "meet-caption") meetEvents.push(raw);
+				const offset =
+					Number.isSafeInteger(raw.nativeOffsetMs) &&
+					raw.nativeOffsetMs >= 0 &&
+					raw.nativeOffsetMs <= journal.durationMs
+						? raw.nativeOffsetMs
+						: offsetAt(raw.observedAt);
 				if (offset === null) continue;
 				const safe = sanitizeBrowserEvent(raw, raw.observedAt);
 				if (!safe) continue;
 				events.push({
 					...safe,
+					...(Number.isSafeInteger(raw.nativeOffsetMs)
+						? {
+								nativeOffsetMs: raw.nativeOffsetMs,
+								receivedAt: raw.receivedAt,
+								clockEpoch: raw.clockEpoch,
+							}
+						: {}),
 					t: journal.startedAtMs + offset,
 					timingSource: "Cap elapsed clock; excludes pauses",
 				});
@@ -264,13 +360,76 @@ export function projectBrowserEvidence(file, journal) {
 	const status = partial
 		? `partial: ${metadata.reason || "collector completion unconfirmed or evidence omitted"}`
 		: "captured from the owned browser window";
+	const external = metadata.browserMode === "external";
 	return {
 		events,
+		meetEvents,
+		owner: {
+			recordingId: metadata.recordingId,
+			generation: metadata.generation,
+		},
 		coverage: {
-			dom: `${status}; semantic clicks and bounded visible context; form values excluded`,
-			network: `${status}; request metadata and redacted failed responses; no server-side query trace`,
-			console: `${status}; console warnings/errors and page exceptions`,
+			dom: external
+				? events.some((event) => event.companion?.role === "walkthrough")
+					? `${partial ? "partial" : "captured"} selected extension tab; bounded text/clicks; native video target mapping unverified`
+					: "not captured: no walkthrough tab evidence was saved"
+				: `${status}; semantic clicks and bounded visible context; form values excluded`,
+			network: external
+				? "not captured: external extension tab has no network collector"
+				: `${status}; request metadata and redacted failed responses; no server-side query trace`,
+			console: external
+				? "not captured: external extension tab has no console collector"
+				: `${status}; console warnings/errors and page exceptions`,
+			meet: events.some((event) => event.ev === "meet-caption")
+				? "Selected Meet caption/name evidence; approximate timing and unconfirmed identity; caption gaps are possible"
+				: "not captured: no selected Meet captions were saved",
 		},
 		preRoll: fs.existsSync(path.join(directory, "browser-preroll.jsonl")),
 	};
+}
+
+export function projectMeetCaptions(
+	events,
+	startedAtMs = 0,
+	durationMs = Number.MAX_SAFE_INTEGER,
+	owner,
+) {
+	return events.flatMap((raw) => {
+		const event = sanitizeBrowserEvent(raw, raw.observedAt);
+		if (
+			event?.ev !== "meet-caption" ||
+			!companionEventMatches(event, owner) ||
+			!event.name ||
+			!event.text ||
+			event.companion?.role !== "meet"
+		)
+			return [];
+		const offset = Number.isSafeInteger(raw.nativeOffsetMs)
+			? raw.nativeOffsetMs
+			: Number.isSafeInteger(raw.t)
+				? raw.t - startedAtMs
+				: null;
+		if (offset === null) return [];
+		const timingUncertain =
+			event.timingUncertain || offset < 0 || offset > durationMs;
+		return [
+			{
+				t: startedAtMs + Math.max(0, Math.min(durationMs, offset)),
+				kind: "caption",
+				name: event.name,
+				text: event.text,
+				id: `${event.companion.bindingId}:${raw.clockEpoch ?? 0}:${event.captionId}`,
+				meeting: event.companion.meeting,
+				revision: event.revision,
+				localSpeaker: event.localSpeaker,
+				timingUncertain,
+				observedAt: event.observedAt,
+				receivedAt: raw.receivedAt,
+				nativeOffsetMs: offset,
+				clockEpoch: raw.clockEpoch,
+				identity: event.identity,
+				timingSource: "Native active clock; caption arrival/lag is approximate",
+			},
+		];
+	});
 }

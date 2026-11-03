@@ -1,0 +1,42 @@
+{
+	"manifest_version": 3,
+	"name": "Cap UX companion",
+	"version": "0.3.0",
+	"minimum_chrome_version": "120",
+	"description": "Connect selected walkthrough and Google Meet tabs to one Cap UX recording, with saved text, clicks and unconfirmed speaker evidence.",
+	"key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEApDLQffiFdGc+mmUrRtaWaZwWyIW6P9cCVa0wCs3iCzk6y2IAGfaCNOUo/fR/t/OWdv95Fs7tN9rXEYNxWmmYI/YNa9ZlWpHOra/pd4GKTHSenLdbJa8vJnLQPKkh7CRMvlVK5WvzaO4rmkOzxr7uVi9h97wR8f+p+ps6yZ5/9uzGrQ5A5NwEkS0y64n2BgUC0gLNIYm3rYtsV/YzUesKKqkZZDvwOpth9g+4bOFGa6Aj4eRuvGgtu3yyeDj6/NpSaaUwbLL+SFkoCoj6eW8+NDFkvgdR/JkskxRzxoMkKspomteQ3NV8gN043WsmY2YK22aL95ftKGFcYSYPeiYNAwIDAQAB",
+	"permissions": [
+		"nativeMessaging",
+		"alarms",
+		"activeTab",
+		"scripting",
+		"storage"
+	],
+	"background": {
+		"service_worker": "background.js",
+		"type": "module"
+	},
+	"content_scripts": [
+		{
+			"matches": ["https://meet.google.com/*"],
+			"js": ["page.js"],
+			"run_at": "document_start",
+			"world": "MAIN"
+		},
+		{
+			"matches": ["https://meet.google.com/*"],
+			"js": ["content.js"],
+			"run_at": "document_idle"
+		}
+	],
+	"action": {
+		"default_title": "Cap UX companion",
+		"default_popup": "popup.html"
+	},
+	"icons": {
+		"16": "icon-16.png",
+		"32": "icon-32.png",
+		"48": "icon-48.png",
+		"128": "icon-128.png"
+	}
+}

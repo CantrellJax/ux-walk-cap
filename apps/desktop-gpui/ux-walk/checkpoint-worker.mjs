@@ -26,11 +26,27 @@ const execute = promisify(execFile);
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const DRAIN_MS = 150000;
 
+function canonicalSourceIdentity(file, sourceProject, previous) {
+	const identity = {
+		schemaVersion: 1,
+		journal: file,
+		sourceProject: previous?.sourceProject ?? null,
+	};
+	try {
+		identity.sourceProject = fs.realpathSync(sourceProject);
+	} catch {}
+	return identity;
+}
+
 export class CheckpointWorker {
 	constructor(file, cfg, settings, dependencies = {}) {
 		this.file = fs.realpathSync(file);
 		this.directory = path.dirname(this.file);
 		this.journal = readJson(file);
+		this.sourceIdentity = canonicalSourceIdentity(
+			this.file,
+			this.journal.sourceProject,
+		);
 		if (fs.realpathSync(this.journal.request.directory) !== this.directory)
 			throw new Error("Checkpoint journal belongs to another walk directory");
 		this.cfg = cfg;
@@ -328,13 +344,27 @@ export class CheckpointWorker {
 		const objects = [];
 		const proposedCursors = { ...this.fileCursors };
 		this.journal = readJson(this.file);
+		this.sourceIdentity = canonicalSourceIdentity(
+			this.file,
+			this.journal.sourceProject,
+			this.sourceIdentity,
+		);
 		const heartbeat = this.settledClock(observed);
 		this.lastHeartBeat = heartbeat;
 		objects.push(
-			this.store.put("journal", fs.readFileSync(this.file), {
-				activeStartMs: 0,
-				activeEndMs: heartbeat.activeElapsedMs,
-			}),
+			this.store.put(
+				"journal",
+				Buffer.from(
+					JSON.stringify({
+						...this.journal,
+						checkpointSourceIdentity: this.sourceIdentity,
+					}),
+				),
+				{
+					activeStartMs: 0,
+					activeEndMs: heartbeat.activeElapsedMs,
+				},
+			),
 		);
 		for (const name of ["browser-evidence.jsonl"]) {
 			const file = path.join(this.directory, name);

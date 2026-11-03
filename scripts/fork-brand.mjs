@@ -136,12 +136,14 @@ export async function brandBuiltApp(contents, plist) {
 	}
 }
 
+const brandedEngineText = /\.(mjs|js|html|json)$/;
+
 export async function brandEngineText(directory) {
 	for (const entry of await fs.readdir(directory, {
 		recursive: true,
 		withFileTypes: true,
 	})) {
-		if (!entry.isFile() || !entry.name.endsWith(".mjs")) continue;
+		if (!entry.isFile() || !brandedEngineText.test(entry.name)) continue;
 		const file = path.join(entry.parentPath, entry.name);
 		const before = await fs.readFile(file, "utf8");
 		const after = brand.former_names.reduce(
