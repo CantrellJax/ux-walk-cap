@@ -97,7 +97,7 @@ export function mountWidget(config: FeedbackWidgetConfig): FeedbackWidget {
 	voiceButton.setAttribute("aria-pressed", "false");
 	if (!voiceSupported()) voiceButton.hidden = true;
 	const minutes = rewindMinutes(config.rewind);
-	const rewind = minutes ? startRewind(minutes) : null;
+	const rewind = minutes ? startRewind(minutes, config.routeRules) : null;
 	const rewindBox = element("input", {
 		type: "checkbox",
 		id: "feedback-widget-rewind",
@@ -322,25 +322,32 @@ export function mountWidget(config: FeedbackWidgetConfig): FeedbackWidget {
 			});
 			const recording = rewind && rewindBox.checked ? rewind.snapshot() : null;
 			const rewindPart = recording ? await compressRewind(recording) : null;
-			const response = await send(`${server}/api/v1/feedback`, {
-				method: "POST",
-				body: reportForm({
-					siteKey: config.siteKey,
-					note: note.value,
-					evidence,
-					screenshot,
-					voice,
-					rewind: rewindPart,
-				}),
-				credentials: "omit",
-				mode: "cors",
-				referrerPolicy: "no-referrer",
-			});
+			const post = (part: Blob | null) =>
+				send(`${server}/api/v1/feedback`, {
+					method: "POST",
+					body: reportForm({
+						siteKey: config.siteKey,
+						note: note.value,
+						evidence,
+						screenshot,
+						voice,
+						rewind: part,
+					}),
+					credentials: "omit",
+					mode: "cors",
+					referrerPolicy: "no-referrer",
+				});
+			let response = await post(rewindPart);
+			let replaySent = !!rewindPart;
+			if (rewindPart && (response.status === 413 || response.status === 415)) {
+				response = await post(null);
+				replaySent = false;
+			}
 			if (!response.ok) throw new Error(String(response.status));
 			reset();
 			setStatus(
-				recording && !rewindPart
-					? "Thanks. Your feedback was sent without the replay, which was too large."
+				recording && !replaySent
+					? "Thanks. Your feedback was sent without the replay."
 					: "Thanks. Your feedback was sent.",
 				"ok",
 			);

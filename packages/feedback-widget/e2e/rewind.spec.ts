@@ -69,8 +69,16 @@ async function serve(page: Page) {
 		if (path.startsWith("/api/intake/"))
 			return route.fulfill({ status: 409, body: '{"error":"conflict"}' });
 		const type = path.endsWith(".js") ? "text/javascript" : "text/html";
+		const file = await readFile(new URL(`.${path}`, root));
 		return route.fulfill({
-			body: await readFile(new URL(`.${path}`, root)),
+			body: path.endsWith(".html")
+				? file
+						.toString("utf8")
+						.replace(
+							"</main>",
+							'<late-panel data-worm-mask></late-panel><div id="masked-host" data-worm-mask></div></main>',
+						)
+				: file,
 			contentType: type,
 		});
 	});
@@ -132,7 +140,41 @@ test("a tester's last minutes are recorded masked, sent on Send and replayed onl
 	await serve(page);
 	const errors: string[] = [];
 	page.on("pageerror", (error) => errors.push(error.message));
-	await page.goto(`${APP}/demo/index.html`);
+	await page.goto(`${APP}/demo/index.html?mrn=query-secret-5150#hash-secret`);
+	await expect(page.locator("feedback-widget")).toBeAttached();
+	await page.evaluate(() => {
+		class Card extends HTMLElement {
+			constructor() {
+				super();
+				this.attachShadow({ mode: "open" }).innerHTML =
+					"<p>Appended shadow secret 7070</p>";
+			}
+		}
+		customElements.define("shadow-card", Card);
+		const card = document.createElement("shadow-card");
+		card.setAttribute("data-worm-mask", "");
+		document.querySelector("main")?.append(card);
+		customElements.define(
+			"late-panel",
+			class extends HTMLElement {
+				constructor() {
+					super();
+					this.attachShadow({ mode: "open" }).innerHTML =
+						"<span>Defined later secret 8080</span>";
+				}
+			},
+		);
+		const host = document.getElementById("masked-host");
+		if (host)
+			host.attachShadow({ mode: "open" }).innerHTML =
+				"<b>Attached shadow secret 9090</b>";
+	});
+	await page.waitForTimeout(300);
+	await page.evaluate(() => {
+		const host = document.getElementById("masked-host")?.shadowRoot;
+		const bold = host?.querySelector("b");
+		if (bold) bold.textContent = "Changed shadow secret 6060";
+	});
 
 	await page.locator("#patient-name").fill("Typed secret 4242");
 	await page.locator("#visit-note").fill("Visit secret 9191");
@@ -175,6 +217,12 @@ test("a tester's last minutes are recorded masked, sent on Send and replayed onl
 		"penicillin",
 		note,
 		"What happened? What did you expect?",
+		"Appended shadow secret 7070",
+		"Defined later secret 8080",
+		"Attached shadow secret 9090",
+		"Changed shadow secret 6060",
+		"query-secret-5150",
+		"hash-secret",
 	])
 		expect(text, secret).not.toContain(secret);
 

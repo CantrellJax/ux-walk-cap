@@ -6,13 +6,15 @@ import {
 	type recordOptions,
 } from "rrweb";
 import { EDITABLE, MASKED } from "./evidence";
-import type { RewindConfig } from "./types";
+import { sanitizeUrl } from "./route";
+import type { RewindConfig, RouteRule } from "./types";
 
 export const RRWEB_VERSION = "2.2.0";
 export const REWIND_LIMITS = {
 	minMinutes: 2,
 	maxMinutes: 5,
 	checkoutMs: 60_000,
+	spanMs: 6 * 60_000,
 	events: 20_000,
 	chars: 8_000_000,
 	gzipBytes: 4 * 1024 * 1024,
@@ -27,6 +29,7 @@ export const REWIND_BLOCK = [
 	"input[type=radio]",
 	"input[type=hidden]",
 	"input[type=file]",
+	"datalist",
 	"feedback-widget",
 ].join(",");
 
@@ -76,7 +79,11 @@ export class RewindBuffer {
 
 	constructor(
 		private readonly windowMs: number,
-		private readonly limits: { events: number; chars: number } = REWIND_LIMITS,
+		private readonly limits: {
+			events: number;
+			chars: number;
+			checkoutMs: number;
+		} = REWIND_LIMITS,
 	) {}
 
 	push(event: { type: number; timestamp: number }, json: string): void {
@@ -103,8 +110,11 @@ export class RewindBuffer {
 			(this.segments[1]?.startedAt ?? now) <= now - this.windowMs
 		)
 			this.segments.shift();
+		const oldest = now - this.windowMs - this.limits.checkoutMs;
+		while ((this.segments[0]?.startedAt ?? oldest) < oldest)
+			this.segments.shift();
 		while (this.segments.length > 1 && this.over()) this.segments.shift();
-		if (this.over()) this.clear();
+		if (this.over() || !this.segments.length) this.clear();
 	}
 
 	private over(): boolean {
@@ -137,31 +147,58 @@ export class RewindBuffer {
 }
 
 type SerializedNode = {
+	id?: number;
+	type?: number;
 	tagName?: string;
 	attributes?: Record<string, unknown>;
 	childNodes?: SerializedNode[];
 };
 
+const URL_ATTRIBUTES = ["href", "src", "action", "poster", "xlink:href"];
+
+function scrubAttributes(
+	tagName: string | undefined,
+	attributes: Record<string, unknown>,
+): void {
+	if (tagName === "input" || tagName === "textarea")
+		delete attributes.placeholder;
+	delete attributes.srcdoc;
+	for (const name of URL_ATTRIBUTES) {
+		const value = attributes[name];
+		if (typeof value === "string")
+			attributes[name] = value.split(/[?#]/, 1)[0] ?? "";
+	}
+	if (typeof attributes.srcset === "string")
+		attributes.srcset = attributes.srcset.replace(/[?#][^\s,]*/g, "");
+}
+
 function scrubNode(node: SerializedNode | undefined): void {
 	if (!node) return;
-	if (
-		node.attributes &&
-		(node.tagName === "input" || node.tagName === "textarea")
-	)
-		delete node.attributes.placeholder;
+	if (node.attributes) scrubAttributes(node.tagName, node.attributes);
 	for (const child of node.childNodes ?? []) scrubNode(child);
 }
 
-export function scrubEvent(event: { type: number; data?: unknown }): void {
+export function scrubEvent(
+	event: { type: number; data?: unknown },
+	page: { href: string; rules?: RouteRule[] } = { href: location.href },
+): void {
 	const data = event.data as
 		| {
+				href?: unknown;
 				node?: SerializedNode;
 				source?: number;
 				adds?: Array<{ node?: SerializedNode }>;
-				attributes?: Array<{ attributes?: Record<string, unknown> }>;
+				attributes?: Array<{
+					id?: number;
+					attributes?: Record<string, unknown>;
+				}>;
 		  }
 		| undefined;
 	if (!data) return;
+	if (event.type === EventType.Meta && typeof data.href === "string") {
+		const base = new URL(page.href);
+		data.href = `${base.origin}${sanitizeUrl(data.href, page.href, page.rules).replace(/^(?!\/)/, "/")}`;
+	}
 	if (event.type === EventType.FullSnapshot) scrubNode(data.node);
 	if (
 		event.type === EventType.IncrementalSnapshot &&
@@ -169,7 +206,122 @@ export function scrubEvent(event: { type: number; data?: unknown }): void {
 	) {
 		for (const add of data.adds ?? []) scrubNode(add.node);
 		for (const change of data.attributes ?? [])
-			if (change.attributes) delete change.attributes.placeholder;
+			if (change.attributes) scrubAttributes(undefined, change.attributes);
+	}
+}
+
+interface MirrorLike {
+	getNode(id: number): Node | null;
+}
+
+function parentOrHost(node: Node): Node | null {
+	if (node instanceof ShadowRoot) return node.host;
+	const parent = node.parentNode;
+	return parent instanceof ShadowRoot ? parent.host : parent;
+}
+
+const BLOCKED = `${REWIND_BLOCK},.rr-block`;
+
+export function insideBlocked(
+	node: Node | null,
+	includeSelf: boolean,
+): boolean {
+	let current = node && (includeSelf ? node : parentOrHost(node));
+	while (current) {
+		if (current instanceof Element && current.matches(BLOCKED)) return true;
+		current = parentOrHost(current);
+	}
+	return false;
+}
+
+const isBlockedPlaceholder = (node: SerializedNode | undefined) =>
+	!!node?.attributes && "rr_width" in node.attributes;
+
+// rrweb blocks a masked element but still observes a shadow root attached to
+// it later and records that shadow content under the host's id, so anything
+// added below a blocked node is dropped here by id and by live ancestry.
+export class BlockFilter {
+	private blocked = new Set<number>();
+
+	constructor(private readonly mirror: MirrorLike) {}
+
+	private hidden(id: unknown, includeSelf: boolean): boolean {
+		if (typeof id !== "number") return false;
+		if (this.blocked.has(id)) return true;
+		if (insideBlocked(this.mirror.getNode(id), includeSelf)) {
+			this.blocked.add(id);
+			return true;
+		}
+		return false;
+	}
+
+	private collect(node: SerializedNode): void {
+		if (isBlockedPlaceholder(node)) {
+			if (typeof node.id === "number") this.blocked.add(node.id);
+			node.childNodes = [];
+			return;
+		}
+		for (const child of node.childNodes ?? []) this.collect(child);
+	}
+
+	keep(event: { type: number; data?: unknown }): boolean {
+		const data = event.data as Record<string, unknown> | undefined;
+		if (!data) return true;
+		if (event.type === EventType.FullSnapshot) {
+			this.blocked.clear();
+			if (data.node) this.collect(data.node as SerializedNode);
+			return true;
+		}
+		if (event.type !== EventType.IncrementalSnapshot) return true;
+		const source = data.source;
+		if (source === IncrementalSource.Mutation) {
+			type Add = { parentId?: number; node?: SerializedNode };
+			type Change = { id?: number };
+			const adds = (data.adds as Add[] | undefined) ?? [];
+			const kept: Add[] = [];
+			for (const add of adds) {
+				const id = add.node?.id;
+				if (
+					(typeof add.parentId === "number" &&
+						this.blocked.has(add.parentId)) ||
+					this.hidden(id, false)
+				) {
+					if (typeof id === "number") this.blocked.add(id);
+					continue;
+				}
+				if (add.node) this.collect(add.node);
+				kept.push(add);
+			}
+			const visible = (change: Change) => !this.hidden(change.id, false);
+			data.adds = kept.filter(
+				(add) =>
+					typeof add.parentId !== "number" || !this.blocked.has(add.parentId),
+			);
+			data.texts = ((data.texts as Change[] | undefined) ?? []).filter(visible);
+			data.attributes = (
+				(data.attributes as Change[] | undefined) ?? []
+			).filter((change) => !this.hidden(change.id, true));
+			return true;
+		}
+		if (source === IncrementalSource.Selection) {
+			const ranges =
+				(data.ranges as Array<{ start?: number; end?: number }> | undefined) ??
+				[];
+			return !ranges.some(
+				(range) =>
+					this.hidden(range.start, true) || this.hidden(range.end, true),
+			);
+		}
+		if (
+			source === IncrementalSource.MouseInteraction ||
+			source === IncrementalSource.MouseMove ||
+			source === IncrementalSource.TouchMove ||
+			source === IncrementalSource.Scroll ||
+			source === IncrementalSource.ViewportResize ||
+			source === IncrementalSource.Drag
+		)
+			return true;
+		return !this.hidden(data.id, true);
 	}
 }
 
@@ -202,15 +354,20 @@ export interface Rewind {
 	stop(): void;
 }
 
-export function startRewind(minutes: number): Rewind | null {
+export function startRewind(
+	minutes: number,
+	routeRules: RouteRule[] = [],
+): Rewind | null {
 	if (!rewindSupported()) return null;
 	const buffer = new RewindBuffer(minutes * 60_000);
+	const filter = new BlockFilter(record.mirror);
 	let stopRecording: (() => void) | undefined;
 	try {
 		stopRecording = record(
 			rewindRecordOptions((event) => {
 				try {
-					scrubEvent(event);
+					if (!filter.keep(event)) return;
+					scrubEvent(event, { href: location.href, rules: routeRules });
 					buffer.push(event, JSON.stringify(event));
 				} catch {}
 			}),
@@ -221,7 +378,14 @@ export function startRewind(minutes: number): Rewind | null {
 	if (!stopRecording) return null;
 	return {
 		minutes,
-		snapshot: () => buffer.snapshot(),
+		snapshot: () => {
+			const current = buffer.snapshot();
+			if (current) return current;
+			try {
+				record.takeFullSnapshot(true);
+			} catch {}
+			return buffer.snapshot();
+		},
 		stop: () => {
 			stopRecording?.();
 			buffer.clear();
@@ -251,6 +415,8 @@ export async function compressRewind(
 ): Promise<Blob | null> {
 	const encoder = new TextEncoder();
 	for (let first = 0; first < snapshot.segments.length; first++) {
+		const startedAt = snapshot.segments[first]?.startedAt ?? 0;
+		if (snapshot.endedAt - startedAt > REWIND_LIMITS.spanMs) continue;
 		const bytes = encoder.encode(
 			rewindJson({ ...snapshot, segments: snapshot.segments.slice(first) }),
 		);

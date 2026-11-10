@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { init } from "../src/index";
 import {
+	BlockFilter,
 	compressRewind,
 	MASK_INPUTS,
 	MASK_VALUE,
@@ -10,6 +11,7 @@ import {
 	rewindJson,
 	rewindMinutes,
 	rewindRecordOptions,
+	scrubEvent,
 	startRewind,
 } from "../src/rewind";
 
@@ -85,6 +87,22 @@ describe("rewind buffer", () => {
 		expect(starts(buffer.snapshot(3 * MINUTE))).toEqual([MINUTE, 2 * MINUTE]);
 	});
 
+	it("drops a segment left over from a long idle gap, so the span stays short", () => {
+		const buffer = new RewindBuffer(2 * MINUTE);
+		checkout(buffer, 0);
+		step(buffer, 20 * MINUTE);
+		checkout(buffer, 20 * MINUTE);
+		step(buffer, 20 * MINUTE + 5000);
+		const snapshot = buffer.snapshot(20 * MINUTE + 10_000);
+		expect(starts(snapshot)).toEqual([20 * MINUTE]);
+
+		const idle = new RewindBuffer(2 * MINUTE);
+		checkout(idle, 0);
+		expect(idle.snapshot(20 * MINUTE)).toBeNull();
+		checkout(idle, 20 * MINUTE);
+		expect(starts(idle.snapshot(20 * MINUTE + 1))).toEqual([20 * MINUTE]);
+	});
+
 	it("ignores events until the first full snapshot", () => {
 		const buffer = new RewindBuffer(2 * MINUTE);
 		step(buffer, 1);
@@ -98,6 +116,7 @@ describe("rewind buffer", () => {
 		const byEvents = new RewindBuffer(5 * MINUTE, {
 			events: 6,
 			chars: 1e9,
+			checkoutMs: MINUTE,
 		});
 		checkout(byEvents, 0);
 		step(byEvents, 1);
@@ -111,6 +130,7 @@ describe("rewind buffer", () => {
 		const byChars = new RewindBuffer(5 * MINUTE, {
 			events: 1e9,
 			chars: 400,
+			checkoutMs: MINUTE,
 		});
 		checkout(byChars, 0, 100);
 		checkout(byChars, 1, 100);
@@ -120,7 +140,11 @@ describe("rewind buffer", () => {
 	});
 
 	it("drops a segment that alone exceeds the cap until the next full snapshot", () => {
-		const buffer = new RewindBuffer(5 * MINUTE, { events: 1e9, chars: 300 });
+		const buffer = new RewindBuffer(5 * MINUTE, {
+			events: 1e9,
+			chars: 300,
+			checkoutMs: MINUTE,
+		});
 		checkout(buffer, 0, 50);
 		step(buffer, 1, 400);
 		expect(buffer.snapshot(2)).toBeNull();
@@ -204,6 +228,197 @@ describe("rewind masking", () => {
 			rrweb: "2.2.0",
 		});
 	});
+
+	it("drops content added below a masked element, including shadow roots attached later", async () => {
+		document.body.innerHTML = `
+			<p>Shown text</p>
+			<div id="early" data-worm-mask></div>
+			<late-panel id="late" data-worm-mask></late-panel>`;
+		const rewind = startRewind(2);
+		const appended = document.createElement("div");
+		appended.setAttribute("data-worm-mask", "");
+		document.body.append(appended);
+		await new Promise((resolve) => setTimeout(resolve, 10));
+		appended.attachShadow({ mode: "open" }).innerHTML =
+			"<p>Appended shadow secret</p>";
+		(document.getElementById("early") as HTMLElement).attachShadow({
+			mode: "open",
+		}).innerHTML = "<p>Early shadow secret <b>nested secret</b></p>";
+		customElements.define(
+			"late-panel",
+			class extends HTMLElement {
+				constructor() {
+					super();
+					this.attachShadow({ mode: "open" }).innerHTML =
+						"<span>Defined later secret</span>";
+				}
+			},
+		);
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		const shadow = document.getElementById("early")?.shadowRoot;
+		const text = shadow?.querySelector("b");
+		if (text) text.textContent = "Changed shadow secret";
+		shadow?.querySelector("p")?.setAttribute("title", "Attribute secret");
+		const visible = document.createElement("p");
+		visible.textContent = "Added visible text";
+		document.body.append(visible);
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		const json = rewindJson(rewind?.snapshot() as RewindSnapshot);
+		rewind?.stop();
+		expect(json).toContain("Shown text");
+		expect(json).toContain("Added visible text");
+		for (const secret of [
+			"Appended shadow secret",
+			"Early shadow secret",
+			"nested secret",
+			"Defined later secret",
+			"Changed shadow secret",
+			"Attribute secret",
+		])
+			expect(json).not.toContain(secret);
+	});
+
+	it("filters adds, texts, attributes and inputs under blocked ids", () => {
+		const page = document.createElement("div");
+		const masked = document.createElement("div");
+		masked.setAttribute("data-worm-mask", "");
+		const inside = document.createElement("span");
+		masked.append(inside);
+		page.append(masked);
+		const nodes = new Map<number, Node>([
+			[1, page],
+			[2, masked],
+			[3, inside],
+		]);
+		const filter = new BlockFilter({ getNode: (id) => nodes.get(id) ?? null });
+		filter.keep({
+			type: FULL,
+			data: {
+				node: {
+					id: 1,
+					type: 2,
+					tagName: "div",
+					attributes: {},
+					childNodes: [
+						{ id: 2, type: 2, tagName: "div", attributes: { rr_width: "1px" } },
+					],
+				},
+			},
+		});
+		const mutation = {
+			type: INCREMENTAL,
+			data: {
+				source: 0,
+				adds: [
+					{ parentId: 2, node: { id: 10, type: 11, childNodes: [] } },
+					{ parentId: 10, node: { id: 11, type: 3, textContent: "secret" } },
+					{ parentId: 1, node: { id: 12, type: 3, textContent: "shown" } },
+				],
+				texts: [
+					{ id: 11, value: "secret" },
+					{ id: 3, value: "secret" },
+					{ id: 12, value: "shown" },
+				],
+				attributes: [
+					{ id: 2, attributes: { title: "secret" } },
+					{ id: 1, attributes: { title: "shown" } },
+				],
+				removes: [],
+			},
+		};
+		expect(filter.keep(mutation)).toBe(true);
+		const kept = JSON.stringify(mutation);
+		expect(kept).not.toContain("secret");
+		expect(kept).toContain("shown");
+		expect(
+			filter.keep({
+				type: INCREMENTAL,
+				data: { source: 5, id: 11, text: "x" },
+			}),
+		).toBe(false);
+		expect(
+			filter.keep({ type: INCREMENTAL, data: { source: 5, id: 3, text: "x" } }),
+		).toBe(false);
+		expect(
+			filter.keep({
+				type: INCREMENTAL,
+				data: { source: 5, id: 12, text: "x" },
+			}),
+		).toBe(true);
+		expect(
+			filter.keep({
+				type: INCREMENTAL,
+				data: {
+					source: 14,
+					ranges: [{ start: 11, startOffset: 0, end: 12, endOffset: 1 }],
+				},
+			}),
+		).toBe(false);
+		expect(
+			filter.keep({
+				type: INCREMENTAL,
+				data: { source: 2, type: 2, id: 2, x: 1, y: 1 },
+			}),
+		).toBe(true);
+	});
+
+	it("keeps the page address without its query, hash or ids", async () => {
+		history.replaceState(null, "", "/patients/123456?mrn=X#Y");
+		document.body.innerHTML = "<p>Chart</p>";
+		const rewind = startRewind(2, [
+			{ pattern: /^\/patients/, replace: "/people" },
+		]);
+		const json = rewindJson(rewind?.snapshot() as RewindSnapshot);
+		rewind?.stop();
+		const meta = JSON.parse(json).events.find(
+			(event: { type: number }) => event.type === META,
+		);
+		expect(meta.data.href).toBe(`${location.origin}/people/:id`);
+		expect(json).not.toContain("mrn");
+		expect(json).not.toContain("123456");
+		history.replaceState(null, "", "/");
+	});
+
+	it("drops iframe srcdoc and query strings from links and sources, and blocks datalists", async () => {
+		document.body.innerHTML = `
+			<iframe srcdoc="<p>Srcdoc secret</p>"></iframe>
+			<a href="/chart?mrn=link-secret#frag-secret">Chart</a>
+			<img src="/scan.png?token=img-secret" srcset="/a.png?k=set-secret 1x, /b.png 2x" alt="">
+			<datalist id="names"><option value="Datalist secret"></option></datalist>`;
+		const rewind = startRewind(2);
+		document.querySelector("a")?.setAttribute("href", "/next?mrn=later-secret");
+		document
+			.querySelector("iframe")
+			?.setAttribute("srcdoc", "<p>Later srcdoc secret</p>");
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		const json = rewindJson(rewind?.snapshot() as RewindSnapshot);
+		rewind?.stop();
+		expect(json).toMatch(/"href":"[^"]*\/chart"/);
+		expect(json).toContain("/b.png 2x");
+		for (const secret of [
+			"Srcdoc secret",
+			"link-secret",
+			"frag-secret",
+			"img-secret",
+			"set-secret",
+			"Datalist secret",
+			"later-secret",
+			"Later srcdoc secret",
+		])
+			expect(json).not.toContain(secret);
+		const event = {
+			type: INCREMENTAL,
+			data: {
+				source: 0,
+				adds: [],
+				texts: [],
+				removes: [],
+				attributes: [{ id: 1, attributes: { srcdoc: "x", src: "/a?b=c" } }],
+			},
+		};
+		scrubEvent(event);
+		expect(event.data.attributes[0]?.attributes).toEqual({ src: "/a" });
+	});
 });
 
 describe("rewind upload", () => {
@@ -228,6 +443,20 @@ describe("rewind upload", () => {
 		expect(value.events).toHaveLength(2);
 	});
 
+	it("never sends a span longer than the window plus one checkout", async () => {
+		const blob = await compressRewind({
+			endedAt: 30 * MINUTE,
+			segments: [segment(0, 10), segment(29 * MINUTE, 10)],
+		});
+		expect(JSON.parse(await gunzip(blob as Blob)).startedAt).toBe(29 * MINUTE);
+		expect(
+			await compressRewind({
+				endedAt: 30 * MINUTE,
+				segments: [segment(0, 10)],
+			}),
+		).toBeNull();
+	});
+
 	it("drops the oldest segments to fit the size caps, or leaves the rewind out", async () => {
 		const snapshot = {
 			endedAt: 99,
@@ -250,12 +479,19 @@ describe("rewind in the widget", () => {
 		document.body.innerHTML = "";
 	});
 
-	async function sendWith(include: boolean, rewind?: { minutes: number }) {
+	async function sendWith(
+		include: boolean,
+		rewind?: { minutes: number },
+		refuse = 0,
+	) {
 		const forms: FormData[] = [];
 		vi.stubGlobal(
 			"fetch",
 			vi.fn(async (_url: string, init: RequestInit) => {
-				forms.push(init.body as FormData);
+				const form = init.body as FormData;
+				forms.push(form);
+				if (refuse && form.get("rewind"))
+					return new Response('{"error":"refused"}', { status: refuse });
 				return new Response('{"id":"x"}', { status: 201 });
 			}),
 		);
@@ -276,11 +512,28 @@ describe("rewind in the widget", () => {
 		if (box) box.checked = include;
 		await new Promise((resolve) => setTimeout(resolve, 20));
 		(root.querySelector(".send") as HTMLButtonElement).click();
-		await vi.waitFor(() => expect(forms).toHaveLength(1), { timeout: 5000 });
+		await vi.waitFor(
+			() =>
+				expect(root.querySelector(".status")?.className).toMatch(/ok|error/),
+			{ timeout: 5000 },
+		);
 		const status = root.querySelector(".status")?.textContent;
 		widget.destroy();
-		return { form: forms[0] as FormData, row, box, status };
+		return { form: forms[0] as FormData, forms, row, box, status };
 	}
+
+	it("resends the report without the rewind when the server refuses it", async () => {
+		for (const refuse of [413, 415]) {
+			const sent = await sendWith(true, { minutes: 2 }, refuse);
+			expect(sent.forms).toHaveLength(2);
+			expect(sent.forms[0]?.get("rewind")).not.toBeNull();
+			expect(sent.forms[1]?.get("rewind")).toBeNull();
+			expect(sent.forms[1]?.get("note")).toBe("It broke");
+			expect(sent.status).toBe(
+				"Thanks. Your feedback was sent without the replay.",
+			);
+		}
+	});
 
 	it("is off by default", async () => {
 		const { form, row } = await sendWith(true);
