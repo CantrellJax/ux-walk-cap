@@ -1,6 +1,6 @@
-import { autoInit, init } from "./index";
+import { autoInit, createReporter, init } from "./index";
 
 const script = document.currentScript as HTMLScriptElement | null;
 autoInit(script);
 
-export { init };
+export { createReporter, init };

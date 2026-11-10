@@ -1,26 +1,10 @@
-import { type Collector, createCollector } from "./evidence";
-import { buildEvidence, MAX_NOTE, reportForm } from "./report";
-import { compressRewind, rewindMinutes, startRewind } from "./rewind";
-import { captureScreenshot } from "./screenshot";
+import { createReporter, origin } from "./reporter";
 import { STYLE } from "./styles";
 import type { FeedbackWidget, FeedbackWidgetConfig } from "./types";
-import {
-	MAX_VOICE_MS,
-	type VoiceMemo,
-	VoiceRecorder,
-	voiceSupported,
-} from "./voice";
+import type { VoiceMemo } from "./voice";
 
 const ICON =
 	'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
-
-function origin(server: string): string {
-	const url = new URL(server);
-	const local = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
-	if (url.protocol !== "https:" && !(local && url.protocol === "http:"))
-		throw new Error("The feedback server must be an https origin.");
-	return url.origin;
-}
 
 const clock = (ms: number) => {
 	const seconds = Math.floor(ms / 1000);
@@ -39,9 +23,8 @@ function element<K extends keyof HTMLElementTagNameMap>(
 }
 
 export function mountWidget(config: FeedbackWidgetConfig): FeedbackWidget {
+	const reporter = createReporter(config);
 	const server = origin(config.server);
-	if (!config.siteKey) throw new Error("The feedback widget needs a site key.");
-	const send = window.fetch.bind(window);
 	const host = document.createElement("feedback-widget");
 	host.setAttribute("data-worm-mask", "");
 	host.className = "ph-no-capture rr-block sentry-block fs-exclude";
@@ -51,13 +34,7 @@ export function mountWidget(config: FeedbackWidgetConfig): FeedbackWidget {
 	const frame = element("div", {
 		className: config.position === "bottom-left" ? "left" : "right",
 	});
-	const collector: Collector = createCollector({
-		host: () => host,
-		ignoreOrigin: server,
-		routeRules: config.routeRules,
-		requestIdHeaders: config.requestIdHeaders,
-		genericTestids: config.genericTestids,
-	});
+	reporter.setPanel(host);
 
 	const launcher = element("button", {
 		className: "launcher",
@@ -81,7 +58,7 @@ export function mountWidget(config: FeedbackWidgetConfig): FeedbackWidget {
 	});
 	const note = element("textarea", {
 		id: "feedback-widget-note",
-		maxLength: MAX_NOTE,
+		maxLength: reporter.maxNote,
 		placeholder: "What happened? What did you expect?",
 	});
 	const screenshotButton = element("button", {
@@ -95,9 +72,9 @@ export function mountWidget(config: FeedbackWidgetConfig): FeedbackWidget {
 		textContent: "Record voice memo",
 	});
 	voiceButton.setAttribute("aria-pressed", "false");
-	if (!voiceSupported()) voiceButton.hidden = true;
-	const minutes = rewindMinutes(config.rewind);
-	const rewind = minutes ? startRewind(minutes, config.routeRules) : null;
+	if (!reporter.voiceSupported) voiceButton.hidden = true;
+	const minutes = reporter.rewindMinutes;
+	const rewind = minutes !== null;
 	const rewindBox = element("input", {
 		type: "checkbox",
 		id: "feedback-widget-rewind",
@@ -158,7 +135,8 @@ export function mountWidget(config: FeedbackWidgetConfig): FeedbackWidget {
 	let shotUrl = "";
 	let voice: VoiceMemo | null = null;
 	let voiceUrl = "";
-	let recorder: VoiceRecorder | null = null;
+	let recording = false;
+	let voiceStartedAt = 0;
 	let ticker: ReturnType<typeof setInterval> | undefined;
 	let sending = false;
 	let starting = false;
@@ -173,7 +151,8 @@ export function mountWidget(config: FeedbackWidgetConfig): FeedbackWidget {
 		sendButton.disabled =
 			sending ||
 			capturing ||
-			!!recorder ||
+			recording ||
+			starting ||
 			(!note.value.trim() && !screenshot && !voice);
 		screenshotButton.disabled = sending || capturing;
 		rewindBox.disabled = sending;
@@ -213,7 +192,7 @@ export function mountWidget(config: FeedbackWidgetConfig): FeedbackWidget {
 		capturing = true;
 		refresh();
 		try {
-			const blob = await captureScreenshot(host);
+			const blob = await reporter.captureScreenshot();
 			if (generation !== draft) return;
 			clearScreenshot();
 			screenshot = blob;
@@ -236,11 +215,10 @@ export function mountWidget(config: FeedbackWidgetConfig): FeedbackWidget {
 	});
 
 	const stopRecording = async () => {
-		if (!recorder) return;
-		const active = recorder;
+		if (!recording) return;
 		clearInterval(ticker);
 		try {
-			voice = await active.stop();
+			voice = await reporter.stopVoice();
 			voiceUrl = URL.createObjectURL(voice.blob);
 			const audio = element("audio", { src: voiceUrl, controls: true });
 			voiceRow.replaceChildren(
@@ -252,7 +230,7 @@ export function mountWidget(config: FeedbackWidgetConfig): FeedbackWidget {
 		} catch {
 			setStatus("The voice memo could not be saved.", "error");
 		} finally {
-			recorder = null;
+			recording = false;
 			voiceButton.textContent = "Record voice memo";
 			voiceButton.setAttribute("aria-pressed", "false");
 			voiceButton.classList.remove("recording");
@@ -260,37 +238,31 @@ export function mountWidget(config: FeedbackWidgetConfig): FeedbackWidget {
 		}
 	};
 	voiceButton.addEventListener("click", async () => {
-		if (recorder) return stopRecording();
+		if (recording) return stopRecording();
 		clearVoice();
-		const next = new VoiceRecorder(() => {
-			stopRecording();
-		});
-		recorder = next;
 		starting = true;
 		refresh();
 		try {
-			await next.start();
+			await reporter.startVoice(() => {
+				stopRecording();
+			});
 		} catch {
-			if (recorder === next) {
-				recorder = null;
-				setStatus(
-					"Microphone is unavailable. You can still type a note.",
-					"error",
-				);
-			}
+			setStatus(
+				"Microphone is unavailable. You can still type a note.",
+				"error",
+			);
 			return;
 		} finally {
 			starting = false;
 			refresh();
 		}
-		if (recorder !== next) {
-			next.cancel();
-			return;
-		}
+		recording = true;
+		voiceStartedAt = Date.now();
+		refresh();
 		voiceButton.setAttribute("aria-pressed", "true");
 		voiceButton.classList.add("recording");
 		const tick = () => {
-			voiceButton.textContent = `Stop recording ${clock(next.elapsedMs)} / ${clock(MAX_VOICE_MS)}`;
+			voiceButton.textContent = `Stop recording ${clock(Date.now() - voiceStartedAt)} / ${clock(reporter.maxVoiceMs)}`;
 		};
 		tick();
 		ticker = setInterval(tick, 500);
@@ -315,38 +287,16 @@ export function mountWidget(config: FeedbackWidgetConfig): FeedbackWidget {
 		refresh();
 		setStatus("Sending…");
 		try {
-			const evidence = await buildEvidence(collector, {
-				getContext: config.getContext,
-				posthog: config.posthog,
+			const wanted = rewind && rewindBox.checked;
+			const { replaySent } = await reporter.send({
+				note: note.value,
+				screenshot,
 				voice,
+				includeRewind: wanted,
 			});
-			const recording = rewind && rewindBox.checked ? rewind.snapshot() : null;
-			const rewindPart = recording ? await compressRewind(recording) : null;
-			const post = (part: Blob | null) =>
-				send(`${server}/api/v1/feedback`, {
-					method: "POST",
-					body: reportForm({
-						siteKey: config.siteKey,
-						note: note.value,
-						evidence,
-						screenshot,
-						voice,
-						rewind: part,
-					}),
-					credentials: "omit",
-					mode: "cors",
-					referrerPolicy: "no-referrer",
-				});
-			let response = await post(rewindPart);
-			let replaySent = !!rewindPart;
-			if (rewindPart && (response.status === 413 || response.status === 415)) {
-				response = await post(null);
-				replaySent = false;
-			}
-			if (!response.ok) throw new Error(String(response.status));
 			reset();
 			setStatus(
-				recording && !replaySent
+				wanted && !replaySent
 					? "Thanks. Your feedback was sent without the replay."
 					: "Thanks. Your feedback was sent.",
 				"ok",
@@ -381,9 +331,9 @@ export function mountWidget(config: FeedbackWidgetConfig): FeedbackWidget {
 		note.focus();
 	};
 	const hide = () => {
-		if (recorder) {
-			recorder.cancel();
-			recorder = null;
+		if (recording) {
+			reporter.cancelVoice();
+			recording = false;
 			clearInterval(ticker);
 			voiceButton.textContent = "Record voice memo";
 			voiceButton.setAttribute("aria-pressed", "false");
@@ -409,8 +359,7 @@ export function mountWidget(config: FeedbackWidgetConfig): FeedbackWidget {
 		destroy: () => {
 			hide();
 			reset();
-			collector.stop();
-			rewind?.stop();
+			reporter.destroy();
 			viewport?.removeEventListener("resize", fitKeyboard);
 			viewport?.removeEventListener("scroll", fitKeyboard);
 			host.remove();

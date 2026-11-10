@@ -5,6 +5,8 @@ import type {
 } from "./types";
 import { mountWidget } from "./widget";
 
+export type { FeedbackReporter, SendInput } from "./reporter";
+export { createReporter } from "./reporter";
 export type * from "./types";
 
 let active: FeedbackWidget | null = null;

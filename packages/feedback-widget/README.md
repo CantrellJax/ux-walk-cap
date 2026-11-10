@@ -82,6 +82,12 @@ If the page already runs a session recorder (PostHog, Sentry replay), both recor
 
 The rewind is stored only on your Worm server, deleted with the report and kept as long as the report. The owner replays it at `https://YOUR_SERVER/rewind/REPORT_ID` with the owner credential, or saves it with `cap feedback pull`. See the [cloud README](../../apps/cloud/README.md#feedback-from-your-web-apps).
 
+## Draw your own panel
+
+`createReporter(config)` is the widget without its UI. `init` uses it too, so both send the same thing. The config is the one `init` takes, minus `position` and `label`. It returns `rewindMinutes`, `voiceSupported`, `maxNote`, `maxVoiceMs`, `setPanel(el)`, `captureScreenshot()`, `startVoice(onAutoStop)`, `stopVoice()`, `cancelVoice()`, `send({ note, screenshot, voice, includeRewind })` and `destroy()`.
+
+Pass your panel element to `setPanel`. It is left out of screenshots and clicks inside it are not logged. Mark any other element of yours (a scrim, a toast) `data-worm-exclude` for the same treatment. Mark the panel `data-worm-mask` so the rewind hides it.
+
 ## What leaves the browser
 
 Only the report, sent to your configured server: the note, the evidence JSON, an optional JPEG screenshot, an optional voice memo (WebM/Opus in Chrome and Firefox, MP4/AAC in Safari on iPhone and Mac) and, if the site turned it on and the tester left it checked, the rewind.
