@@ -57,7 +57,7 @@ impl FilingState {
 }
 
 /// Runs a bridge command whose argument is a request file (`file`, `glossary-*`, `assign-project`).
-fn run_request(command: &str, body: serde_json::Value) -> Result<String, String> {
+pub(super) fn run_request(command: &str, body: serde_json::Value) -> Result<String, String> {
     let request = std::env::temp_dir().join(format!(
         "ux-walk-{command}-{}.json",
         crate::store::new_uuid_v4()

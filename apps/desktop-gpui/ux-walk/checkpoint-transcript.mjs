@@ -7,6 +7,7 @@ import {
 	sha256,
 } from "./checkpoint-store.mjs";
 
+import { matchVoices, voiceOf, writeVoiceCard } from "./checkpoint-voices.mjs";
 import { sourceAudioProblem } from "./native-audio.mjs";
 
 const local = new URL("./src/transcribe.mjs", import.meta.url);
@@ -41,6 +42,7 @@ export async function reuseCheckpointTranscript(
 	startedAtMs,
 	cfg = {},
 	speakers = [],
+	dependencies = {},
 ) {
 	const root = path.join(directory, "checkpoints");
 	const jobsRoot = path.join(root, "jobs");
@@ -93,6 +95,7 @@ export async function reuseCheckpointTranscript(
 			"Live transcript source clocks are retained; final display alignment is not yet available. Retry preparation after checkpoint draining finishes.";
 	}
 	const mapped = [];
+	const usedSources = new Set();
 	let complete = jobs.every((job) => job.state === "complete");
 	let base = 0;
 	if (layout) {
@@ -129,6 +132,7 @@ export async function reuseCheckpointTranscript(
 					)
 						continue;
 					const source = `segment-${index}:${kind}`;
+					usedSources.add(source);
 					const matching = jobs
 						.filter((job) => job.source === source)
 						.sort((a, b) => a.sourceStartMs - b.sourceStartMs);
@@ -197,6 +201,30 @@ export async function reuseCheckpointTranscript(
 	const { wordsToSrt } = await import(new URL("transcribe.mjs", engine));
 	mapped.sort((a, b) => a.start - b.start || a.source.localeCompare(b.source));
 	const sole = soleSpeaker(mapped, speakers);
+	const firstMatch =
+		!fs.existsSync(path.join(root, "voices.json")) &&
+		fs.existsSync(path.join(directory, "report.html"));
+	const voices =
+		complete &&
+		!error &&
+		mapped.length &&
+		!sole &&
+		!firstMatch &&
+		liveProvider(cfg)
+			? await (dependencies.matchVoices ?? matchVoices)(root, cfg, {
+					sources: usedSources,
+				})
+			: null;
+	if (voices) {
+		for (const word of mapped) word.voice = voiceOf(voices, word.speaker)?.id;
+		try {
+			await (dependencies.writeVoiceCard ?? writeVoiceCard)(directory, voices, {
+				speakers,
+			});
+		} catch {}
+	}
+	const voiceOrder = voices?.voices.map((voice) => voice.id) ?? [];
+	const matched = voices?.matched === true;
 	for (const row of rows) {
 		const start = (row.startMs - startedAtMs) / 1000;
 		const end = (row.endMs - startedAtMs) / 1000;
@@ -230,15 +258,25 @@ export async function reuseCheckpointTranscript(
 			complete: !error,
 			speakerIdentity: sole
 				? `One configured speaker and microphone speech only: every label here is ${sole}`
-				: "Labels belong to one source and chunk; identities are not matched across requests",
+				: matched
+					? "Voices were matched across sources and chunks by one short request of voice samples; Speaker N is the same voice in every chapter"
+					: "Labels belong to one source and chunk; identities are not matched across requests",
 			...(error ? { error } : {}),
 		});
 		if (words.length)
 			durableWrite(
 				path.join(chapter, "transcript.srt"),
-				wordsToSrt(
-					sole ? words.map((word) => ({ ...word, speaker: sole })) : words,
-				),
+				sole
+					? wordsToSrt(words.map((word) => ({ ...word, speaker: sole })))
+					: voices
+						? wordsToSrt(
+								words.map((word) => ({
+									...word,
+									speaker: word.voice ?? word.speaker,
+								})),
+								voiceOrder,
+							)
+						: wordsToSrt(words),
 			);
 		const labels = new Set(
 			words.map((word) => `${word.jobId}:${word.speaker}`),
@@ -246,13 +284,25 @@ export async function reuseCheckpointTranscript(
 		results.set(row.dir, {
 			transcript: words.length > 0,
 			speakers: sole ? [sole] : [],
-			...(!sole && labels.size > 1
+			...(!sole && !matched && labels.size > 1
 				? { speakerAttributionNotice: UNMATCHED_VOICES_NOTICE }
 				: {}),
 			...(error ? { transcriptError: error } : {}),
 		});
 	}
-	return { handled: true, results, error };
+	return {
+		handled: true,
+		results,
+		error,
+		voices: voices ? { inputHash: voices.inputHash, matched } : null,
+	};
+}
+
+function liveProvider(cfg) {
+	return (
+		cfg.liveTranscription !== false &&
+		["elevenlabs", "assemblyai"].includes(cfg.transcriber)
+	);
 }
 
 function verifiedZeroJobSeal(directory, cfg, allowFullOwner = false) {
