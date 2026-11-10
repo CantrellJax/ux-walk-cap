@@ -5,6 +5,9 @@
 	"compatibility_date": "2026-10-25",
 	"workers_dev": true,
 	"preview_urls": false,
+	"build": {
+		"command": "node scripts/vendor-player.mjs"
+	},
 	"assets": {
 		"directory": "public",
 		"binding": "ASSETS",

@@ -14,11 +14,12 @@
 		"build": "node build.mjs",
 		"typecheck": "tsc --noEmit",
 		"test": "vitest run",
-		"test:e2e": "npm run build && playwright test",
+		"test:e2e": "npm run build && npm --prefix ../../apps/cloud run bundle && playwright test",
 		"check": "npm run typecheck && npm test && npm run test:e2e"
 	},
 	"dependencies": {
-		"modern-screenshot": "4.7.0"
+		"modern-screenshot": "4.7.0",
+		"rrweb": "2.2.0"
 	},
 	"devDependencies": {
 		"@playwright/test": "1.61.1",
@@ -27,5 +28,11 @@
 		"jsdom": "26.1.0",
 		"typescript": "5.9.3",
 		"vitest": "3.2.6"
+	},
+	"overrides": {
+		"rrweb-snapshot": "2.2.0",
+		"rrdom": "2.2.0",
+		"@rrweb/types": "2.2.0",
+		"@rrweb/utils": "2.2.0"
 	}
 }

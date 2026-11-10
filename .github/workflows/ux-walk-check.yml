@@ -71,6 +71,7 @@ jobs:
         with:
           node-version: '22'
       - run: npm ci --ignore-scripts --prefix packages/feedback-widget
+      - run: npm ci --ignore-scripts --prefix apps/cloud
       - run: npm run check --prefix packages/feedback-widget
   library-contract:
     if: github.repository == 'CantrellJax/ux-walk-cap'

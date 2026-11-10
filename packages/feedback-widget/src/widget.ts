@@ -1,5 +1,6 @@
 import { type Collector, createCollector } from "./evidence";
 import { buildEvidence, MAX_NOTE, reportForm } from "./report";
+import { compressRewind, rewindMinutes, startRewind } from "./rewind";
 import { captureScreenshot } from "./screenshot";
 import { STYLE } from "./styles";
 import type { FeedbackWidget, FeedbackWidgetConfig } from "./types";
@@ -95,6 +96,30 @@ export function mountWidget(config: FeedbackWidgetConfig): FeedbackWidget {
 	});
 	voiceButton.setAttribute("aria-pressed", "false");
 	if (!voiceSupported()) voiceButton.hidden = true;
+	const minutes = rewindMinutes(config.rewind);
+	const rewind = minutes ? startRewind(minutes, config.routeRules) : null;
+	const rewindBox = element("input", {
+		type: "checkbox",
+		id: "feedback-widget-rewind",
+		checked: true,
+	});
+	const rewindRow = element(
+		"div",
+		{ className: "rewind", hidden: !rewind },
+		rewindBox,
+		element(
+			"label",
+			{ htmlFor: rewindBox.id },
+			element("span", {
+				textContent: `Include the last ${minutes ?? 0} minutes of this page`,
+			}),
+			element("span", {
+				className: "hint",
+				textContent:
+					"A replay of what was on screen and where you clicked. Typed text and private areas are hidden.",
+			}),
+		),
+	);
 	const shotRow = element("div", { className: "attachment", hidden: true });
 	const voiceRow = element("div", { className: "attachment", hidden: true });
 	const status = element("p", { className: "status" });
@@ -118,6 +143,7 @@ export function mountWidget(config: FeedbackWidgetConfig): FeedbackWidget {
 		element("div", { className: "tools" }, screenshotButton, voiceButton),
 		shotRow,
 		voiceRow,
+		rewindRow,
 		element("p", {
 			className: "privacy",
 			textContent: `Sent only to ${new URL(server).host}. Typed fields are hidden in screenshots.`,
@@ -150,6 +176,7 @@ export function mountWidget(config: FeedbackWidgetConfig): FeedbackWidget {
 			!!recorder ||
 			(!note.value.trim() && !screenshot && !voice);
 		screenshotButton.disabled = sending || capturing;
+		rewindBox.disabled = sending;
 		voiceButton.disabled = sending || starting;
 	};
 	const clearScreenshot = () => {
@@ -277,6 +304,7 @@ export function mountWidget(config: FeedbackWidgetConfig): FeedbackWidget {
 	const reset = () => {
 		draft++;
 		note.value = "";
+		rewindBox.checked = true;
 		clearScreenshot();
 		clearVoice();
 	};
@@ -292,22 +320,37 @@ export function mountWidget(config: FeedbackWidgetConfig): FeedbackWidget {
 				posthog: config.posthog,
 				voice,
 			});
-			const response = await send(`${server}/api/v1/feedback`, {
-				method: "POST",
-				body: reportForm({
-					siteKey: config.siteKey,
-					note: note.value,
-					evidence,
-					screenshot,
-					voice,
-				}),
-				credentials: "omit",
-				mode: "cors",
-				referrerPolicy: "no-referrer",
-			});
+			const recording = rewind && rewindBox.checked ? rewind.snapshot() : null;
+			const rewindPart = recording ? await compressRewind(recording) : null;
+			const post = (part: Blob | null) =>
+				send(`${server}/api/v1/feedback`, {
+					method: "POST",
+					body: reportForm({
+						siteKey: config.siteKey,
+						note: note.value,
+						evidence,
+						screenshot,
+						voice,
+						rewind: part,
+					}),
+					credentials: "omit",
+					mode: "cors",
+					referrerPolicy: "no-referrer",
+				});
+			let response = await post(rewindPart);
+			let replaySent = !!rewindPart;
+			if (rewindPart && (response.status === 413 || response.status === 415)) {
+				response = await post(null);
+				replaySent = false;
+			}
 			if (!response.ok) throw new Error(String(response.status));
 			reset();
-			setStatus("Thanks. Your feedback was sent.", "ok");
+			setStatus(
+				recording && !replaySent
+					? "Thanks. Your feedback was sent without the replay."
+					: "Thanks. Your feedback was sent.",
+				"ok",
+			);
 		} catch {
 			setStatus("Couldn't send. Your note is still here; try again.", "error");
 		} finally {
@@ -367,6 +410,7 @@ export function mountWidget(config: FeedbackWidgetConfig): FeedbackWidget {
 			hide();
 			reset();
 			collector.stop();
+			rewind?.stop();
 			viewport?.removeEventListener("resize", fitKeyboard);
 			viewport?.removeEventListener("scroll", fitKeyboard);
 			host.remove();

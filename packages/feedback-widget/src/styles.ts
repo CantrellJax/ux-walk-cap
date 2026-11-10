@@ -27,6 +27,10 @@ textarea::placeholder{color:var(--wf-muted)}
 .attachment .grow{flex:1;min-width:0;font-size:13px;color:var(--wf-muted)}
 .remove{min-width:44px;min-height:44px;border-radius:10px;color:var(--wf-muted);font-size:13px}
 .recording{color:var(--wf-danger);font-variant-numeric:tabular-nums}
+.rewind{display:flex;align-items:flex-start;gap:10px;padding:10px;border:1px solid var(--wf-line);border-radius:10px;background:var(--wf-soft)}
+.rewind input{flex:none;width:22px;height:22px;margin:11px;accent-color:var(--wf-accent)}
+.rewind label{display:flex;flex-direction:column;gap:2px;min-height:44px;justify-content:center;font-weight:550;cursor:pointer}
+.rewind .hint{font-size:12px;font-weight:400;color:var(--wf-muted)}
 .privacy{margin:0;font-size:12px;color:var(--wf-muted)}
 .status{margin:0;font-size:13px;min-height:18px}.status.error{color:var(--wf-danger)}.status.ok{color:var(--wf-ok)}
 .send{min-height:48px;border-radius:12px;background:var(--wf-accent);color:var(--wf-accent-ink);font-size:15px;font-weight:650}
