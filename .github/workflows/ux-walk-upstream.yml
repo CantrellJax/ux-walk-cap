@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   propose:
-    if: github.repository == 'CantrellJax/ux-walk-cap'
+    if: github.repository == 'CantrellJax/worm'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
