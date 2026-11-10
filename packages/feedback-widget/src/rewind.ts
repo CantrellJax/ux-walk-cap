@@ -196,11 +196,53 @@ function cleanSrcset(value: string, page: PageAddress): string {
 		.join(", ");
 }
 
+function cleanImageSets(value: string, page: PageAddress): string {
+	let out = "";
+	let rest = value;
+	for (;;) {
+		const match = /(?:-webkit-)?image-set\(/i.exec(rest);
+		if (!match) return out + rest;
+		const open = match.index + match[0].length;
+		let depth = 1;
+		let close = open;
+		while (close < rest.length && depth > 0) {
+			if (rest[close] === "(") depth++;
+			else if (rest[close] === ")") depth--;
+			close++;
+		}
+		const inner = rest
+			.slice(open, depth ? rest.length : close - 1)
+			.replace(
+				/(['"])(.*?)\1/g,
+				(_match, _quote, url: string) => `"${cleanUrl(url, page)}"`,
+			);
+		out += `${rest.slice(0, open)}${inner}${depth ? "" : ")"}`;
+		rest = depth ? "" : rest.slice(close);
+	}
+}
+
 function cleanStyle(value: string, page: PageAddress): string {
-	return value.replace(
-		/url\(\s*(['"]?)(.*?)\1\s*\)/gi,
-		(_match, _quote, url: string) => `url("${cleanUrl(url, page)}")`,
+	return cleanImageSets(
+		value.replace(
+			/url\(\s*(['"]?)(.*?)\1\s*\)/gi,
+			(_match, _quote, url: string) => `url("${cleanUrl(url, page)}")`,
+		),
+		page,
 	);
+}
+
+function cleanStyleAttribute(value: unknown, page: PageAddress): unknown {
+	if (typeof value === "string") return cleanStyle(value, page);
+	if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+	const changes: Record<string, unknown> = {};
+	for (const [property, change] of Object.entries(value)) {
+		if (typeof change === "string")
+			changes[property] = cleanStyle(change, page);
+		else if (Array.isArray(change) && typeof change[0] === "string")
+			changes[property] = [cleanStyle(change[0], page), ...change.slice(1)];
+		else changes[property] = change;
+	}
+	return changes;
 }
 
 function scrubAttributes(
@@ -221,10 +263,12 @@ function scrubAttributes(
 			.map((url) => cleanUrl(url, page))
 			.filter(Boolean)
 			.join(" ");
-	if (typeof attributes.srcset === "string")
-		attributes.srcset = cleanSrcset(attributes.srcset, page);
-	if (typeof attributes.style === "string")
-		attributes.style = cleanStyle(attributes.style, page);
+	for (const name of ["srcset", "imagesrcset"]) {
+		const value = attributes[name];
+		if (typeof value === "string") attributes[name] = cleanSrcset(value, page);
+	}
+	if ("style" in attributes)
+		attributes.style = cleanStyleAttribute(attributes.style, page);
 }
 
 function scrubNode(node: SerializedNode | undefined, page: PageAddress): void {

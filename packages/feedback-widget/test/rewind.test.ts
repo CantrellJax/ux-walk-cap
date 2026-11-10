@@ -560,6 +560,82 @@ describe("rewind slots and URLs", () => {
 		);
 	});
 
+	it("cleans style properties a script sets after load", async () => {
+		history.replaceState(null, "", "/");
+		document.body.innerHTML =
+			'<div id="card" style="color: red">Card</div><div id="hero">Hero</div>';
+		const rewind = startRewind(2);
+		const card = document.getElementById("card") as HTMLElement;
+		card.style.backgroundImage = "url(/scan.png?mrn=style-secret-1)";
+		card.style.removeProperty("color");
+		(document.getElementById("hero") as HTMLElement).style.setProperty(
+			"background-image",
+			'image-set("/hero.png?mrn=style-secret-2" 1x, url("data:image/png;base64,c2VjcmV0") 2x)',
+			"important",
+		);
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		const json = rewindJson(rewind?.snapshot() as RewindSnapshot);
+		rewind?.stop();
+		const changes = JSON.parse(json)
+			.events.filter(
+				(event: { type: number; data: { source?: number } }) =>
+					event.type === INCREMENTAL && event.data.source === 0,
+			)
+			.flatMap(
+				(event: { data: { attributes: Array<{ attributes: unknown }> } }) =>
+					event.data.attributes.map((change) => change.attributes),
+			);
+		expect(
+			changes.some(
+				(change: { style?: unknown }) =>
+					change.style && typeof change.style === "object",
+			),
+		).toBe(true);
+		expect(json).toContain(`url(\\"${location.origin}/scan.png\\")`);
+		for (const secret of ["style-secret-1", "style-secret-2", "c2VjcmV0"])
+			expect(json).not.toContain(secret);
+	});
+
+	it("cleans object styles, image-set strings and imagesrcset", () => {
+		const page = { href: "https://app.example.test/" };
+		const attributes = {
+			style: {
+				"background-image": "url(/a.png?mrn=1)",
+				"list-style-image": [
+					'image-set("/b.png?mrn=2" 1x, "data:image/png;base64,QQ" 2x)',
+					"important",
+				],
+				color: false,
+				"--accent": "blue",
+			},
+			imagesrcset: "/c.png?mrn=3 1x, /d.png 2x",
+		};
+		const event = {
+			type: INCREMENTAL,
+			data: {
+				source: 0,
+				adds: [],
+				texts: [],
+				removes: [],
+				attributes: [{ id: 1, attributes }],
+			},
+		};
+		scrubEvent(event, page);
+		expect(attributes).toEqual({
+			style: {
+				"background-image": 'url("https://app.example.test/a.png")',
+				"list-style-image": [
+					'image-set("https://app.example.test/b.png" 1x, "" 2x)',
+					"important",
+				],
+				color: false,
+				"--accent": "blue",
+			},
+			imagesrcset:
+				"https://app.example.test/c.png 1x, https://app.example.test/d.png 2x",
+		});
+	});
+
 	it("drops rule changes to stylesheets adopted by a hidden shadow root", () => {
 		const masked = document.createElement("div");
 		masked.setAttribute("data-worm-mask", "");
