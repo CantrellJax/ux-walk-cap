@@ -12,7 +12,17 @@
 	},
 	"devDependencies": {
 		"miniflare": "5.20261019.2-beta",
+		"rrweb-player": "2.2.0",
 		"typescript": "5.8.3",
 		"wrangler": "4.152.0"
+	},
+	"overrides": {
+		"rrweb": "2.2.0",
+		"rrweb-snapshot": "2.2.0",
+		"rrdom": "2.2.0",
+		"@rrweb/types": "2.2.0",
+		"@rrweb/utils": "2.2.0",
+		"@rrweb/replay": "2.2.0",
+		"@rrweb/packer": "2.2.0"
 	}
 }

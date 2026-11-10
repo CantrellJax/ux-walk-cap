@@ -43,10 +43,12 @@ export function autoInit(
 		script.dataset.posthog === "window"
 			? (window as unknown as { posthog?: PostHogLike }).posthog
 			: undefined;
+	const minutes = Number(script.dataset.rewindMinutes);
 	return init({
 		server,
 		siteKey,
 		posthog,
+		...(minutes ? { rewind: { minutes } } : {}),
 		label: script.dataset.label,
 		position:
 			script.dataset.position === "bottom-left"

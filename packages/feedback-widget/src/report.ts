@@ -110,6 +110,7 @@ export function reportForm(input: {
 	evidence: Evidence;
 	screenshot?: Blob | null;
 	voice?: VoiceMemo | null;
+	rewind?: Blob | null;
 }): FormData {
 	const form = new FormData();
 	form.set("key", input.siteKey);
@@ -127,5 +128,6 @@ export function reportForm(input: {
 			input.voice.blob,
 			`voice.${extension[input.voice.mimeType] ?? "webm"}`,
 		);
+	if (input.rewind) form.set("rewind", input.rewind, "rewind.json.gz");
 	return form;
 }

@@ -144,6 +144,7 @@ impl FeedbackArgs {
                 }
                 let screenshot = attachment(&client, id, &report, "screenshot").await?;
                 let voice = attachment(&client, id, &report, "voice").await?;
+                let rewind = attachment(&client, id, &report, "rewind").await?;
                 let created = report["createdAt"]
                     .as_i64()
                     .and_then(chrono::DateTime::from_timestamp_millis)
@@ -159,6 +160,7 @@ impl FeedbackArgs {
                     &client.server(),
                     screenshot,
                     voice,
+                    rewind,
                 )?;
                 let target = publish(&out.unwrap_or_else(walk_output_folder), &folder)?;
                 let chapter = target.join(&folder.chapter_dir);
@@ -169,6 +171,8 @@ impl FeedbackArgs {
                     "summary": chapter.join("feedback.md"),
                     "voice": folder.has_voice,
                     "transcribe": folder.has_voice.then(|| format!("ux-walk process {}", chapter.display())),
+                    "rewind": folder.rewind.as_ref().map(|file| target.join(file)),
+                    "replay": folder.rewind.as_ref().map(|_| format!("{}/rewind/{id}", client.server())),
                 }))
             }
             FeedbackCommand::Delete { id } => {

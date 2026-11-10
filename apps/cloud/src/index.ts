@@ -1,5 +1,5 @@
 import brand from "../../../crates/fork-brand/brand.json";
-import { feedback } from "./feedback";
+import { ID as FEEDBACK_ID, feedback } from "./feedback";
 import { recovery } from "./recovery";
 import {
 	bearer,
@@ -25,6 +25,17 @@ interface Share {
 }
 
 const PART_SIZE = 8 * 1024 * 1024;
+const CSP =
+	"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; media-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
+// The rrweb replay rebuilds the recorded page in a sandboxed iframe with the
+// page's inlined CSS and style attributes, which need inline styles; scripts
+// stay self-only and recorded images from other origins are not fetched.
+const REWIND_CSP =
+	"default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' blob:; connect-src 'self'; frame-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
+
+const rewindPage = (pathname: string) =>
+	pathname.startsWith("/rewind/") &&
+	FEEDBACK_ID.test(pathname.slice("/rewind/".length));
 const TYPES = new Set(["video/mp4", "image/png", "image/jpeg"]);
 
 async function owner(request: Request, env: RuntimeEnv): Promise<string> {
@@ -310,6 +321,7 @@ async function route(request: Request, env: RuntimeEnv): Promise<Response> {
 	}
 	if (url.pathname.startsWith("/api/")) throw new HttpError(404, "Not found.");
 	if (/^\/s\/[a-f0-9-]{36}$/.test(url.pathname)) url.pathname = "/viewer.html";
+	if (rewindPage(url.pathname)) url.pathname = "/rewind.html";
 	if (url.pathname === "/") url.pathname = "/index.html";
 	const asset = await env.ASSETS.fetch(new Request(url, request));
 	if (!url.pathname.endsWith(".html") || !asset.ok) return asset;
@@ -349,7 +361,7 @@ export default {
 		secured.headers.set("X-Content-Type-Options", "nosniff");
 		secured.headers.set(
 			"Content-Security-Policy",
-			"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; media-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+			rewindPage(new URL(request.url).pathname) ? REWIND_CSP : CSP,
 		);
 		return secured;
 	},

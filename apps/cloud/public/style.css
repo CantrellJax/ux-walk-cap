@@ -114,3 +114,55 @@ a:focus-visible {
 	background: transparent;
 	border-radius: 10px;
 }
+
+main.rewind {
+	max-width: 1280px;
+}
+.rewind form {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 12px;
+	margin-top: 16px;
+}
+.rewind form label {
+	width: 100%;
+	font-weight: 650;
+}
+.rewind form input {
+	flex: 1 1 260px;
+	min-height: 44px;
+	padding: 10px 12px;
+	border: 1px solid #dde3ef;
+	border-radius: 12px;
+	font: inherit;
+}
+.rewind form .button {
+	border: 0;
+	min-height: 44px;
+	margin: 0;
+	font: inherit;
+	font-weight: 650;
+	cursor: pointer;
+}
+.rewind dl {
+	display: grid;
+	grid-template-columns: max-content 1fr;
+	gap: 6px 16px;
+	margin: 24px 0;
+	overflow-wrap: anywhere;
+}
+.rewind dt {
+	font-weight: 650;
+}
+.rewind dd {
+	margin: 0;
+}
+#player {
+	margin-top: 16px;
+	max-width: 100%;
+	overflow-x: auto;
+}
+.rewind [hidden] {
+	display: none;
+}

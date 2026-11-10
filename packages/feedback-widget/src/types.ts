@@ -17,6 +17,10 @@ export interface RouteRule {
 	replace: string;
 }
 
+export interface RewindConfig {
+	minutes: number;
+}
+
 export interface FeedbackWidgetConfig {
 	server: string;
 	siteKey: string;
@@ -25,6 +29,7 @@ export interface FeedbackWidgetConfig {
 	routeRules?: RouteRule[];
 	requestIdHeaders?: string[];
 	genericTestids?: string[];
+	rewind?: RewindConfig;
 	position?: "bottom-right" | "bottom-left";
 	label?: string;
 }

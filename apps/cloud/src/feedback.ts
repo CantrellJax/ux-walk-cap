@@ -20,6 +20,13 @@ interface Attachment {
 	sha256: string;
 }
 
+interface RewindAttachment extends Attachment {
+	rrweb: string;
+	startedAt: number;
+	endedAt: number;
+	jsonBytes: number;
+}
+
 export interface FeedbackReport {
 	schemaVersion: 1;
 	id: string;
@@ -31,18 +38,24 @@ export interface FeedbackReport {
 	evidence: Record<string, unknown>;
 	screenshot: Attachment | null;
 	voice: Attachment | null;
+	rewind?: RewindAttachment | null;
 }
 
 export const LIMITS = {
-	body: 12 * 1024 * 1024,
+	body: 16 * 1024 * 1024,
 	note: 4000,
 	evidence: 256 * 1024,
 	screenshot: 4 * 1024 * 1024,
 	voice: 6 * 1024 * 1024,
+	rewind: 4 * 1024 * 1024,
+	rewindJson: 24 * 1024 * 1024,
+	rewindSpanMs: 15 * 60_000,
 	events: 200,
 };
+const REWIND_HEAD =
+	/^\{"schemaVersion":1,"kind":"rrweb","rrweb":"([0-9A-Za-z.+-]{1,32})","startedAt":(\d{1,15}),"endedAt":(\d{1,15}),"events":\[\{"type":4,/;
 const KEY = /^wf_pub_[A-Za-z0-9_-]{12,64}$/;
-const ID = /^\d{13}-[a-f0-9]{16}$/;
+export const ID = /^\d{13}-[a-f0-9]{16}$/;
 const LIST = "feedback-index/v1/";
 const prefix = (id: string) => `feedback/v1/${id}/`;
 const tombstone = (id: string) => `feedback-tombstones/v1/${id}`;
@@ -197,6 +210,84 @@ async function attachment(
 	};
 }
 
+async function inflate(
+	bytes: Uint8Array,
+): Promise<{ head: string; tail: string; size: number }> {
+	const body = new Response(bytes).body;
+	if (!body) throw new HttpError(415, "The rewind is not a valid recording.");
+	const reader = body.pipeThrough(new DecompressionStream("gzip")).getReader();
+	const head = new Uint8Array(512);
+	let headSize = 0;
+	let tail = new Uint8Array(0);
+	let size = 0;
+	try {
+		for (;;) {
+			const { value, done } = await reader.read();
+			if (done) break;
+			size += value.byteLength;
+			if (size > LIMITS.rewindJson)
+				throw new HttpError(413, "The rewind is too large.");
+			if (headSize < head.length) {
+				const take = value.subarray(0, head.length - headSize);
+				head.set(take, headSize);
+				headSize += take.byteLength;
+			}
+			tail = value.byteLength >= 2 ? value.slice(-2) : value.slice();
+		}
+	} catch (error) {
+		if (error instanceof HttpError) throw error;
+		throw new HttpError(415, "The rewind is not a valid recording.");
+	} finally {
+		reader.cancel().catch(() => {});
+	}
+	const decoder = new TextDecoder();
+	return {
+		head: decoder.decode(head.subarray(0, headSize)),
+		tail: decoder.decode(tail),
+		size,
+	};
+}
+
+async function rewindPart(
+	form: FormData,
+): Promise<{ bytes: Uint8Array; meta: RewindAttachment } | null> {
+	const value = form.get("rewind");
+	if (value === null) return null;
+	if (typeof value === "string")
+		throw new HttpError(400, "The rewind must be a file.");
+	const contentType = value.type.split(";")[0]?.trim().toLowerCase() ?? "";
+	if (contentType !== "application/gzip")
+		throw new HttpError(415, "Unsupported rewind format.");
+	if (!value.size || value.size > LIMITS.rewind)
+		throw new HttpError(413, "The rewind is too large.");
+	const bytes = new Uint8Array(await value.arrayBuffer());
+	if (bytes[0] !== 0x1f || bytes[1] !== 0x8b || bytes[2] !== 0x08)
+		throw new HttpError(415, "The rewind does not match its format.");
+	const { head, tail, size } = await inflate(bytes);
+	const match = REWIND_HEAD.exec(head);
+	const startedAt = Number(match?.[2]);
+	const endedAt = Number(match?.[3]);
+	if (
+		!match ||
+		tail !== "]}" ||
+		!(endedAt >= startedAt) ||
+		endedAt - startedAt > LIMITS.rewindSpanMs
+	)
+		throw new HttpError(415, "The rewind is not a valid recording.");
+	return {
+		bytes,
+		meta: {
+			contentType,
+			size: bytes.byteLength,
+			sha256: await digest(bytes),
+			rrweb: match[1] ?? "",
+			startedAt,
+			endedAt,
+			jsonBytes: size,
+		},
+	};
+}
+
 function reportId(now: number): string {
 	const random = Array.from(crypto.getRandomValues(new Uint8Array(8)), (byte) =>
 		byte.toString(16).padStart(2, "0"),
@@ -259,6 +350,7 @@ async function submit(
 	const voice = await attachment(form, "voice", VOICE_TYPES, LIMITS.voice);
 	if (!note.trim() && !screenshot && !voice)
 		throw new HttpError(400, "Add a note, screenshot or voice memo.");
+	const rewind = await rewindPart(form);
 	const now = Date.now();
 	const id = reportId(now);
 	const report: FeedbackReport = {
@@ -272,10 +364,12 @@ async function submit(
 		evidence,
 		screenshot: screenshot?.meta ?? null,
 		voice: voice?.meta ?? null,
+		rewind: rewind?.meta ?? null,
 	};
 	for (const [name, part] of [
 		["screenshot", screenshot],
 		["voice", voice],
+		["rewind", rewind],
 	] as const)
 		if (part)
 			await env.MEDIA.put(`${prefix(id)}${name}`, part.bytes, {
@@ -294,6 +388,7 @@ async function submit(
 			preview: report.note.slice(0, 160),
 			screenshot: screenshot ? "1" : "0",
 			voice: voice ? "1" : "0",
+			rewind: rewind ? "1" : "0",
 		},
 	});
 	return response({ id }, 201);
@@ -333,6 +428,7 @@ async function list(
 				preview: meta.preview ?? "",
 				screenshot: meta.screenshot === "1",
 				voice: meta.voice === "1",
+				rewind: meta.rewind === "1",
 			};
 		})
 		.filter((report) => report.expiresAt > now);
@@ -349,6 +445,7 @@ async function remove(bucket: R2Bucket, id: string): Promise<Response> {
 		`${prefix(id)}report.json`,
 		`${prefix(id)}screenshot`,
 		`${prefix(id)}voice`,
+		`${prefix(id)}rewind`,
 	]);
 	return new Response(null, { status: 204 });
 }
@@ -398,10 +495,10 @@ export async function feedback(
 			throw new HttpError(405, "Method not allowed.");
 		return list(env.MEDIA, url.searchParams.get("cursor") ?? undefined);
 	}
-	const match = /^\/([^/]+)(?:\/(screenshot|voice))?$/.exec(suffix);
+	const match = /^\/([^/]+)(?:\/(screenshot|voice|rewind))?$/.exec(suffix);
 	const id = match?.[1] ?? "";
 	if (!match || !ID.test(id)) throw new HttpError(404, "Feedback unavailable.");
-	const part = match[2] as "screenshot" | "voice" | undefined;
+	const part = match[2] as "screenshot" | "voice" | "rewind" | undefined;
 	if (request.method === "DELETE" && !part) return remove(env.MEDIA, id);
 	if (request.method !== "GET") throw new HttpError(405, "Method not allowed.");
 	const report = await live(env.MEDIA, id);
