@@ -417,7 +417,185 @@ describe("rewind masking", () => {
 			},
 		};
 		scrubEvent(event);
-		expect(event.data.attributes[0]?.attributes).toEqual({ src: "/a" });
+		expect(event.data.attributes[0]?.attributes).toEqual({
+			src: `${location.origin}/a`,
+		});
+	});
+});
+
+describe("rewind slots and URLs", () => {
+	it("drops light DOM slotted into a masked part of a shadow tree", async () => {
+		class PhiField extends HTMLElement {
+			constructor() {
+				super();
+				this.attachShadow({ mode: "open" }).innerHTML =
+					'<label>Field</label><span data-worm-mask><slot></slot><slot name="dob"></slot></span><em><slot name="hint"></slot></em>';
+			}
+		}
+		if (!customElements.get("phi-field"))
+			customElements.define("phi-field", PhiField);
+		document.body.innerHTML = `
+			<p>Shown text</p>
+			<phi-field id="early">Early slot secret 1111<span slot="hint">Visible hint</span></phi-field>`;
+		const rewind = startRewind(2);
+		await new Promise((resolve) => setTimeout(resolve, 10));
+		const added = document.createElement("phi-field");
+		added.textContent = "Added slot secret 2222";
+		document.body.append(added);
+		const early = document.getElementById("early") as HTMLElement;
+		const dob = document.createElement("span");
+		dob.slot = "dob";
+		dob.textContent = "Named slot secret 3333";
+		early.append(dob);
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		(early.firstChild as Text).data = "Changed slot secret 4444";
+		dob.title = "Slotted attribute secret";
+		const late = document.createElement("div");
+		late.innerHTML = "<b>Before attach</b>";
+		document.body.append(late);
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		late.attachShadow({ mode: "open" }).innerHTML =
+			"<span data-worm-mask><slot></slot></span>";
+		(late.querySelector("b") as HTMLElement).textContent =
+			"Late root secret 5555";
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		const json = rewindJson(rewind?.snapshot() as RewindSnapshot);
+		const fresh = startRewind(2);
+		const full = rewindJson(fresh?.snapshot() as RewindSnapshot);
+		fresh?.stop();
+		rewind?.stop();
+		for (const text of [json, full]) {
+			expect(text).toContain("Shown text");
+			expect(text).toContain("Visible hint");
+			for (const secret of [
+				"Early slot secret 1111",
+				"Added slot secret 2222",
+				"Named slot secret 3333",
+				"Changed slot secret 4444",
+				"Slotted attribute secret",
+				"Late root secret 5555",
+			])
+				expect(text).not.toContain(secret);
+		}
+	});
+
+	it("blanks data, blob, mailto and tel URLs and runs paths through the route rules", () => {
+		const page = {
+			href: "https://app.example.test/home",
+			rules: [{ pattern: /\/chart$/, replace: "/record" }],
+		};
+		const node = {
+			id: 1,
+			type: 2,
+			tagName: "div",
+			attributes: {},
+			childNodes: [
+				{
+					id: 2,
+					type: 2,
+					tagName: "img",
+					attributes: {
+						src: "data:image/png;base64,c2lnbmF0dXJl",
+						srcset: "data:image/png;base64,AAAA 1x, /b.png 2x",
+						style:
+							"background:url('data:image/png;base64,Q0FSRA') ,url(/bg.png?t=1)",
+					},
+				},
+				{
+					id: 3,
+					type: 2,
+					tagName: "a",
+					attributes: {
+						href: "/patients/88812345/chart?mrn=1",
+						ping: "/track?u=1 blob:https://app.example.test/x",
+						cite: "mailto:pat@example.com",
+						formaction: "tel:5551234",
+						background: "/img/123456.png",
+						data: "javascript:alert(1)",
+					},
+				},
+				{
+					id: 4,
+					type: 2,
+					tagName: "use",
+					attributes: {
+						"xlink:href": "#icon-check",
+						href: "#patient-88812345",
+					},
+				},
+			],
+		};
+		scrubEvent({ type: FULL, data: { node } }, page);
+		const [img, link, use] = node.childNodes;
+		expect(img?.attributes).toEqual({
+			src: "",
+			srcset: "",
+			style: 'background:url("") ,url("https://app.example.test/bg.png")',
+		});
+		expect(link?.attributes).toEqual({
+			href: "https://app.example.test/patients/:id/record",
+			ping: "https://app.example.test/track",
+			cite: "",
+			formaction: "",
+			background: "https://app.example.test/img/123456.png",
+			data: "",
+		});
+		expect(use?.attributes).toEqual({ "xlink:href": "#icon-check", href: "" });
+		const srcset = { srcset: "/a.png?x=1 1x, /patients/123456.png 2x" };
+		scrubEvent(
+			{
+				type: INCREMENTAL,
+				data: {
+					source: 0,
+					adds: [],
+					texts: [],
+					removes: [],
+					attributes: [{ id: 2, attributes: srcset }],
+				},
+			},
+			page,
+		);
+		expect(srcset.srcset).toBe(
+			"https://app.example.test/a.png 1x, https://app.example.test/patients/123456.png 2x",
+		);
+	});
+
+	it("drops rule changes to stylesheets adopted by a hidden shadow root", () => {
+		const masked = document.createElement("div");
+		masked.setAttribute("data-worm-mask", "");
+		const nodes = new Map<number, Node>([[2, masked]]);
+		const filter = new BlockFilter({ getNode: (id) => nodes.get(id) ?? null });
+		const event = (data: Record<string, unknown>) => ({
+			type: INCREMENTAL,
+			data,
+		});
+		expect(
+			filter.keep(
+				event({
+					source: 15,
+					id: 2,
+					styleIds: [7],
+					styles: [
+						{ styleId: 7, rules: [{ rule: ".x::after{content:'secret'}" }] },
+					],
+				}),
+			),
+		).toBe(false);
+		expect(
+			filter.keep(event({ source: 8, styleId: 7, adds: [{ rule: ".y{}" }] })),
+		).toBe(false);
+		expect(
+			filter.keep(
+				event({
+					source: 13,
+					styleId: 7,
+					set: { property: "color", value: "red" },
+				}),
+			),
+		).toBe(false);
+		expect(
+			filter.keep(event({ source: 8, styleId: 8, adds: [{ rule: ".z{}" }] })),
+		).toBe(true);
 	});
 });
 

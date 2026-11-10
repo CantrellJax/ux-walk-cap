@@ -6,7 +6,7 @@ import {
 	type recordOptions,
 } from "rrweb";
 import { EDITABLE, MASKED } from "./evidence";
-import { sanitizeUrl } from "./route";
+import { sanitizePath, sanitizeUrl } from "./route";
 import type { RewindConfig, RouteRule } from "./types";
 
 export const RRWEB_VERSION = "2.2.0";
@@ -154,33 +154,88 @@ type SerializedNode = {
 	childNodes?: SerializedNode[];
 };
 
-const URL_ATTRIBUTES = ["href", "src", "action", "poster", "xlink:href"];
+const URL_ATTRIBUTES = [
+	"href",
+	"src",
+	"action",
+	"formaction",
+	"poster",
+	"data",
+	"cite",
+	"background",
+	"xlink:href",
+];
+
+export interface PageAddress {
+	href: string;
+	rules?: RouteRule[];
+}
+
+export function cleanUrl(value: string, page: PageAddress): string {
+	const trimmed = value.trim();
+	if (!trimmed) return "";
+	if (trimmed.startsWith("#"))
+		return /^#[A-Za-z_-]{1,64}$/.test(trimmed) ? trimmed : "";
+	try {
+		const url = new URL(trimmed, page.href);
+		if (url.protocol !== "http:" && url.protocol !== "https:") return "";
+		return `${url.origin}${sanitizePath(url.pathname, page.rules)}`;
+	} catch {
+		return "";
+	}
+}
+
+function cleanSrcset(value: string, page: PageAddress): string {
+	if (/(^|[\s,])(data|blob):/i.test(value)) return "";
+	return value
+		.split(/,\s+/)
+		.map((entry) => {
+			const [url = "", ...descriptor] = entry.trim().split(/\s+/);
+			return [cleanUrl(url, page), ...descriptor].join(" ");
+		})
+		.join(", ");
+}
+
+function cleanStyle(value: string, page: PageAddress): string {
+	return value.replace(
+		/url\(\s*(['"]?)(.*?)\1\s*\)/gi,
+		(_match, _quote, url: string) => `url("${cleanUrl(url, page)}")`,
+	);
+}
 
 function scrubAttributes(
 	tagName: string | undefined,
 	attributes: Record<string, unknown>,
+	page: PageAddress,
 ): void {
 	if (tagName === "input" || tagName === "textarea")
 		delete attributes.placeholder;
 	delete attributes.srcdoc;
 	for (const name of URL_ATTRIBUTES) {
 		const value = attributes[name];
-		if (typeof value === "string")
-			attributes[name] = value.split(/[?#]/, 1)[0] ?? "";
+		if (typeof value === "string") attributes[name] = cleanUrl(value, page);
 	}
+	if (typeof attributes.ping === "string")
+		attributes.ping = attributes.ping
+			.split(/\s+/)
+			.map((url) => cleanUrl(url, page))
+			.filter(Boolean)
+			.join(" ");
 	if (typeof attributes.srcset === "string")
-		attributes.srcset = attributes.srcset.replace(/[?#][^\s,]*/g, "");
+		attributes.srcset = cleanSrcset(attributes.srcset, page);
+	if (typeof attributes.style === "string")
+		attributes.style = cleanStyle(attributes.style, page);
 }
 
-function scrubNode(node: SerializedNode | undefined): void {
+function scrubNode(node: SerializedNode | undefined, page: PageAddress): void {
 	if (!node) return;
-	if (node.attributes) scrubAttributes(node.tagName, node.attributes);
-	for (const child of node.childNodes ?? []) scrubNode(child);
+	if (node.attributes) scrubAttributes(node.tagName, node.attributes, page);
+	for (const child of node.childNodes ?? []) scrubNode(child, page);
 }
 
 export function scrubEvent(
 	event: { type: number; data?: unknown },
-	page: { href: string; rules?: RouteRule[] } = { href: location.href },
+	page: PageAddress = { href: location.href },
 ): void {
 	const data = event.data as
 		| {
@@ -199,14 +254,15 @@ export function scrubEvent(
 		const base = new URL(page.href);
 		data.href = `${base.origin}${sanitizeUrl(data.href, page.href, page.rules).replace(/^(?!\/)/, "/")}`;
 	}
-	if (event.type === EventType.FullSnapshot) scrubNode(data.node);
+	if (event.type === EventType.FullSnapshot) scrubNode(data.node, page);
 	if (
 		event.type === EventType.IncrementalSnapshot &&
 		data.source === IncrementalSource.Mutation
 	) {
-		for (const add of data.adds ?? []) scrubNode(add.node);
+		for (const add of data.adds ?? []) scrubNode(add.node, page);
 		for (const change of data.attributes ?? [])
-			if (change.attributes) scrubAttributes(undefined, change.attributes);
+			if (change.attributes)
+				scrubAttributes(undefined, change.attributes, page);
 	}
 }
 
@@ -222,26 +278,41 @@ function parentOrHost(node: Node): Node | null {
 
 const BLOCKED = `${REWIND_BLOCK},.rr-block`;
 
-export function insideBlocked(
-	node: Node | null,
-	includeSelf: boolean,
-): boolean {
-	let current = node && (includeSelf ? node : parentOrHost(node));
+const slotOf = (node: Node) =>
+	(node as Partial<Pick<Element, "assignedSlot">>).assignedSlot ?? null;
+
+function blockedAt(start: Node | null, depth: number): boolean {
+	let current = start;
 	while (current) {
 		if (current instanceof Element && current.matches(BLOCKED)) return true;
+		const slot = slotOf(current);
+		if (slot && depth < 16 && blockedAt(slot, depth + 1)) return true;
 		current = parentOrHost(current);
 	}
 	return false;
 }
 
+// A node is hidden when it sits in a blocked element, including through a
+// shadow root (rrweb keeps observing shadow roots attached to a blocked host)
+// or through a slot (light DOM projected into a masked part of a shadow tree
+// renders there but is serialized as the host's child).
+export function insideBlocked(
+	node: Node | null,
+	includeSelf: boolean,
+): boolean {
+	if (!node) return false;
+	if (includeSelf) return blockedAt(node, 0);
+	const slot = slotOf(node);
+	if (slot && blockedAt(slot, 1)) return true;
+	return blockedAt(parentOrHost(node), 0);
+}
+
 const isBlockedPlaceholder = (node: SerializedNode | undefined) =>
 	!!node?.attributes && "rr_width" in node.attributes;
 
-// rrweb blocks a masked element but still observes a shadow root attached to
-// it later and records that shadow content under the host's id, so anything
-// added below a blocked node is dropped here by id and by live ancestry.
 export class BlockFilter {
 	private blocked = new Set<number>();
+	private styles = new Set<number>();
 
 	constructor(private readonly mirror: MirrorLike) {}
 
@@ -255,12 +326,27 @@ export class BlockFilter {
 		return false;
 	}
 
-	private collect(node: SerializedNode): void {
+	private hide(node: SerializedNode): void {
+		if (typeof node.id === "number") this.blocked.add(node.id);
+		for (const child of node.childNodes ?? []) this.hide(child);
+	}
+
+	private collect(node: SerializedNode & { isShadowHost?: boolean }): void {
 		if (isBlockedPlaceholder(node)) {
 			if (typeof node.id === "number") this.blocked.add(node.id);
+			for (const child of node.childNodes ?? []) this.hide(child);
 			node.childNodes = [];
 			return;
 		}
+		if (node.childNodes && node.isShadowHost)
+			node.childNodes = node.childNodes.filter((child) => {
+				const slotted =
+					!(child as { isShadow?: boolean }).isShadow &&
+					typeof child.id === "number" &&
+					insideBlocked(this.mirror.getNode(child.id), false);
+				if (slotted) this.hide(child);
+				return !slotted;
+			});
 		for (const child of node.childNodes ?? []) this.collect(child);
 	}
 
@@ -269,6 +355,7 @@ export class BlockFilter {
 		if (!data) return true;
 		if (event.type === EventType.FullSnapshot) {
 			this.blocked.clear();
+			this.styles.clear();
 			if (data.node) this.collect(data.node as SerializedNode);
 			return true;
 		}
@@ -277,27 +364,26 @@ export class BlockFilter {
 		if (source === IncrementalSource.Mutation) {
 			type Add = { parentId?: number; node?: SerializedNode };
 			type Change = { id?: number };
-			const adds = (data.adds as Add[] | undefined) ?? [];
 			const kept: Add[] = [];
-			for (const add of adds) {
-				const id = add.node?.id;
+			for (const add of (data.adds as Add[] | undefined) ?? []) {
 				if (
 					(typeof add.parentId === "number" &&
 						this.blocked.has(add.parentId)) ||
-					this.hidden(id, false)
+					this.hidden(add.node?.id, false)
 				) {
-					if (typeof id === "number") this.blocked.add(id);
+					if (add.node) this.hide(add.node);
 					continue;
 				}
 				if (add.node) this.collect(add.node);
 				kept.push(add);
 			}
-			const visible = (change: Change) => !this.hidden(change.id, false);
 			data.adds = kept.filter(
 				(add) =>
 					typeof add.parentId !== "number" || !this.blocked.has(add.parentId),
 			);
-			data.texts = ((data.texts as Change[] | undefined) ?? []).filter(visible);
+			data.texts = ((data.texts as Change[] | undefined) ?? []).filter(
+				(change) => !this.hidden(change.id, false),
+			);
 			data.attributes = (
 				(data.attributes as Change[] | undefined) ?? []
 			).filter((change) => !this.hidden(change.id, true));
@@ -312,6 +398,19 @@ export class BlockFilter {
 					this.hidden(range.start, true) || this.hidden(range.end, true),
 			);
 		}
+		if (source === IncrementalSource.AdoptedStyleSheet) {
+			if (!this.hidden(data.id, true)) return true;
+			for (const id of (data.styleIds as number[] | undefined) ?? [])
+				this.styles.add(id);
+			return false;
+		}
+		if (
+			(source === IncrementalSource.StyleSheetRule ||
+				source === IncrementalSource.StyleDeclaration) &&
+			typeof data.styleId === "number" &&
+			this.styles.has(data.styleId)
+		)
+			return false;
 		if (
 			source === IncrementalSource.MouseInteraction ||
 			source === IncrementalSource.MouseMove ||

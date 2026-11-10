@@ -29,6 +29,14 @@ interface Worker {
 
 let worker: Worker;
 
+const PHI_FIELD = `customElements.define("phi-field", class extends HTMLElement {
+	constructor() {
+		super();
+		this.attachShadow({ mode: "open" }).innerHTML =
+			'<b>Field</b> <span data-worm-mask><slot></slot><slot name="dob"></slot></span>';
+	}
+});`;
+
 test.beforeAll(async () => {
 	const require = createRequire(new URL("package.json", cloud));
 	const { Miniflare, convertV4MiniflareOptions } = (await import(
@@ -76,7 +84,7 @@ async function serve(page: Page) {
 						.toString("utf8")
 						.replace(
 							"</main>",
-							'<late-panel data-worm-mask></late-panel><div id="masked-host" data-worm-mask></div></main>',
+							`<late-panel data-worm-mask></late-panel><div id="masked-host" data-worm-mask></div><phi-field id="early-phi">Early slot secret 1111</phi-field><script>${PHI_FIELD}</script></main>`,
 						)
 				: file,
 			contentType: type,
@@ -169,8 +177,19 @@ test("a tester's last minutes are recorded masked, sent on Send and replayed onl
 			host.attachShadow({ mode: "open" }).innerHTML =
 				"<b>Attached shadow secret 9090</b>";
 	});
+	await page.evaluate(() => {
+		const added = document.createElement("phi-field");
+		added.textContent = "Added slot secret 2222";
+		document.querySelector("main")?.append(added);
+		const dob = document.createElement("span");
+		dob.slot = "dob";
+		dob.textContent = "Named slot secret 3333";
+		document.getElementById("early-phi")?.append(dob);
+	});
 	await page.waitForTimeout(300);
 	await page.evaluate(() => {
+		const early = document.getElementById("early-phi")?.firstChild;
+		if (early instanceof Text) early.data = "Changed slot secret 4444";
 		const host = document.getElementById("masked-host")?.shadowRoot;
 		const bold = host?.querySelector("b");
 		if (bold) bold.textContent = "Changed shadow secret 6060";
@@ -221,6 +240,10 @@ test("a tester's last minutes are recorded masked, sent on Send and replayed onl
 		"Defined later secret 8080",
 		"Attached shadow secret 9090",
 		"Changed shadow secret 6060",
+		"Early slot secret 1111",
+		"Added slot secret 2222",
+		"Named slot secret 3333",
+		"Changed slot secret 4444",
 		"query-secret-5150",
 		"hash-secret",
 	])

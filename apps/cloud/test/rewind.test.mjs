@@ -243,6 +243,14 @@ test("the replay page holds no report data, sets no cookie and is never public d
 	assert.match(csp, /connect-src 'self';/);
 	assert.match(csp, /frame-ancestors 'none'/);
 	assert.doesNotMatch(csp, /https:|\*/);
+	assert.doesNotMatch(csp, /img-src[^;]*data:/);
+	const css = await (await get("/vendor/rrweb-player.css", {})).text();
+	assert.doesNotMatch(css, /url\((['"]?)data:/);
+	for (const [, path] of css.matchAll(/url\(([^)]+)\)/g)) {
+		const image = await get(path, {});
+		assert.equal(image.status, 200, path);
+		assert.equal(image.headers.get("Content-Type"), "image/svg+xml");
+	}
 	const html = await page.text();
 	assert.match(html, /Owner credential/);
 	assert.match(html, /src="\/vendor\/rrweb-player\.js"/);

@@ -31,7 +31,7 @@ const CSP =
 // page's inlined CSS and style attributes, which need inline styles; scripts
 // stay self-only and recorded images from other origins are not fetched.
 const REWIND_CSP =
-	"default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' blob:; connect-src 'self'; frame-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
+	"default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob:; font-src 'self' data:; media-src 'self' blob:; connect-src 'self'; frame-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
 
 const rewindPage = (pathname: string) =>
 	pathname.startsWith("/rewind/") &&
