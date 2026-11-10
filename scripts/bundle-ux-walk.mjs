@@ -253,6 +253,7 @@ export async function bundleUxWalk(app) {
 		"checkpoint-jobs.mjs",
 		"checkpoint-worker.mjs",
 		"checkpoint-transcript.mjs",
+		"checkpoint-voices.mjs",
 		"fragmented-audio.mjs",
 		"recovery-transport.mjs",
 		"restore-checkpoint.mjs",

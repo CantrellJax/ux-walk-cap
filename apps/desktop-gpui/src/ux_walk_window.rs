@@ -2,6 +2,8 @@
 mod filing;
 #[path = "ux_walk_window/items.rs"]
 mod items;
+#[path = "ux_walk_window/voices.rs"]
+mod voices;
 
 use crate::{
     session::{Phase, RecordingSession},
@@ -216,6 +218,7 @@ struct WalkWindow {
     error: Option<String>,
     items: items::ItemsState,
     filing: filing::FilingState,
+    voices: voices::VoicesState,
 }
 
 impl WalkWindow {
@@ -284,6 +287,7 @@ impl WalkWindow {
         })
         .detach();
         let items = items::ItemsState::new(window, cx);
+        Self::start_voices_poll(window, cx);
         Self {
             theme: Theme::for_window(window, cx, false),
             session,
@@ -305,6 +309,7 @@ impl WalkWindow {
             error: None,
             items,
             filing: Default::default(),
+            voices: Default::default(),
         }
     }
 
@@ -940,6 +945,7 @@ impl Render for WalkWindow {
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
+                    .children(self.render_voices(cx))
                     .children(items_file.clone().and_then(|file| self.render_glossary(file, cx)))
                     .children(events.into_iter().map(|event| {
                         div()

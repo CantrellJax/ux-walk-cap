@@ -216,6 +216,7 @@ export async function processChapter(dir, cfg, { force = [], speakers, glossary,
   })();
   // Name hints for the transcriber: the glossaries' right spellings and the names on screen.
   const list = (v) => (Array.isArray(v) ? v : String(v || '').split(',')).map((s) => s.trim()).filter(Boolean);
+  const isVoiceMap = (v) => v && typeof v === 'object' && !Array.isArray(v);
   const files = glossary != null ? resolveGlossaries(glossary) : ch.glossaries || resolveGlossaries(cfg.glossary);
   const names = screenNames(chapterSnapshots(ch, endMs));
   const transcript = (async () => {
@@ -264,7 +265,7 @@ export async function processChapter(dir, cfg, { force = [], speakers, glossary,
   // 3. Timelines.
   const srtFile = path.join(dir, 'transcript.srt');
   // Speakers: names given now, else the confirmed map, else the names given when recording.
-  let who = speakers ? list(speakers) : ch.speakerMap || list(ch.speakers ?? cfg.speakers);
+  let who = speakers ? (isVoiceMap(speakers) ? speakers : list(speakers)) : ch.speakerMap || list(ch.speakers ?? cfg.speakers);
   // Transcribed per track: the mic's first voice is you, whatever the order of first speech.
   const split = fs.existsSync(srtFile) ? readSplit(dir) : null;
   if (split?.split && Array.isArray(who) && !speakers) who = splitNames(fs.readFileSync(srtFile, 'utf8'), who, split, ch.sources);

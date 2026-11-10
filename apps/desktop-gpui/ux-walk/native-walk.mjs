@@ -11,6 +11,13 @@ import {
 	reuseCheckpointTranscript,
 	sealedUnsupportedFallback,
 } from "./checkpoint-transcript.mjs";
+import {
+	markVoiceNamesApplied,
+	readVoiceCard,
+	saveVoiceNames,
+	voiceNamesHash,
+	voiceSpeakerMap,
+} from "./checkpoint-voices.mjs";
 import { clipNativeAudio, prepareNativeAudio } from "./native-audio.mjs";
 import { RecoveryTransport } from "./recovery-transport.mjs";
 import { restoreRecovery } from "./restore-checkpoint.mjs";
@@ -276,6 +283,126 @@ function browserFindings(browser) {
 		}));
 }
 
+function voiceDependencies(dependencies) {
+	return {
+		...(dependencies.matchVoices
+			? { matchVoices: dependencies.matchVoices }
+			: {}),
+		...(dependencies.writeVoiceCard
+			? { writeVoiceCard: dependencies.writeVoiceCard }
+			: {}),
+	};
+}
+
+function namedVoices(directory) {
+	const map = voiceSpeakerMap(directory);
+	return Object.keys(map).length ? map : null;
+}
+
+function withVoiceNames(directory, speakers = []) {
+	return [
+		...new Set([
+			...(speakers ?? []),
+			...Object.values(voiceSpeakerMap(directory)),
+		]),
+	];
+}
+
+function voiceLegend(directory) {
+	const card = readVoiceCard(directory);
+	const map = voiceSpeakerMap(directory);
+	const named = (card?.voices ?? []).filter((voice) => map[voice.label]);
+	return named.length
+		? `Voices: ${named.map((voice) => `${escapeHTML(voice.label)} is ${escapeHTML(map[voice.label])}`).join(" · ")}`
+		: "";
+}
+
+async function relabelChapters(
+	directory,
+	cfg,
+	session,
+	processChapter,
+	speakers,
+) {
+	for (const chapter of session.chapters) {
+		const chapterDir = path.join(directory, chapter.dir);
+		if (!fs.existsSync(path.join(chapterDir, "transcript.srt"))) continue;
+		try {
+			if (
+				JSON.parse(
+					fs.readFileSync(path.join(chapterDir, "chapter.json"), "utf8"),
+				).speakerMap
+			)
+				continue;
+		} catch {
+			continue;
+		}
+		await processChapter(
+			chapterDir,
+			{ ...cfg, transcriber: "none", sections: "cached" },
+			{ brief: false, speakers, quiet: true, log: () => {} },
+		);
+	}
+}
+
+export async function nameWalkVoices(
+	file,
+	names,
+	loaded,
+	{ skipped = false, ...dependencies } = {},
+) {
+	const journal = readJournal(file);
+	const directory = journal.request.directory;
+	saveVoiceNames(directory, names, { skipped });
+	let lease;
+	try {
+		lease = await acquireWalkLock(directory, "processing", { waitMs: 0 });
+	} catch {
+		return { applied: false, pending: true };
+	}
+	try {
+		let state = null;
+		try {
+			state = JSON.parse(
+				fs.readFileSync(path.join(directory, "processing.json"), "utf8"),
+			).state;
+		} catch {}
+		const sessionFile = path.join(directory, "session.json");
+		if (state !== "ready" || !fs.existsSync(sessionFile))
+			return { applied: false, pending: true };
+		const { cfg } = withRecordingProject(journal, loaded);
+		const session = JSON.parse(fs.readFileSync(sessionFile, "utf8"));
+		const processing = await import(new URL("process.mjs", engine));
+		const applied = voiceNamesHash(directory);
+		await relabelChapters(
+			directory,
+			cfg,
+			session,
+			dependencies.processChapter ?? processing.processChapter,
+			namedVoices(directory) ?? [],
+		);
+		session.speakers = withVoiceNames(directory, journal.request.speakers);
+		save(sessionFile, session);
+		(dependencies.writeIndex ?? processing.writeIndex)(directory);
+		const report = path.join(directory, "report.html");
+		if (fs.existsSync(report))
+			fs.writeFileSync(
+				report,
+				fs
+					.readFileSync(report, "utf8")
+					.replace(
+						/<p class="meta" id="voices">[\s\S]*?<\/p>/,
+						`<p class="meta" id="voices">${voiceLegend(directory)}</p>`,
+					),
+				{ mode: 0o600 },
+			);
+		markVoiceNamesApplied(directory, applied);
+		return { applied: true, pending: !!readVoiceCard(directory)?.pending };
+	} finally {
+		await lease.release();
+	}
+}
+
 function writeNativeReport(directory, session, journal, browser) {
 	const modeName = isDiatribe(journal) ? notesName(journal) : walkModeName;
 	const report = path.join(directory, "report.html");
@@ -348,7 +475,7 @@ function writeNativeReport(directory, session, journal, browser) {
 		.join("");
 	fs.writeFileSync(
 		report,
-		`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${escapeHTML(session.topic)} · ${escapeHTML(modeName)}</title><style>body{font:16px system-ui;color:#20242c;background:#fafaf9;max-width:960px;margin:48px auto;padding:0 24px;line-height:1.6}h1{font-size:32px;line-height:1.2}h2{margin-top:40px}video{width:100%;border-radius:12px;background:#15171c}a{color:#2467d5}time{color:#666;font-variant-numeric:tabular-nums;margin-right:12px}li{margin:12px 0;overflow-wrap:anywhere}.meta{color:#666;font-size:14px}</style><p class="meta">${escapeHTML(modeName)}</p><h1>${escapeHTML(session.topic)}</h1><p class="meta">${escapeHTML(session.startedAt)}${session.url ? ` · ${escapeHTML(session.url)}` : ""}</p><h2>Notes</h2>${notes ? `<ul>${notes}</ul>` : "<p>No notes added.</p>"}${chapters}${browserDetails ? `<h2>Browser evidence</h2><ul>${browserDetails}</ul><p>${browserLinks}</p>` : ""}${findings ? `<h3>Console and failed requests</h3><ul>${findings}</ul><p class="meta">Up to 200 observations shown. The timeline and action log retain the full captured evidence.</p>` : ""}<h2>Capture details</h2><p class="meta">Recorded locally. Notes, chapters and browser events use the recorder’s elapsed time, excluding pauses; first-frame alignment is approximate.</p><p><a href="media/video.mp4">Full recording</a> · <a href="native-walk.json">Saved journal</a> · <a href="session.json">Session</a></p></html>`,
+		`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${escapeHTML(session.topic)} · ${escapeHTML(modeName)}</title><style>body{font:16px system-ui;color:#20242c;background:#fafaf9;max-width:960px;margin:48px auto;padding:0 24px;line-height:1.6}h1{font-size:32px;line-height:1.2}h2{margin-top:40px}video{width:100%;border-radius:12px;background:#15171c}a{color:#2467d5}time{color:#666;font-variant-numeric:tabular-nums;margin-right:12px}li{margin:12px 0;overflow-wrap:anywhere}.meta{color:#666;font-size:14px}</style><p class="meta">${escapeHTML(modeName)}</p><h1>${escapeHTML(session.topic)}</h1><p class="meta">${escapeHTML(session.startedAt)}${session.url ? ` · ${escapeHTML(session.url)}` : ""}</p><p class="meta" id="voices">${voiceLegend(directory)}</p><h2>Notes</h2>${notes ? `<ul>${notes}</ul>` : "<p>No notes added.</p>"}${chapters}${browserDetails ? `<h2>Browser evidence</h2><ul>${browserDetails}</ul><p>${browserLinks}</p>` : ""}${findings ? `<h3>Console and failed requests</h3><ul>${findings}</ul><p class="meta">Up to 200 observations shown. The timeline and action log retain the full captured evidence.</p>` : ""}<h2>Capture details</h2><p class="meta">Recorded locally. Notes, chapters and browser events use the recorder’s elapsed time, excluding pauses; first-frame alignment is approximate.</p><p><a href="media/video.mp4">Full recording</a> · <a href="native-walk.json">Saved journal</a> · <a href="session.json">Session</a></p></html>`,
 		{ mode: 0o600 },
 	);
 }
@@ -672,6 +799,7 @@ export async function finishNativeWalk(file, loaded, dependencies = {}) {
 					journal.startedAtMs,
 					cfg,
 					journal.request.speakers,
+					voiceDependencies(dependencies),
 				);
 				if (cached.handled) {
 					liveCacheHandled = true;
@@ -810,10 +938,12 @@ export async function finishNativeWalk(file, loaded, dependencies = {}) {
 				journal.startedAtMs,
 				cfg,
 				journal.request.speakers,
+				voiceDependencies(dependencies),
 			);
 			for (const [name, summary] of cached.results)
 				earlyResults.set(name, summary);
 		}
+		const namesUsed = voiceNamesHash(directory);
 		for (const row of rows) {
 			const chapterDir = path.join(directory, row.dir);
 			const startS = (row.startMs - journal.startedAtMs) / 1000;
@@ -851,7 +981,7 @@ export async function finishNativeWalk(file, loaded, dependencies = {}) {
 						!JSON.parse(
 							fs.readFileSync(path.join(chapterDir, "chapter.json"), "utf8"),
 						).speakerMap
-							? { speakers: early?.speakers ?? [] }
+							? { speakers: namedVoices(directory) ?? early?.speakers ?? [] }
 							: {}),
 						log: () => {},
 					},
@@ -878,6 +1008,20 @@ export async function finishNativeWalk(file, loaded, dependencies = {}) {
 			}
 			save(path.join(directory, "session.json"), session);
 		}
+		if (liveCacheHandled) {
+			const current = voiceNamesHash(directory);
+			if (current !== namesUsed)
+				await relabelChapters(
+					directory,
+					cfg,
+					session,
+					processChapter,
+					namedVoices(directory) ?? [],
+				);
+			markVoiceNamesApplied(directory, current);
+		}
+		session.speakers = withVoiceNames(directory, journal.request.speakers);
+		save(path.join(directory, "session.json"), session);
 		(dependencies.writeIndex ?? processing.writeIndex)(directory);
 		(dependencies.writeReport ?? writeReport)(directory);
 		writeNativeReport(directory, session, journal, browser);
@@ -1425,6 +1569,15 @@ if (isMainModule()) {
 			console.log(nativeWalkPrompt(file));
 		} else if (command === "items") {
 			console.log(JSON.stringify(await walkItems(file)));
+		} else if (command === "name-voices") {
+			const request = JSON.parse(fs.readFileSync(file, "utf8"));
+			console.log(
+				JSON.stringify(
+					await nameWalkVoices(request.journal, request.names, loadConfig(), {
+						skipped: request.skipped === true,
+					}),
+				),
+			);
 		} else if (command === "save-items") {
 			const request = JSON.parse(fs.readFileSync(file, "utf8"));
 			console.log(

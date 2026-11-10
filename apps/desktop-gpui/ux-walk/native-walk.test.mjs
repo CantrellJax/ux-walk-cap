@@ -5,9 +5,11 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { matchVoices, writeVoiceCard } from "./checkpoint-voices.mjs";
 import {
 	exportInstant,
 	finishNativeWalk,
+	nameWalkVoices,
 	nativeWalkPrompt,
 	snapshotNativeWalk,
 } from "./native-walk.mjs";
@@ -844,6 +846,14 @@ test("a walk whose voices cannot be matched across chunks carries the notice int
 				assert.deepEqual(options.speakers, []);
 				return { transcript: true };
 			},
+			matchVoices: (root, cfg) =>
+				matchVoices(root, cfg, {
+					transcribe: async () => {
+						throw new Error("ElevenLabs 500");
+					},
+					media: async (_command, args) => fs.writeFileSync(args.at(-1), ""),
+				}),
+			writeVoiceCard: async () => {},
 			writeIndex: () => {},
 			writeReport: () => {},
 		},
@@ -852,6 +862,168 @@ test("a walk whose voices cannot be matched across chunks carries the notice int
 		fs.readFileSync(path.join(f.directory, "session.json")),
 	).chapters[0];
 	assert.match(chapter.speakerAttributionNotice, /can be the same person/);
+});
+
+test("voices matched across chunks are named once and the names reach every chapter, the session and the report", async (t) => {
+	const f = fixture(t);
+	f.journal.events = [{ kind: "chapter", text: "Second half", offsetMs: 5000 }];
+	f.journal.request.speakers = ["Ann"];
+	f.save();
+	const { durableJson, sha256 } = await import("./checkpoint-store.mjs");
+	const root = path.join(f.directory, "checkpoints");
+	fs.mkdirSync(path.join(root, "jobs"), { recursive: true });
+	durableJson(path.join(root, "final-layout.json"), {
+		displaySpans: [10],
+		meta: {
+			segments: [{ display: { start_time: 0 }, mic: { start_time: 0 } }],
+		},
+		config: {},
+	});
+	const tags = {};
+	for (const [fill, startMs, first, second] of [
+		["c", 0, "ann", "bo"],
+		["d", 5000, "bo", "ann"],
+	]) {
+		const id = fill.repeat(64);
+		const tag = `segment-0:microphone:${id.slice(0, 12)}`;
+		tags[fill] = tag;
+		const resultFile = path.join(root, `jobs/${id}.words.json`);
+		const at = startMs / 1000;
+		durableJson(resultFile, {
+			source: "segment-0:microphone",
+			words: [
+				...[0, 1, 2, 3].map((index) => ({
+					start: at + index * 0.4,
+					end: at + index * 0.4 + 0.3,
+					text: `${first}${index}`,
+					speaker: `${tag}:speaker_0`,
+				})),
+				...[0, 1, 2, 3].map((index) => ({
+					start: at + 2.5 + index * 0.4,
+					end: at + 2.5 + index * 0.4 + 0.3,
+					text: `${second}${index}`,
+					speaker: `${tag}:speaker_1`,
+				})),
+			],
+		});
+		durableJson(path.join(root, `jobs/${id}.json`), {
+			jobId: id,
+			source: "segment-0:microphone",
+			sourceStartMs: startMs,
+			sourceEndMs: startMs + 5000,
+			contextStartMs: Math.max(0, startMs - 2000),
+			state: "complete",
+			resultHash: sha256(fs.readFileSync(resultFile)),
+		});
+		fs.writeFileSync(path.join(root, `jobs/${id}.wav`), "");
+	}
+	const media = async (_command, args) => fs.writeFileSync(args.at(-1), "");
+	let lineups = 0;
+	const transcribe = async () => {
+		lineups += 1;
+		const people = ["A", "B", "B", "A"];
+		return people.flatMap((person, slot) =>
+			[0, 1, 2].map((index) => ({
+				start: slot * 3 + index * 0.35,
+				end: slot * 3 + index * 0.35 + 0.3,
+				text: "x",
+				speaker: person,
+			})),
+		);
+	};
+	const seen = [];
+	let naming = true;
+	const deps = {
+		client: {
+			export: async (_project, output) => {
+				fs.writeFileSync(output, "export");
+				return { durationS: 10 };
+			},
+		},
+		prepareAudio: async () => {
+			throw new Error("Must reuse saved jobs");
+		},
+		clip: async (_video, output) => fs.writeFileSync(output, "clip"),
+		processChapter: async (directory, _cfg, options) => {
+			seen.push([path.basename(directory), options.speakers]);
+			if (naming) {
+				naming = false;
+				const card = JSON.parse(
+					fs.readFileSync(path.join(f.directory, "voices.json"), "utf8"),
+				);
+				assert.equal(card.matched, true);
+				assert.equal(card.asked, false);
+				assert.deepEqual(
+					card.voices.map((voice) => voice.label),
+					["Speaker 1", "Speaker 2"],
+				);
+				assert.match(card.voices[0].quote, /ann/);
+				assert.equal(card.voices[0].clip, "voices/voice-1.wav");
+				assert.ok(card.suggestions.includes("Ann"));
+				const pending = await nameWalkVoices(
+					f.file,
+					{ "voice-1": "Ann", "voice-2": " Bo " },
+					{ transcriber: "elevenlabs" },
+				);
+				assert.deepEqual(pending, { applied: false, pending: true });
+			}
+			return { transcript: true };
+		},
+		matchVoices: (root, cfg) => matchVoices(root, cfg, { transcribe, media }),
+		writeVoiceCard: (directory, voices, options) =>
+			writeVoiceCard(directory, voices, { ...options, media }),
+		writeIndex: () => {},
+		writeReport: () => {},
+	};
+	await finishNativeWalk(f.file, { transcriber: "elevenlabs" }, deps);
+	assert.equal(lineups, 1);
+	const names = { "Speaker 1": "Ann", "Speaker 2": "Bo" };
+	assert.deepEqual(seen.at(-1)[1], names);
+	assert.ok(seen.length >= 3);
+	for (const dir of ["01-walkthrough", "02-second-half"]) {
+		const srt = fs.readFileSync(
+			path.join(f.directory, dir, "transcript.srt"),
+			"utf8",
+		);
+		assert.match(srt, /Speaker 1: ann0/);
+		assert.match(srt, /Speaker 2: bo0/);
+	}
+	const session = JSON.parse(
+		fs.readFileSync(path.join(f.directory, "session.json"), "utf8"),
+	);
+	assert.deepEqual(session.speakers, ["Ann", "Bo"]);
+	assert.equal(session.chapters[0].speakerAttributionNotice, undefined);
+	assert.match(
+		fs.readFileSync(path.join(f.directory, "report.html"), "utf8"),
+		/Speaker 2 is Bo/,
+	);
+	const card = JSON.parse(
+		fs.readFileSync(path.join(f.directory, "voices.json"), "utf8"),
+	);
+	assert.equal(card.asked, true);
+	assert.equal(card.pending, false);
+	assert.equal(card.voices[1].name, "Bo");
+
+	seen.length = 0;
+	const renamed = await nameWalkVoices(
+		f.file,
+		{ "voice-1": "Ann", "voice-2": "Clay" },
+		{ transcriber: "elevenlabs" },
+		{ processChapter: deps.processChapter, writeIndex: () => {} },
+	);
+	assert.deepEqual(renamed, { applied: true, pending: false });
+	assert.deepEqual(seen.at(-1)[1], { "Speaker 1": "Ann", "Speaker 2": "Clay" });
+	assert.match(
+		fs.readFileSync(path.join(f.directory, "report.html"), "utf8"),
+		/Speaker 2 is Clay/,
+	);
+	assert.deepEqual(
+		JSON.parse(fs.readFileSync(path.join(f.directory, "session.json"), "utf8"))
+			.speakers,
+		["Ann", "Clay"],
+	);
+	await finishNativeWalk(f.file, { transcriber: "elevenlabs" }, deps);
+	assert.equal(lineups, 1);
 });
 
 test("explicit full transcription is available after unsupported live capture and ordinary reprocess reuses it", async (t) => {
