@@ -136,6 +136,7 @@ pub(super) struct VoicesState {
     error: Option<String>,
     last_blurred: Option<usize>,
     was_ready: Option<bool>,
+    auto_applied: bool,
     revision: u64,
 }
 
@@ -206,7 +207,11 @@ impl WalkWindow {
         }
         let became_ready = ready && self.voices.was_ready != Some(true);
         self.voices.was_ready = Some(ready);
-        if became_ready && let Some(names) = file.as_ref().and_then(pending_names) {
+        if became_ready
+            && !self.voices.auto_applied
+            && let Some(names) = file.as_ref().and_then(pending_names)
+        {
+            self.voices.auto_applied = true;
             self.send_voice_names(names, false, window, cx);
         }
         if self.voices.file == file {
@@ -416,7 +421,7 @@ impl WalkWindow {
                 )
                 .when(file.pending, |this| {
                     this.child(muted(
-                        "The names apply to the transcript and notes when processing finishes."
+                        "The names apply to the transcript and timelines when processing finishes."
                             .into(),
                     ))
                 })
@@ -486,7 +491,7 @@ impl WalkWindow {
                     .child("Who's talking?"),
             )
             .child(muted(
-                "Name each voice so the transcript and notes say who said what. Skip keeps Speaker 1, Speaker 2."
+                "Name each voice so the transcript and timelines say who said what. Skip keeps Speaker 1, Speaker 2."
                     .into(),
             ))
             .when(!file.matched, |this| {

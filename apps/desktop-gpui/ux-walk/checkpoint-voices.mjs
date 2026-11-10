@@ -13,19 +13,21 @@ const engine = fs.existsSync(local)
 const GAP_S = 1.5;
 const MIN_SAMPLE_S = 1.2;
 const MAX_SAMPLE_S = 8;
-const MAX_LINEUP_S = 240;
+const LINEUP_SAMPLE_S = 5;
+const MAX_LINEUP_S = 600;
 const MIN_VOTE_SHARE = 0.6;
 
 const voicesFile = (root) => path.join(root, "voices.json");
 const lineupFile = (root) => path.join(root, "voices-lineup.wav");
 
-function completeJobs(root) {
+function completeJobs(root, sources = null) {
 	const jobsRoot = path.join(root, "jobs");
 	if (!fs.existsSync(jobsRoot)) return null;
 	const jobs = fs
 		.readdirSync(jobsRoot)
 		.filter((name) => /^[a-f0-9]{64}\.json$/.test(name))
-		.map((name) => readJson(path.join(jobsRoot, name)));
+		.map((name) => readJson(path.join(jobsRoot, name)))
+		.filter((job) => !sources || sources.has(job.source));
 	if (!jobs.length || jobs.some((job) => job.state !== "complete")) return null;
 	const loaded = [];
 	for (const job of jobs) {
@@ -109,10 +111,15 @@ function pickSamples(labels) {
 				.filter((item) => item.end - item.start >= MIN_SAMPLE_S)
 				.sort((a, b) => b.end - b.start - (a.end - a.start))[pass];
 			if (!run) continue;
-			const duration = run.end - run.start;
+			const duration = Math.min(LINEUP_SAMPLE_S, run.end - run.start);
 			if (budget < duration + GAP_S) continue;
 			budget -= duration + GAP_S;
-			samples.push({ label: label.label, jobId: label.jobId, ...run });
+			samples.push({
+				label: label.label,
+				jobId: label.jobId,
+				...run,
+				end: run.start + duration,
+			});
 		}
 	return samples;
 }
@@ -221,6 +228,7 @@ export function groupVoices(labels, spans, words) {
 	for (const label of [...labels].sort(
 		(a, b) => a.firstAt[0] - b.firstAt[0] || a.firstAt[1] - b.firstAt[1],
 	)) {
+		label.matched = assigned.has(label.label);
 		const key = assigned.has(label.label)
 			? `lineup:${assigned.get(label.label).lineup}`
 			: `label:${label.label}`;
@@ -237,6 +245,7 @@ export function groupVoices(labels, spans, words) {
 			labels: members.map((label) => label.label),
 			words: count,
 			stray: count / total < 0.02,
+			matched: members.every((label) => label.matched),
 			sources: [...new Set(members.map((label) => label.source))],
 			sample: sampleClip(best),
 		};
@@ -254,6 +263,9 @@ export function readVoices(root) {
 	}
 }
 
+const allMatched = (voices) =>
+	voices.every((voice) => voice.stray || voice.matched);
+
 export function currentVoices(root) {
 	const voices = readVoices(root);
 	const loaded = voices && completeJobs(root);
@@ -263,13 +275,17 @@ export function currentVoices(root) {
 export async function matchVoices(
 	root,
 	cfg,
-	{ transcribe, media = execute, signal } = {},
+	{ transcribe, media = execute, signal, sources = null } = {},
 ) {
-	const loaded = completeJobs(root);
+	const loaded = completeJobs(root, sources);
 	if (!loaded) return null;
 	const inputHash = voiceInputHash(loaded);
 	const saved = readVoices(root);
-	if (saved?.inputHash === inputHash && saved.state !== "submitted")
+	if (
+		saved?.inputHash === inputHash &&
+		saved.state !== "submitted" &&
+		!saved.notSent
+	)
 		return saved;
 	const labels = labelsOf(loaded);
 	const contextStart = new Map(
@@ -288,6 +304,7 @@ export async function matchVoices(
 		const result = {
 			...base,
 			state: "complete",
+			matched: true,
 			method: "single-request",
 			voices: groupVoices(labels, [], []),
 			completedAt: Date.now(),
@@ -299,6 +316,7 @@ export async function matchVoices(
 		const result = {
 			...base,
 			state: "unmatched",
+			matched: false,
 			method: "none",
 			error:
 				"The voice-matching request may have been sent before Worm stopped; it is not sent again automatically.",
@@ -310,7 +328,9 @@ export async function matchVoices(
 	}
 	const samples = pickSamples(labels);
 	let result;
+	let submitted = false;
 	try {
+		if (!samples.length) throw new Error("No voice was long enough to sample");
 		const { output, spans } = await buildLineup(
 			root,
 			samples,
@@ -320,8 +340,10 @@ export async function matchVoices(
 		durableJson(voicesFile(root), {
 			...base,
 			state: "submitted",
+			voices: [],
 			submittedAt: Date.now(),
 		});
+		submitted = true;
 		const words = await (
 			transcribe ??
 			(await import(new URL("transcribe.mjs", engine))).transcribeWords
@@ -331,18 +353,22 @@ export async function matchVoices(
 		});
 		if (!Array.isArray(words))
 			throw new Error("Provider returned invalid normalized words");
+		const voices = groupVoices(labels, spans, words);
 		result = {
 			...base,
 			state: "complete",
+			matched: allMatched(voices),
 			method: "lineup",
 			samples: spans.length,
-			voices: groupVoices(labels, spans, words),
+			voices,
 			completedAt: Date.now(),
 		};
 	} catch (error) {
 		result = {
 			...base,
 			state: "unmatched",
+			matched: false,
+			...(submitted ? {} : { notSent: true }),
 			method: "none",
 			error: String(error.message).slice(0, 500),
 			voices: groupVoices(labels, [], []),
@@ -520,7 +546,7 @@ export async function writeVoiceCard(
 	const card = {
 		schemaVersion: 1,
 		inputHash: voices.inputHash,
-		matched: voices.state === "complete",
+		matched: voices.matched === true,
 		asked: !!saved,
 		pending: !!saved && saved.appliedHash !== namesHash(saved.names),
 		voices: shown,

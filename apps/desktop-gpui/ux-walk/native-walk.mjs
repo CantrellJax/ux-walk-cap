@@ -294,6 +294,11 @@ function voiceDependencies(dependencies) {
 	};
 }
 
+function dropVoiceCard(directory) {
+	fs.rmSync(path.join(directory, "voices.json"), { force: true });
+	fs.rmSync(path.join(directory, "voices"), { recursive: true, force: true });
+}
+
 function namedVoices(directory) {
 	const map = voiceSpeakerMap(directory);
 	return Object.keys(map).length ? map : null;
@@ -337,11 +342,20 @@ async function relabelChapters(
 		} catch {
 			continue;
 		}
-		await processChapter(
+		const summaryFile = path.join(chapterDir, "summary.json");
+		let transcriptError;
+		try {
+			transcriptError = JSON.parse(
+				fs.readFileSync(summaryFile, "utf8"),
+			).transcriptError;
+		} catch {}
+		const summary = await processChapter(
 			chapterDir,
 			{ ...cfg, transcriber: "none", sections: "cached" },
 			{ brief: false, speakers, quiet: true, log: () => {} },
 		);
+		if (transcriptError && summary && !summary.transcriptError)
+			save(summaryFile, { ...summary, transcriptError });
 	}
 }
 
@@ -736,6 +750,7 @@ export async function finishNativeWalk(file, loaded, dependencies = {}) {
 		};
 		const earlyResults = new Map();
 		let liveCacheHandled = false;
+		let appliedVoices = null;
 		const audio = (async () => {
 			if (cfg.transcriber === "none") {
 				progress("processing", null, { transcript: "disabled" });
@@ -803,6 +818,7 @@ export async function finishNativeWalk(file, loaded, dependencies = {}) {
 				);
 				if (cached.handled) {
 					liveCacheHandled = true;
+					appliedVoices = cached.voices ?? null;
 					for (const [name, summary] of cached.results)
 						earlyResults.set(name, summary);
 					progress("processing", null, {
@@ -940,9 +956,12 @@ export async function finishNativeWalk(file, loaded, dependencies = {}) {
 				journal.request.speakers,
 				voiceDependencies(dependencies),
 			);
+			appliedVoices = cached.voices ?? null;
 			for (const [name, summary] of cached.results)
 				earlyResults.set(name, summary);
 		}
+		if (readVoiceCard(directory)?.inputHash !== appliedVoices?.inputHash)
+			dropVoiceCard(directory);
 		const namesUsed = voiceNamesHash(directory);
 		for (const row of rows) {
 			const chapterDir = path.join(directory, row.dir);
@@ -1008,7 +1027,7 @@ export async function finishNativeWalk(file, loaded, dependencies = {}) {
 			}
 			save(path.join(directory, "session.json"), session);
 		}
-		if (liveCacheHandled) {
+		if (liveCacheHandled && appliedVoices) {
 			const current = voiceNamesHash(directory);
 			if (current !== namesUsed)
 				await relabelChapters(

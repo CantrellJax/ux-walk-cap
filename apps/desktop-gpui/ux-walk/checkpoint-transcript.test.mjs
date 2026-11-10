@@ -469,3 +469,57 @@ test("a stray voice or a paused segment still names the one configured speaker, 
 	assert.deepEqual(row.speakers, []);
 	assert.equal(row.speakerAttributionNotice, undefined);
 });
+
+test("reprocessing a walk made before voice matching keeps its numbering and sends no lineup", async (t) => {
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "uxw-old-walk-"));
+	t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+	fs.mkdirSync(path.join(root, "checkpoints/jobs"), { recursive: true });
+	durableJson(path.join(root, "checkpoints/final-layout.json"), {
+		displaySpans: [10],
+		meta: {
+			segments: [{ display: { start_time: 0 }, mic: { start_time: 0 } }],
+		},
+		config: {},
+	});
+	for (const [fill, startMs] of [
+		["c", 0],
+		["d", 5000],
+	]) {
+		const id = fill.repeat(64);
+		const file = path.join(root, `checkpoints/jobs/${id}.words.json`);
+		durableJson(file, {
+			source: "segment-0:microphone",
+			words: [
+				{
+					start: startMs / 1000,
+					end: startMs / 1000 + 1,
+					text: "speech",
+					speaker: `${fill}:speaker_0`,
+				},
+			],
+		});
+		durableJson(path.join(root, `checkpoints/jobs/${id}.json`), {
+			jobId: id,
+			source: "segment-0:microphone",
+			sourceStartMs: startMs,
+			sourceEndMs: startMs + 5000,
+			state: "complete",
+			resultHash: sha256(fs.readFileSync(file)),
+		});
+	}
+	fs.writeFileSync(path.join(root, "report.html"), "");
+	fs.mkdirSync(path.join(root, "chapter"));
+	const reused = await reuseCheckpointTranscript(
+		root,
+		[{ dir: "chapter", startMs: 0, endMs: 10000 }],
+		0,
+		{ transcriber: "elevenlabs" },
+		["Ann", "Bo"],
+		{ matchVoices: async () => assert.fail("no lineup for an old walk") },
+	);
+	assert.equal(reused.voices, null);
+	assert.match(
+		reused.results.get("chapter").speakerAttributionNotice,
+		/same person/,
+	);
+});

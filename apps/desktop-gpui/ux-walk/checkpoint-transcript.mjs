@@ -95,6 +95,7 @@ export async function reuseCheckpointTranscript(
 			"Live transcript source clocks are retained; final display alignment is not yet available. Retry preparation after checkpoint draining finishes.";
 	}
 	const mapped = [];
+	const usedSources = new Set();
 	let complete = jobs.every((job) => job.state === "complete");
 	let base = 0;
 	if (layout) {
@@ -131,6 +132,7 @@ export async function reuseCheckpointTranscript(
 					)
 						continue;
 					const source = `segment-${index}:${kind}`;
+					usedSources.add(source);
 					const matching = jobs
 						.filter((job) => job.source === source)
 						.sort((a, b) => a.sourceStartMs - b.sourceStartMs);
@@ -199,9 +201,19 @@ export async function reuseCheckpointTranscript(
 	const { wordsToSrt } = await import(new URL("transcribe.mjs", engine));
 	mapped.sort((a, b) => a.start - b.start || a.source.localeCompare(b.source));
 	const sole = soleSpeaker(mapped, speakers);
+	const firstMatch =
+		!fs.existsSync(path.join(root, "voices.json")) &&
+		fs.existsSync(path.join(directory, "report.html"));
 	const voices =
-		complete && !sole && liveProvider(cfg)
-			? await (dependencies.matchVoices ?? matchVoices)(root, cfg)
+		complete &&
+		!error &&
+		mapped.length &&
+		!sole &&
+		!firstMatch &&
+		liveProvider(cfg)
+			? await (dependencies.matchVoices ?? matchVoices)(root, cfg, {
+					sources: usedSources,
+				})
 			: null;
 	if (voices) {
 		for (const word of mapped) word.voice = voiceOf(voices, word.speaker)?.id;
@@ -212,7 +224,7 @@ export async function reuseCheckpointTranscript(
 		} catch {}
 	}
 	const voiceOrder = voices?.voices.map((voice) => voice.id) ?? [];
-	const matched = voices?.state === "complete";
+	const matched = voices?.matched === true;
 	for (const row of rows) {
 		const start = (row.startMs - startedAtMs) / 1000;
 		const end = (row.endMs - startedAtMs) / 1000;
@@ -278,7 +290,12 @@ export async function reuseCheckpointTranscript(
 			...(error ? { transcriptError: error } : {}),
 		});
 	}
-	return { handled: true, results, error };
+	return {
+		handled: true,
+		results,
+		error,
+		voices: voices ? { inputHash: voices.inputHash, matched } : null,
+	};
 }
 
 function liveProvider(cfg) {

@@ -163,3 +163,111 @@ test("a single chunk needs no request and pending jobs give no result", async (t
 	);
 	assert.equal(currentVoices(root), null);
 });
+
+test("a lineup that may have been sent before a crash is never sent again", async (t) => {
+	const { root } = fixture(t);
+	let requests = 0;
+	await assert.rejects(
+		matchVoices(
+			root,
+			{ transcriber: "elevenlabs" },
+			{
+				transcribe: async () => {
+					requests += 1;
+					const saved = JSON.parse(
+						fs.readFileSync(path.join(root, "voices.json"), "utf8"),
+					);
+					assert.equal(saved.state, "submitted");
+					throw Object.assign(new Error("killed"), { crash: true });
+				},
+				media: async (_command, args) => {
+					fs.writeFileSync(args.at(-1), "");
+				},
+			},
+		).then((result) => {
+			if (result.state === "unmatched")
+				fs.writeFileSync(
+					path.join(root, "voices.json"),
+					JSON.stringify({
+						schemaVersion: 1,
+						inputHash: result.inputHash,
+						state: "submitted",
+						voices: [],
+					}),
+				);
+			throw new Error("simulated crash after submission");
+		}),
+	);
+	const again = await matchVoices(
+		root,
+		{ transcriber: "elevenlabs" },
+		{
+			transcribe: async () => {
+				requests += 1;
+				return [];
+			},
+			media,
+		},
+	);
+	assert.equal(requests, 1);
+	assert.equal(again.state, "unmatched");
+	assert.equal(again.matched, false);
+});
+
+test("a lineup that failed before anything was sent is tried again", async (t) => {
+	const { root } = fixture(t);
+	let builds = 0;
+	const failing = async () => {
+		builds += 1;
+		throw new Error("ffmpeg failed");
+	};
+	const first = await matchVoices(
+		root,
+		{ transcriber: "elevenlabs" },
+		{ transcribe: async () => assert.fail("not sent"), media: failing },
+	);
+	assert.equal(first.notSent, true);
+	let requests = 0;
+	const second = await matchVoices(
+		root,
+		{ transcriber: "elevenlabs" },
+		{
+			transcribe: async () => {
+				requests += 1;
+				return [];
+			},
+			media,
+		},
+	);
+	assert.equal(builds, 1);
+	assert.equal(requests, 1);
+	assert.equal(second.state, "complete");
+	assert.equal(second.matched, false);
+});
+
+test("voices count as matched only when every real voice got a lineup answer, and excluded sources stay out", async (t) => {
+	const { root } = fixture(t);
+	job(root, "e", "segment-0:systemAudio", 0, 300000, words("speaker_0", 1, 10));
+	let seconds = 0;
+	const voices = await matchVoices(
+		root,
+		{ transcriber: "elevenlabs" },
+		{
+			sources: new Set(["segment-0:microphone"]),
+			media: async (_command, args) => {
+				seconds = args.filter((arg) => arg === "-i").length;
+				fs.writeFileSync(args.at(-1), "");
+			},
+			transcribe: async () => words("A", 0, 10),
+		},
+	);
+	assert.equal(seconds, 4);
+	assert.equal(voices.state, "complete");
+	assert.equal(voices.matched, false);
+	assert.equal(
+		voices.voices.some((voice) =>
+			voice.labels.some((label) => label.includes("systemAudio")),
+		),
+		false,
+	);
+});
