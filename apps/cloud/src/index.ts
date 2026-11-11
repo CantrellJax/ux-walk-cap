@@ -329,7 +329,9 @@ async function route(request: Request, env: RuntimeEnv): Promise<Response> {
 	headers.delete("content-length");
 	headers.delete("etag");
 	return new Response(
-		(await asset.text()).replaceAll("%app%", brand.display_name),
+		(await asset.text())
+			.replaceAll("%app%", brand.display_name)
+			.replaceAll("%repo%", brand.repo_url),
 		{ status: asset.status, headers },
 	);
 }

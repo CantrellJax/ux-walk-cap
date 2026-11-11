@@ -319,7 +319,7 @@ export async function matchVoices(
 			matched: false,
 			method: "none",
 			error:
-				"The voice-matching request may have been sent before Worm stopped; it is not sent again automatically.",
+				"The voice-matching request may have been sent before the app stopped; it is not sent again automatically.",
 			voices: groupVoices(labels, [], []),
 			completedAt: Date.now(),
 		};

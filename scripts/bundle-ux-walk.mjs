@@ -274,7 +274,7 @@ export async function bundleUxWalk(app) {
 	buildChromeLauncher(path.join(engine, "bin", "walk-chrome-launcher"));
 	await fs.writeFile(
 		path.join(resources, "engine-source.json"),
-		`${JSON.stringify({ repository: "https://github.com/CantrellJax/worm", sourceURL: `${parent.UXWalkSourceURL ?? `https://github.com/CantrellJax/worm/tree/${revision}`}/vendor/ux-walk`, revision, node: nodeVersion }, null, 2)}\n`,
+		`${JSON.stringify({ repository: brand.repo_url, sourceURL: `${parent.UXWalkSourceURL ?? `${brand.repo_url}/tree/${revision}`}/vendor/ux-walk`, revision, node: nodeVersion }, null, 2)}\n`,
 	);
 	await brandBuiltApp(contents, parent);
 	await signApp(app, process.env.CAP_UX_SIGNING_IDENTITY || "-");

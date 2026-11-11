@@ -50,8 +50,18 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  canonical:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      ok: ${{ steps.check.outputs.ok }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: check
+        run: python3 scripts/fork-brand-repository.py
   cloud:
-    if: github.repository == 'CantrellJax/worm'
+    needs: canonical
+    if: needs.canonical.outputs.ok == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -62,7 +72,8 @@ jobs:
       - run: npm ci --ignore-scripts --prefix apps/cloud
       - run: npm run check --prefix apps/cloud
   feedback-widget:
-    if: github.repository == 'CantrellJax/worm'
+    needs: canonical
+    if: needs.canonical.outputs.ok == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -74,7 +85,8 @@ jobs:
       - run: npm ci --ignore-scripts --prefix apps/cloud
       - run: npm run check --prefix packages/feedback-widget
   library-contract:
-    if: github.repository == 'CantrellJax/worm'
+    needs: canonical
+    if: needs.canonical.outputs.ok == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -112,8 +124,8 @@ jobs:
           path: ${{ runner.temp }}/library-rustfmt.patch
       - run: git diff --exit-code
   native:
-    needs: library-contract
-    if: github.repository == 'CantrellJax/worm'
+    needs: [canonical, library-contract]
+    if: needs.canonical.outputs.ok == 'true' && needs.library-contract.result == 'success'
     runs-on: macos-15
     timeout-minutes: 90
     env:
