@@ -126,7 +126,7 @@ jobs:
   native:
     needs: [canonical, library-contract]
     if: needs.canonical.outputs.ok == 'true' && needs.library-contract.result == 'success'
-    runs-on: macos-15
+    runs-on: ${{ fromJSON((github.event.pull_request && github.event.pull_request.head.repo.full_name != github.repository) && '["macos-15"]' || vars.NATIVE_RUNS_ON || '["macos-15"]') }}
     timeout-minutes: 90
     env:
       CARGO_BUILD_JOBS: '2'
