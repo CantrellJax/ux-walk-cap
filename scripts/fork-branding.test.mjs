@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { brand, brandLeaks } from "./fork-brand.mjs";
 import {
 	applyPalette,
@@ -256,6 +259,39 @@ test("no hard-coded fork name outside the door", () => {
 			"cloud), neutral wording, or add a stable identifier to " +
 			"crates/fork-brand/kept-names.json with the reason it cannot change.",
 	);
+});
+
+test("workflow gates follow brand.json's repository", () => {
+	const gate = "python3 scripts/fork-brand-repository.py";
+	for (const file of [
+		".github/workflows/ux-walk-check.yml",
+		".github/workflows/ux-walk-upstream.yml",
+	]) {
+		assert.ok(
+			readFileSync(new URL(file, repository), "utf8").includes(gate),
+			file,
+		);
+	}
+	const env = { ...process.env };
+	delete env.GITHUB_OUTPUT;
+	const run = (repositoryName) =>
+		execFileSync("python3", ["scripts/fork-brand-repository.py"], {
+			cwd: fileURLToPath(repository),
+			encoding: "utf8",
+			env: { ...env, GITHUB_REPOSITORY: repositoryName },
+		});
+	const name = new URL(brand.repo_url).pathname.slice(1);
+	assert.equal(run(name).trim(), "true");
+	assert.throws(() => run("someone/else"));
+	const output = path.join(
+		mkdtempSync(path.join(tmpdir(), "fork-brand-")),
+		"out",
+	);
+	execFileSync("python3", ["scripts/fork-brand-repository.py"], {
+		cwd: fileURLToPath(repository),
+		env: { ...env, GITHUB_REPOSITORY: "someone/else", GITHUB_OUTPUT: output },
+	});
+	assert.equal(readFileSync(output, "utf8").trim(), "ok=false");
 });
 
 test("the name guard catches what it is meant to catch", () => {

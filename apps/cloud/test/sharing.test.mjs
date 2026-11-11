@@ -274,7 +274,10 @@ test("the cloud home page works with exact HTML asset routing", async () => {
 	const page = await result.text();
 	assert.match(page, /Show what happened/);
 	assert.match(page, new RegExp(`<title>${brand.display_name}</title>`));
+	assert.ok(page.includes(`href="${brand.repo_url}"`));
+	assert.ok(page.includes(`${brand.repo_url}/tree/main/apps/cloud`));
 	assert.doesNotMatch(page, /%app%/);
+	assert.doesNotMatch(page, /%repo%/);
 });
 
 test("credential rotation preserves ownership and revocation rights", async () => {
