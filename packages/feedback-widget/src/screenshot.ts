@@ -8,6 +8,15 @@ const BLANK =
 	"data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
 export const MASK_COLOR = "#3f3f46";
 
+const EXCLUDED = "[data-worm-exclude]";
+
+export function isExcluded(node: Node, exclude: Element | null): boolean {
+	return (
+		node === exclude ||
+		(node.nodeType === 1 && (node as Element).matches(EXCLUDED))
+	);
+}
+
 export function shouldMask(node: Node): node is Element {
 	return (
 		node.nodeType === 1 &&
@@ -83,7 +92,7 @@ export function paintMasks(
 	let painted = 0;
 	context.fillStyle = MASK_COLOR;
 	for (const element of elements) {
-		if (exclude?.contains(element)) continue;
+		if (exclude?.contains(element) || element.closest(EXCLUDED)) continue;
 		const rect = element.getBoundingClientRect();
 		if (rect.width <= 0 || rect.height <= 0) continue;
 		context.fillRect(
@@ -113,7 +122,7 @@ export async function captureScreenshot(
 				transform: `translate(${-window.scrollX}px, ${-window.scrollY}px)`,
 				transformOrigin: "0 0",
 			},
-			filter: (node) => node !== exclude,
+			filter: (node) => !isExcluded(node, exclude),
 			onCloneEachNode: maskClone,
 			font: false,
 			timeout: 8000,

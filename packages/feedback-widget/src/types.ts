@@ -21,7 +21,7 @@ export interface RewindConfig {
 	minutes: number;
 }
 
-export interface FeedbackWidgetConfig {
+export interface FeedbackReporterConfig {
 	server: string;
 	siteKey: string;
 	getContext?: () => FeedbackContext | Promise<FeedbackContext>;
@@ -30,6 +30,9 @@ export interface FeedbackWidgetConfig {
 	requestIdHeaders?: string[];
 	genericTestids?: string[];
 	rewind?: RewindConfig;
+}
+
+export interface FeedbackWidgetConfig extends FeedbackReporterConfig {
 	position?: "bottom-right" | "bottom-left";
 	label?: string;
 }

@@ -118,7 +118,13 @@ export function createCollector(options: CollectorOptions): Collector {
 	};
 	const insideWidget = (event: Event) => {
 		const host = options.host();
-		return !!host && event.composedPath().includes(host);
+		return event
+			.composedPath()
+			.some(
+				(node) =>
+					node === host ||
+					(node instanceof Element && node.hasAttribute("data-worm-exclude")),
+			);
 	};
 	const cleanups: Array<() => void> = [];
 	let live = true;
