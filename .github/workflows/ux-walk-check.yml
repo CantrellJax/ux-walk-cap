@@ -309,6 +309,14 @@ jobs:
           task_target="$(rustc -vV | sed -n 's/host: //p')"
           node scripts/build-desktop-binaries.mjs "$task_target" --debug
           node scripts/bundle-gpui.mjs "$task_target" --debug --bundles app --config "$RUNNER_TEMP/ux-walk-preview/preview.json"
+      - name: Ensure Google Chrome on a self-hosted Mac
+        # GitHub's macOS images ship Chrome; a pooled Mac's image may not (the browser smoke below needs it).
+        if: runner.environment == 'self-hosted' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.preview))
+        run: |
+          if [ ! -x "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" ]; then
+            npm ci --ignore-scripts --prefix vendor/ux-walk
+            (cd vendor/ux-walk && npx --no-install playwright-core install chrome)
+          fi
       - name: Bundle the walk engine and native controls
         if: (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.preview))
         run: |
