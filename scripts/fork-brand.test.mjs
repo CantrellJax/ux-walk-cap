@@ -39,6 +39,13 @@ test("the fork and original Cap can be installed side by side", () => {
 		overlay.plugins["deep-link"],
 		upstream.plugins["deep-link"],
 	);
+	assert.notEqual(
+		overlay.plugins.updater.pubkey,
+		upstream.plugins.updater.pubkey,
+	);
+	assert.deepEqual(overlay.plugins.updater.endpoints, [
+		`${brand.releases_url}/latest/download/latest.json`,
+	]);
 });
 
 test("a rename keeps everything an existing install depends on", () => {

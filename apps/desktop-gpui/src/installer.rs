@@ -14,6 +14,13 @@ use crate::store::UpdateChannel;
 
 const UPDATE_ENDPOINT: &str = "https://cdn.crabnebula.app/update/cap/cap";
 const UPDATER_PUBLIC_KEY: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEUyOTAzOTdFNzJFQkRFOTMKUldTVDN1dHlmam1RNHFXb1VYTXlrQk1iMFFkcjN0YitqZlA5WnZNY0ZtQ1dvM1dxK211M3VIYUQK";
+const FORK_RELEASES: bool = cfg!(feature = "ux-walk");
+const FORK_RELEASE_PLATFORM: &str = "darwin-aarch64";
+const TRUSTED_UPDATE_KEY: &str = if FORK_RELEASES {
+    fork_brand::UPDATER_PUBKEY
+} else {
+    UPDATER_PUBLIC_KEY
+};
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const METADATA_TIMEOUT: Duration = Duration::from_secs(20);
 const CHUNK_TIMEOUT: Duration = Duration::from_secs(60);
@@ -124,12 +131,27 @@ fn parse_release(body: &[u8]) -> Result<Release, String> {
     })
 }
 
-fn endpoint(platform: &str, channel: UpdateChannel, current: &Version) -> String {
+fn upstream_endpoint(platform: &str, channel: UpdateChannel, current: &Version) -> String {
     let url = format!("{UPDATE_ENDPOINT}/{platform}/{current}");
     match channel {
         UpdateChannel::Stable => url,
         UpdateChannel::Nightly => format!("{url}?channel=nightly"),
     }
+}
+
+fn endpoint(platform: &str, channel: UpdateChannel, current: &Version) -> Option<String> {
+    if !FORK_RELEASES {
+        return Some(upstream_endpoint(platform, channel, current));
+    }
+    (channel == UpdateChannel::Stable && platform == FORK_RELEASE_PLATFORM)
+        .then(|| fork_brand::UPDATE_MANIFEST_URL.to_string())
+}
+
+/// GitHub answers `releases/latest/download/latest.json` with 404 until a
+/// release carries the manifest, which means there is nothing newer to offer.
+fn means_no_release(status: reqwest::StatusCode) -> bool {
+    status == reqwest::StatusCode::NO_CONTENT
+        || (FORK_RELEASES && status == reqwest::StatusCode::NOT_FOUND)
 }
 
 fn client() -> Result<reqwest::Client, String> {
@@ -144,18 +166,18 @@ pub(crate) async fn fetch_release(
     channel: UpdateChannel,
     current: &Version,
 ) -> Result<Option<Release>, String> {
-    if cfg!(feature = "ux-walk") {
-        return Err(fork_brand::update_refusal());
-    }
     let platform = update_platform()?;
+    let Some(url) = endpoint(&platform, channel, current) else {
+        return Ok(None);
+    };
     let response = client()?
-        .get(endpoint(&platform, channel, current))
+        .get(url)
         .timeout(METADATA_TIMEOUT)
         .send()
         .await
         .map_err(|error| error.to_string())?;
 
-    if response.status() == reqwest::StatusCode::NO_CONTENT {
+    if means_no_release(response.status()) {
         return Ok(None);
     }
 
@@ -280,7 +302,7 @@ pub(crate) async fn download(
 ) -> Result<PathBuf, String> {
     download_into(
         &staging_root(),
-        UPDATER_PUBLIC_KEY,
+        TRUSTED_UPDATE_KEY,
         kind,
         release,
         &mut progress,
@@ -618,6 +640,9 @@ mod tests {
     const TEST_KEY: &str = "untrusted comment: minisign public key E7620F1842B4E81F\nRWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3\n";
     const TEST_SIGNATURE: &str = "untrusted comment: signature from minisign secret key\nRUQf6LRCGA9i559r3g7V1qNyJDApGip8MfqcadIgT9CuhV3EMhHoN1mGTkUidF/z7SrlQgXdy8ofjb7bNJJylDOocrCo8KLzZwo=\ntrusted comment: timestamp:1556193335\tfile:test\ny/rUw2y8/hOUYjZU71eHp/Wo1KZ40fGy2VJEDl34XMJM+TX48Ss/17u3IvIfbVR1FkZZSNCisQbuQY+bHwhEBg==\n";
 
+    #[cfg(feature = "ux-walk")]
+    const FORK_SIGNED_PROBE_SIGNATURE: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUemdlcm9ZcExyRVl0RC9IUjVnN2VhS0Q3QVp0U0lNRTUwWTU4WW1CelpEb3YwdkJYNU5VYXhRTnFsODJqTWFqTVFPM285SnU3alkwU0V6M2w3bGNUbFpjRzBocVlFUVFjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0NTE1ODI5CWZpbGU6cHJvYmUudHh0Ckx2VldPWHpSTzA4Rk9lTmFLLzlsTDhiTmtkbUo0NEtYeTlkcE55ZmRYbzJRdmdDdzdtTUVsZzZwRkJJSWhITHpyMlhES2lhWEhqWHBkd05VcEFLWkJRPT0K";
+
     fn encode(text: &str) -> String {
         base64::engine::general_purpose::STANDARD.encode(text)
     }
@@ -706,13 +731,61 @@ mod tests {
     fn endpoints_name_the_platform_version_and_channel() {
         let current = Version::parse("0.6.2-nightly.4").unwrap();
         assert_eq!(
-            endpoint("darwin-aarch64", UpdateChannel::Stable, &current),
+            upstream_endpoint("darwin-aarch64", UpdateChannel::Stable, &current),
             "https://cdn.crabnebula.app/update/cap/cap/darwin-aarch64/0.6.2-nightly.4"
         );
         assert_eq!(
-            endpoint("windows-x86_64", UpdateChannel::Nightly, &current),
+            upstream_endpoint("windows-x86_64", UpdateChannel::Nightly, &current),
             "https://cdn.crabnebula.app/update/cap/cap/windows-x86_64/0.6.2-nightly.4?channel=nightly"
         );
+    }
+
+    #[cfg(feature = "ux-walk")]
+    #[test]
+    fn fork_builds_read_the_release_manifest_on_the_fork() {
+        let current = Version::new(0, 6, 2);
+        assert_eq!(
+            endpoint("darwin-aarch64", UpdateChannel::Stable, &current).as_deref(),
+            Some(fork_brand::UPDATE_MANIFEST_URL)
+        );
+        assert!(
+            fork_brand::UPDATE_MANIFEST_URL
+                .starts_with(&format!("{}/latest/download/", fork_brand::RELEASES_URL))
+        );
+        assert_eq!(
+            endpoint("darwin-aarch64", UpdateChannel::Nightly, &current),
+            None
+        );
+        assert_eq!(
+            endpoint("darwin-x86_64", UpdateChannel::Stable, &current),
+            None
+        );
+        assert_eq!(TRUSTED_UPDATE_KEY, fork_brand::UPDATER_PUBKEY);
+    }
+
+    #[cfg(feature = "ux-walk")]
+    #[test]
+    fn a_missing_fork_manifest_means_no_update() {
+        assert!(means_no_release(reqwest::StatusCode::NOT_FOUND));
+        assert!(means_no_release(reqwest::StatusCode::NO_CONTENT));
+        assert!(!means_no_release(reqwest::StatusCode::OK));
+        assert!(!means_no_release(
+            reqwest::StatusCode::INTERNAL_SERVER_ERROR
+        ));
+    }
+
+    #[cfg(feature = "ux-walk")]
+    #[test]
+    fn the_fork_key_verifies_what_the_tauri_signer_signs() {
+        let key = trusted_key(fork_brand::UPDATER_PUBKEY).unwrap();
+        let signature = decode_signature(FORK_SIGNED_PROBE_SIGNATURE).unwrap();
+        let directory = scratch("fork-key");
+        let file = directory.join("probe.txt");
+        std::fs::write(&file, b"hello\n").unwrap();
+        verify_file(&file, &key, &signature).unwrap();
+        std::fs::write(&file, b"hello!\n").unwrap();
+        assert!(verify_file(&file, &key, &signature).is_err());
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]

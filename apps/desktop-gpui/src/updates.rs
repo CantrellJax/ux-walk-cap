@@ -183,12 +183,15 @@ fn set_status(status: UpdateStatus, cx: &mut App) {
     crate::menus::refresh_update_menu(cx);
 }
 
+fn updates_disabled() -> bool {
+    std::env::var_os("CAP_GPUI_DISABLE_UPDATES").is_some_and(|value| !value.is_empty())
+}
+
 pub(crate) fn check_manually(cx: &mut App) {
-    if cfg!(feature = "ux-walk") {
-        cx.open_url(fork_brand::RELEASES_URL);
-        return;
-    }
     if !cx.has_global::<UpdateScheduler>() {
+        if updates_disabled() {
+            cx.open_url(fork_brand::RELEASES_URL);
+        }
         return;
     }
 
@@ -366,7 +369,7 @@ fn simulate_download(version: Version, cx: &mut App) {
 fn simulate_download(_version: Version, _cx: &mut App) {}
 
 pub(crate) fn schedule_startup_check(cx: &mut App) {
-    if cfg!(feature = "ux-walk") {
+    if updates_disabled() {
         return;
     }
     let (wake, requests) = flume::bounded(1);
@@ -943,6 +946,12 @@ mod tests {
         assert!(!qualifies(
             &version("0.6.1"),
             &version("0.6.0"),
+            UpdateChannel::Stable,
+            UpdateChannel::Stable,
+        ));
+        assert!(!qualifies(
+            &version("0.6.2"),
+            &version("0.6.2"),
             UpdateChannel::Stable,
             UpdateChannel::Stable,
         ));
