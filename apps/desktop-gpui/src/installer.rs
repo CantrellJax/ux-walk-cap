@@ -25,7 +25,16 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const METADATA_TIMEOUT: Duration = Duration::from_secs(20);
 const CHUNK_TIMEOUT: Duration = Duration::from_secs(60);
 
-const STAGING_SLUG: &str = "cap";
+const STAGING_SLUG: &str = if FORK_RELEASES {
+    fork_brand::SLUG
+} else {
+    "cap"
+};
+const STAGING_APP_DIR: &str = if FORK_RELEASES {
+    fork_brand::BUNDLE_ID
+} else {
+    "so.cap.desktop"
+};
 
 pub(crate) fn update_platform() -> Result<String, String> {
     let arch = if cfg!(target_arch = "aarch64") {
@@ -277,8 +286,20 @@ fn staging_root() -> PathBuf {
     }
     dirs::cache_dir()
         .unwrap_or_else(std::env::temp_dir)
-        .join("so.cap.desktop")
+        .join(STAGING_APP_DIR)
         .join("updates")
+}
+
+pub(crate) fn verify_staged(file: &Path, signature: &str) -> Result<(), String> {
+    verify_staged_with(file, TRUSTED_UPDATE_KEY, signature)
+}
+
+fn verify_staged_with(file: &Path, encoded_key: &str, signature: &str) -> Result<(), String> {
+    verify_file(
+        file,
+        &trusted_key(encoded_key)?,
+        &decode_signature(signature)?,
+    )
 }
 
 fn prune_other_versions(product_dir: &Path, keep: &Path) {
@@ -834,6 +855,28 @@ mod tests {
     }
 
     #[test]
+    fn a_staged_package_is_verified_again_before_install() {
+        let directory = scratch("staged");
+        let file = directory.join("artifact");
+        let key = encode(TEST_KEY);
+        let signature = encode(TEST_SIGNATURE);
+        std::fs::write(&file, b"test").unwrap();
+        verify_staged_with(&file, &key, &signature).unwrap();
+        std::fs::write(&file, b"tesT").unwrap();
+        assert!(verify_staged_with(&file, &key, &signature).is_err());
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(feature = "ux-walk")]
+    #[test]
+    fn fork_downloads_never_share_the_official_staging_folder() {
+        assert_eq!(STAGING_APP_DIR, fork_brand::BUNDLE_ID);
+        assert_ne!(STAGING_APP_DIR, "so.cap.desktop");
+        assert_eq!(STAGING_SLUG, fork_brand::SLUG);
+        assert_ne!(STAGING_SLUG, "cap");
+    }
+
+    #[test]
     fn downloads_are_verified_staged_and_reused() {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(1)
@@ -841,7 +884,7 @@ mod tests {
             .build()
             .unwrap();
         let root = scratch("download");
-        let stale = root.join("cap").join("0.0.1");
+        let stale = root.join(STAGING_SLUG).join("0.0.1");
         std::fs::create_dir_all(&stale).unwrap();
 
         let (url, server) = serve_once(b"test");
@@ -856,7 +899,10 @@ mod tests {
             ))
             .unwrap();
         assert_eq!(server.join().unwrap(), 1);
-        assert_eq!(downloaded, root.join("cap/9.9.9/Cap.AppImage"));
+        assert_eq!(
+            downloaded,
+            root.join(STAGING_SLUG).join("9.9.9/Cap.AppImage")
+        );
         assert_eq!(std::fs::read(&downloaded).unwrap(), b"test");
         assert_eq!(updates.first(), Some(&(0, Some(4))));
         assert_eq!(updates.last(), Some(&(4, Some(4))));
@@ -914,7 +960,7 @@ mod tests {
             .unwrap_err();
         assert_eq!(server.join().unwrap(), 1);
         assert!(error.contains("signature verification"));
-        let version_dir = root.join("cap").join("9.9.9");
+        let version_dir = root.join(STAGING_SLUG).join("9.9.9");
         assert!(!version_dir.join("Cap.AppImage").exists());
         assert!(!version_dir.join("Cap.AppImage.partial").exists());
         std::fs::remove_dir_all(root).unwrap();

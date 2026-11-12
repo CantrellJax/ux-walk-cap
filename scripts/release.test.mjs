@@ -3,6 +3,8 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { brand } from "./fork-brand.mjs";
 import {
+	checkBundleVersion,
+	checkPublishable,
 	keychainItems,
 	packageVersion,
 	parseArgs,
@@ -133,4 +135,20 @@ test("preflight refuses a dirty tree and an existing tag", () => {
 		() => preflight("0.7.0", git({ "ls-remote": "abc\trefs/tags/v0.7.0\n" })),
 		new RegExp(`already exists on ${repository}`),
 	);
+});
+
+test("publishing refuses a reused build and a pre-release", () => {
+	assert.throws(() => parseArgs(["--publish", "--skip-build"]), /fresh build/);
+	assert.equal(parseArgs(["--skip-build"]).skipBuild, true);
+	assert.throws(
+		() => checkPublishable("0.7.0-beta.1", { publish: true }),
+		/pre-release/,
+	);
+	checkPublishable("0.7.0-beta.1", { publish: false });
+	checkPublishable("0.7.0", { publish: true });
+});
+
+test("the bundle must carry the Cargo.toml version", () => {
+	checkBundleVersion("0.7.0\n", "0.7.0");
+	assert.throws(() => checkBundleVersion("0.6.2\n", "0.7.0"), /0\.6\.2/);
 });

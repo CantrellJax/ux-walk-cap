@@ -35,7 +35,28 @@ export function parseArgs(args) {
 			else options.notesFile = value;
 		} else throw new Error(`Unknown argument ${argument}\n${usage}`);
 	}
+	if (options.publish && options.skipBuild) {
+		throw new Error(
+			"--publish needs a fresh build; --skip-build could ship a binary from another version",
+		);
+	}
 	return options;
+}
+
+export function checkPublishable(version, options) {
+	if (options.publish && version.includes("-")) {
+		throw new Error(
+			`${version} is a pre-release; the updater would offer it to everyone as the latest release`,
+		);
+	}
+}
+
+export function checkBundleVersion(bundleVersion, version) {
+	if (bundleVersion.trim() !== version) {
+		throw new Error(
+			`The bundle reports version ${bundleVersion.trim()} but Cargo.toml says ${version}; rebuild without --skip-build`,
+		);
+	}
 }
 
 export function packageVersion(cargoToml) {
@@ -250,6 +271,7 @@ export async function release(args) {
 	const version = packageVersion(
 		await fs.readFile(path.join(gpuiDirectory, "Cargo.toml"), "utf8"),
 	);
+	checkPublishable(version, options);
 	const tag = preflight(version, git);
 	const { identity, name } = pickSigningIdentity(
 		output("security", ["find-identity", "-v", "-p", "codesigning"]),
@@ -292,6 +314,17 @@ export async function release(args) {
 		process.env.RELEASE_NODE || process.execPath,
 		["scripts/bundle-ux-walk.mjs", app],
 		{ env: { ...process.env, CAP_UX_SIGNING_IDENTITY: identity } },
+	);
+	checkBundleVersion(
+		output("plutil", [
+			"-extract",
+			"CFBundleShortVersionString",
+			"raw",
+			"-o",
+			"-",
+			path.join(app, "Contents", "Info.plist"),
+		]),
+		version,
 	);
 
 	const dist = path.join(root, "dist", "release", tag);
