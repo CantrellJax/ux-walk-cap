@@ -50,7 +50,7 @@ All JSON is bounded. Writes require `Authorization: Bearer <owner-upload-credent
 | POST /api/v1/shares/ID/complete | Accept ordered parts; validate final size before publishing |
 | DELETE /api/v1/shares/ID | Revoke access and remove the published media or abort an incomplete upload |
 | GET /api/v1/shares/ID/metadata | Read title, size, content type and expiry with a read capability |
-| GET or HEAD /api/v1/shares/ID/media | Authorized media; single byte ranges supported |
+| GET or HEAD /api/v1/shares/ID/media | Authorized media; single byte ranges supported. Also accepts `?token=READ_TOKEN` for a cross-origin `<video src>` |
 | POST /api/v1/shares/ID/access | Exchange the read capability for a scoped HttpOnly playback cookie bounded by link expiry |
 | GET /s/ID#READ_CAPABILITY | Viewer; the fragment is exchanged for playback access and never sent in the HTTP URL |
 | POST /api/v1/feedback | Multipart report (`key`, `note`, `evidence`, optional `screenshot` and `voice`) from a configured origin; returns its id |
@@ -59,6 +59,8 @@ All JSON is bounded. Writes require `Authorization: Bearer <owner-upload-credent
 | GET /api/v1/feedback/ID/screenshot, /voice or /rewind | Owner: the attachment, with its SHA-256 in `X-Content-SHA256` (the rewind is `application/gzip`) |
 | GET /rewind/ID | Replay page for a report's rewind. The page holds no report data; it asks for the owner credential and reads the rewind with it |
 | DELETE /api/v1/feedback/ID | Owner: delete the report and its attachments |
+
+Playback URL for another app's video player: share link `https://HOST/s/ID#TOKEN` becomes `https://HOST/api/v1/shares/ID/media?token=TOKEN`. The token is a bearer capability in the URL, so keep it out of logs. The viewer page is still not embeddable.
 
 The create response's link is not readable until completion. The viewer capability is distinct from the upload credential and stored as a hash. Possessing a viewing link never authorizes uploads or revocation. Revocation has an independent tombstone so a concurrent completion cannot restore access. Expiry is enforced on every read; the bucket lifecycle later removes stored objects. Clients verify the final media's size before reporting success, revoke incomplete/failed attempts, and keep local files.
 

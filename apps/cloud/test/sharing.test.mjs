@@ -155,6 +155,55 @@ test("multipart bytes survive upload, public reads require a capability, video s
 	assert.equal(response.headers.get("Cache-Control"), "private, no-store");
 });
 
+test("media plays from a query token for a cross-origin video element and honors revocation and expiry", async () => {
+	const bytes = new Uint8Array([10, 20, 30, 40, 50]);
+	const share = await create(bytes);
+	const path = `/api/v1/shares/${share.id}/media`;
+	const token = share.sharePath.split("#")[1];
+	const full = await request(`${path}?token=${token}`);
+	assert.equal(full.status, 200);
+	assert.deepEqual(new Uint8Array(await full.arrayBuffer()), bytes);
+	assert.equal(full.headers.get("Content-Type"), "video/mp4");
+	assert.equal(full.headers.get("Referrer-Policy"), "no-referrer");
+	assert.equal(full.headers.get("X-Content-Type-Options"), "nosniff");
+	assert.match(full.headers.get("Cache-Control"), /private/);
+	assert.equal(full.headers.get("Access-Control-Allow-Origin"), "*");
+	assert.equal(full.headers.get("Access-Control-Allow-Credentials"), null);
+	const ranged = await request(`${path}?token=${token}`, {
+		headers: { Range: "bytes=1-2" },
+	});
+	assert.equal(ranged.status, 206);
+	assert.equal(ranged.headers.get("Content-Range"), "bytes 1-2/5");
+	assert.deepEqual(
+		new Uint8Array(await ranged.arrayBuffer()),
+		new Uint8Array([20, 30]),
+	);
+	assert.equal((await request(path)).status, 404);
+	assert.equal((await request(`${path}?token=`)).status, 404);
+	assert.equal((await request(`${path}?token=wrong${token}`)).status, 404);
+	const metadata = `/api/v1/shares/${share.id}/metadata`;
+	assert.equal((await request(`${metadata}?token=${token}`)).status, 404);
+	const lapsing = await create(bytes);
+	const lapsingToken = lapsing.sharePath.split("#")[1];
+	const lapsingPath = `/api/v1/shares/${lapsing.id}/media?token=${lapsingToken}`;
+	assert.equal((await request(lapsingPath)).status, 200);
+	const bucket = await runtime.getR2Bucket("MEDIA");
+	const manifest = await (await bucket.get(`shares/${lapsing.id}.json`)).json();
+	manifest.expiresAt = Date.now() - 1;
+	await bucket.put(`shares/${lapsing.id}.json`, JSON.stringify(manifest));
+	assert.equal((await request(lapsingPath)).status, 404);
+	assert.equal(
+		(
+			await request(`/api/v1/shares/${share.id}`, {
+				method: "DELETE",
+				headers,
+			})
+		).status,
+		204,
+	);
+	assert.equal((await request(`${path}?token=${token}`)).status, 404);
+});
+
 test("viewer exchanges a fragment capability for a scoped HttpOnly cookie, revoke blocks existing cookies", async () => {
 	const share = await create(new Uint8Array([1, 2, 3]), {
 		contentType: "image/png",
