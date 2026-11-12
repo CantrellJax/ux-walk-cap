@@ -76,14 +76,18 @@ async function load(env: RuntimeEnv, id: string): Promise<Share> {
 	return share;
 }
 
-async function readable(request: Request, share: Share): Promise<string> {
+async function readable(
+	request: Request,
+	share: Share,
+	queryToken = "",
+): Promise<string> {
 	const cookie = request.headers
 		.get("Cookie")
 		?.split(";")
 		.map((value) => value.trim())
 		.find((value) => value.startsWith("capux_read="))
 		?.slice(11);
-	const token = bearer(request) || cookie || "";
+	const token = bearer(request) || cookie || queryToken;
 	if (!share.ready || !(await equal(await hash(token), share.readHash)))
 		throw new HttpError(404, "Share unavailable.");
 	return token;
@@ -179,7 +183,11 @@ async function media(
 	env: RuntimeEnv,
 	share: Share,
 ): Promise<Response> {
-	await readable(request, share);
+	await readable(
+		request,
+		share,
+		new URL(request.url).searchParams.get("token") ?? "",
+	);
 	const range =
 		request.method === "HEAD"
 			? undefined
@@ -194,6 +202,9 @@ async function media(
 		"Content-Length": `${range?.length ?? object.size}`,
 		"Accept-Ranges": "bytes",
 		ETag: object.httpEtag,
+		"Access-Control-Allow-Origin": "*",
+		"Access-Control-Expose-Headers":
+			"Accept-Ranges, Content-Length, Content-Range, Content-Type",
 	});
 	if (range)
 		headers.set(
