@@ -69,6 +69,7 @@ impl PendingUpdateRequests {
 struct StagedUpdate {
     kind: ArtifactKind,
     package: PathBuf,
+    signature: String,
 }
 
 struct UpdateScheduler {
@@ -183,12 +184,15 @@ fn set_status(status: UpdateStatus, cx: &mut App) {
     crate::menus::refresh_update_menu(cx);
 }
 
+fn updates_disabled() -> bool {
+    std::env::var_os("CAP_GPUI_DISABLE_UPDATES").is_some_and(|value| !value.is_empty())
+}
+
 pub(crate) fn check_manually(cx: &mut App) {
-    if cfg!(feature = "ux-walk") {
-        cx.open_url(fork_brand::RELEASES_URL);
-        return;
-    }
     if !cx.has_global::<UpdateScheduler>() {
+        if updates_disabled() {
+            cx.open_url(fork_brand::RELEASES_URL);
+        }
         return;
     }
 
@@ -366,7 +370,7 @@ fn simulate_download(version: Version, cx: &mut App) {
 fn simulate_download(_version: Version, _cx: &mut App) {}
 
 pub(crate) fn schedule_startup_check(cx: &mut App) {
-    if cfg!(feature = "ux-walk") {
+    if updates_disabled() {
         return;
     }
     let (wake, requests) = flume::bounded(1);
@@ -613,6 +617,7 @@ fn start_download(release: Release, cx: &mut App) {
     };
 
     let version = release.version.clone();
+    let signature = release.signature.clone();
     set_status(
         UpdateStatus::Downloading {
             version: version.clone(),
@@ -673,7 +678,11 @@ fn start_download(release: Release, cx: &mut App) {
                 Ok(package) => {
                     tracing::info!(%version, path = %package.display(), "update downloaded and verified");
                     cx.global_mut::<UpdateScheduler>().staged =
-                        Some(StagedUpdate { kind, package });
+                        Some(StagedUpdate {
+                            kind,
+                            package,
+                            signature,
+                        });
                     set_status(UpdateStatus::Ready { version }, cx);
                     prompt_restart(cx);
                 }
@@ -760,11 +769,17 @@ pub(crate) fn install_and_relaunch(cx: &mut App) {
         UpdateStatus::Ready { version } => version,
         _ => return,
     };
-    let Some((package, kind)) = cx
-        .global::<UpdateScheduler>()
-        .staged
-        .as_ref()
-        .map(|staged| (staged.package.clone(), staged.kind))
+    let Some((package, kind, signature)) =
+        cx.global::<UpdateScheduler>()
+            .staged
+            .as_ref()
+            .map(|staged| {
+                (
+                    staged.package.clone(),
+                    staged.kind,
+                    staged.signature.clone(),
+                )
+            })
     else {
         return;
     };
@@ -778,7 +793,7 @@ pub(crate) fn install_and_relaunch(cx: &mut App) {
     cx.spawn(async move |cx| {
         let applied = cx
             .background_executor()
-            .spawn(async move { apply(&package, kind) })
+            .spawn(async move { apply(&package, kind, &signature) })
             .await;
         cx.update(|cx| match applied {
             Ok(Some(executable)) => restart_after_install(version, executable, cx),
@@ -831,7 +846,12 @@ fn relaunch_into(version: &Version, executable: &std::path::Path, cx: &mut App) 
     }
 }
 
-fn apply(package: &std::path::Path, kind: ArtifactKind) -> Result<Option<PathBuf>, String> {
+fn apply(
+    package: &std::path::Path,
+    kind: ArtifactKind,
+    signature: &str,
+) -> Result<Option<PathBuf>, String> {
+    installer::verify_staged(package, signature)?;
     installer::check_artifact_kind(package, kind)?;
     apply_package(package, kind)
 }
@@ -943,6 +963,12 @@ mod tests {
         assert!(!qualifies(
             &version("0.6.1"),
             &version("0.6.0"),
+            UpdateChannel::Stable,
+            UpdateChannel::Stable,
+        ));
+        assert!(!qualifies(
+            &version("0.6.2"),
+            &version("0.6.2"),
             UpdateChannel::Stable,
             UpdateChannel::Stable,
         ));

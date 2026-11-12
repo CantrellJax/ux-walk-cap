@@ -12,6 +12,13 @@ pub const DEV_BUNDLE_ID: &str = concat!(env!("FORK_BRAND_BUNDLE_ID"), ".dev");
 pub const URL_SCHEME: &str = env!("FORK_BRAND_URL_SCHEME");
 pub const REPO_URL: &str = env!("FORK_BRAND_REPO_URL");
 pub const RELEASES_URL: &str = env!("FORK_BRAND_RELEASES_URL");
+/// The `latest.json` that `scripts/release.mjs` attaches to the newest release.
+pub const UPDATE_MANIFEST_URL: &str = concat!(
+    env!("FORK_BRAND_RELEASES_URL"),
+    "/latest/download/latest.json"
+);
+/// Base64 of the minisign public key that signs the fork's update archives.
+pub const UPDATER_PUBKEY: &str = env!("FORK_BRAND_UPDATER_PUBKEY");
 pub const ISSUES_URL: &str = env!("FORK_BRAND_ISSUES_URL");
 pub const CHANGES_URL: &str = env!("FORK_BRAND_CHANGES_URL");
 pub const HELP_URL: &str = env!("FORK_BRAND_HELP_URL");

@@ -1,7 +1,5 @@
 use crate::i18n::{LOCALE_ENV, init};
 use crate::i18n_shipped::{Locale, tr};
-use crate::installer::fetch_release;
-use crate::store::UpdateChannel;
 
 const BRANDED_KEYS: &[&str] = &[
     "camera.issue.access_message",
@@ -281,12 +279,4 @@ fn fork_keeps_its_own_identity() {
         crate::store::app_data_dir().ends_with(fork_brand::BUNDLE_ID)
             || std::env::var_os("CAP_GPUI_APP_DATA_DIR").is_some()
     );
-}
-
-#[tokio::test]
-async fn fork_refuses_official_update_resolution() {
-    let error = fetch_release(UpdateChannel::Stable, &semver::Version::new(0, 6, 1))
-        .await
-        .unwrap_err();
-    assert!(error.contains(fork_brand::RELEASES_URL));
 }

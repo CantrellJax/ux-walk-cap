@@ -1,7 +1,7 @@
 use serde_json::Value;
 use std::path::Path;
 
-const STRINGS: [(&str, &str); 20] = [
+const STRINGS: [(&str, &str); 21] = [
     ("display_name", "FORK_BRAND_APP_NAME"),
     ("upstream_name", "FORK_BRAND_UPSTREAM_NAME"),
     ("slug", "FORK_BRAND_SLUG"),
@@ -11,6 +11,7 @@ const STRINGS: [(&str, &str); 20] = [
     ("url_scheme", "FORK_BRAND_URL_SCHEME"),
     ("repo_url", "FORK_BRAND_REPO_URL"),
     ("releases_url", "FORK_BRAND_RELEASES_URL"),
+    ("updater_pubkey", "FORK_BRAND_UPDATER_PUBKEY"),
     ("issues_url", "FORK_BRAND_ISSUES_URL"),
     ("changes_url", "FORK_BRAND_CHANGES_URL"),
     ("help_url", "FORK_BRAND_HELP_URL"),

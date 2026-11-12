@@ -12,6 +12,7 @@
 	"url_scheme": "cap-ux",
 	"repo_url": "https://github.com/CantrellJax/worm",
 	"releases_url": "https://github.com/CantrellJax/worm/releases",
+	"updater_pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDExRUI5MjYyRThFQTgxRjMKUldUemdlcm9ZcExyRVgrUUVlZXNRZHN1MjIrZ24xdkZtK1p2NzFjTC9JWXBlOXlrTnFOdERuYmQK",
 	"issues_url": "https://github.com/CantrellJax/worm/issues",
 	"changes_url": "https://github.com/CantrellJax/worm/commits/main/",
 	"help_url": "https://github.com/CantrellJax/worm#readme",

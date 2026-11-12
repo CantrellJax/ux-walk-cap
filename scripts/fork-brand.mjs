@@ -74,6 +74,10 @@ export function tauriOverlay() {
 		identifier: brand.bundle_id,
 		plugins: {
 			"deep-link": { desktop: { schemes: [brand.url_scheme] } },
+			updater: {
+				endpoints: [`${brand.releases_url}/latest/download/latest.json`],
+				pubkey: brand.updater_pubkey,
+			},
 		},
 		bundle: {
 			createUpdaterArtifacts: false,
